@@ -1,0 +1,256 @@
+import 'package:flutter/material.dart';
+import 'package:flutter/rendering.dart';
+import 'package:flutter/services.dart';
+import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:intl/intl.dart';
+import 'package:path_provider/path_provider.dart';
+import 'dart:io';
+import 'dart:ui' as ui;
+
+import 'package:share_plus/share_plus.dart';
+
+
+class InvoiceDetailPage extends StatelessWidget {
+  final Map<String, dynamic> invoice;
+  final GlobalKey _globalKey = GlobalKey();
+
+  InvoiceDetailPage({super.key, required this.invoice});
+
+  Future<void> _captureAndShareScreenshot() async {
+    try {
+      RenderRepaintBoundary boundary = _globalKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
+      ui.Image image = await boundary.toImage(pixelRatio: 3.0);
+      ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
+      Uint8List pngBytes = byteData!.buffer.asUint8List();
+
+      final directory = await getTemporaryDirectory();
+      final imagePath = '${directory.path}/invoice.png';
+      final file = File(imagePath);
+      await file.writeAsBytes(pngBytes);
+
+      await Share.shareFiles([file.path], text: 'إليك فاتورتك من معرض العمدة للحدايد والبويات');
+    } catch (e) {
+      print(e);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    DateTime invoiceDate = invoice['date'].toDate().toLocal();
+    String formattedDate = invoiceDate.toString().split(' ')[0];
+    String formattedTime = DateFormat('hh:mm a').format(invoiceDate);
+    return Scaffold(
+      appBar: AppBar(
+        title: Text('رقم الفاتورة #${invoice['invoiceNumber']}', style: TextStyle(fontSize: 20.sp, color: Colors.white)),
+        backgroundColor: Colors.black.withOpacity(0.7),
+      ),
+      body: Column(
+        children: [
+          Expanded(
+            child: RepaintBoundary(
+              key: _globalKey,
+              child: Container(
+                color: Colors.white,
+                padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 15.h),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Center(
+                      child: Image.asset(
+                        'assets/images/omda store.jpg',
+                        width: 200.w, // Adjust the width as needed
+                        height: 80.h, // Adjust the height as needed
+                        fit: BoxFit.fill, // Adjust the fit as needed
+                      ),
+                    ),
+                    SizedBox(height: 5.h),
+                    Center(
+                      child: Text('فاتورة مبيعات' , style: TextStyle(
+                        fontSize: 20.sp,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.black.withOpacity(0.7),
+                      ),),
+                    ),
+                    SizedBox(height: 5.h),
+                    Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: 'رقم الفاتورة: ',
+                                    style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.bold),
+                                  ),
+                                  TextSpan(
+                                    text: '#${invoice['invoiceNumber']}',
+                                    style: TextStyle(fontSize: 13.sp),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(height: 5.h),
+                            Text.rich(
+                              TextSpan(
+                                children: [
+
+                                  TextSpan(
+                                    text: formattedTime,
+                                    style: TextStyle(fontSize: 13.sp),
+                                  ),
+                                  TextSpan(
+                                    text: ' :الوقت',
+                                    style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                        Column(
+                          crossAxisAlignment: CrossAxisAlignment.end,
+                          children: [
+                            Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: 'اسم العميل: ',
+                                    style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.bold),
+                                  ),
+                                  TextSpan(
+                                    text: invoice['clientName'],
+                                    style: TextStyle(fontSize: 13.sp),
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(height: 5.h),
+                            Text.rich(
+                              TextSpan(
+                                children: [
+                                  TextSpan(
+                                    text: 'التاريخ: ',
+                                    style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.bold),
+                                  ),
+                                  TextSpan(
+                                    text: formattedDate,
+                                    style: TextStyle(fontSize: 13.sp),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ],
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 5.w),
+                    Padding(
+                      padding: EdgeInsets.symmetric(vertical: 10.h),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
+                        children: [
+                          Text('المنتج', style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.bold, color: Colors.black.withOpacity(0.7))),
+                          Text('الكمية', style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.bold, color: Colors.black.withOpacity(0.7))),
+                          Text('السعر', style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.bold, color: Colors.black.withOpacity(0.7))),
+                          Text('الاجمالي', style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.bold, color: Colors.black.withOpacity(0.7))),
+                        ],
+                      ),
+                    ),
+                    ListView.builder(
+                      shrinkWrap: true,
+                      physics: ScrollPhysics(),
+                      itemCount: invoice['products'].length,
+                      itemBuilder: (context, index) {
+                        final product = invoice['products'][index];
+                        final total = product['total'];
+
+                        return Card(
+                          margin: EdgeInsets.symmetric(vertical: 3.h),
+                          elevation: 2,
+                          color: Colors.orange.withOpacity(0.8),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(vertical: 8.h),
+                            child: Row(
+                              mainAxisAlignment: MainAxisAlignment.spaceAround,
+                              children: [
+                                Text.rich(
+                                  TextSpan(
+                                    children: [
+                                      for (int i = 0; i < product['product'].length; i += 15)
+                                        TextSpan(
+                                          text: product['product'].substring(
+                                              i,
+                                              i + 15 > product['product'].length
+                                                  ? product['product'].length
+                                                  : i + 15) +
+                                              (i + 15 < product['product'].length ? '\n' : ''),
+                                          style: TextStyle(fontSize: 12.sp),
+                                        ),
+                                    ],
+                                  ),
+                                ),
+                                Text(double.parse(product['amount']).toStringAsFixed(2), style: TextStyle(fontSize: 12.sp)),
+                                Text(product['selectedPrice'].toStringAsFixed(2), style: TextStyle(fontSize: 12.sp)),
+                                Text(total.toStringAsFixed(2), style: TextStyle(fontSize: 12.sp)),
+                              ],
+                            ),
+                          ),
+                        );
+                      },
+                    ),
+                    Padding(
+                      padding: EdgeInsets.symmetric(vertical: 10.h),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.end,
+                        children: [
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Text(
+                                'إجمالي الفاتورة: ${invoice['totalSum'].toStringAsFixed(2)}',
+                                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                              ),
+                              Text(
+                                'المدفوغ: ${invoice['paidAmount'].toStringAsFixed(2)}',
+                                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold , color: Colors.green),
+                              ),
+                              Text(
+                                'المتبقي: ${invoice['balance'].toStringAsFixed(2)}',
+                                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold , color: Colors.redAccent),
+                              ),
+                            ],
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+          Center(
+            child: ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(8.0),
+                ),
+                backgroundColor: Colors.black.withOpacity(0.7),
+              ),
+              onPressed: _captureAndShareScreenshot,
+              child: Text(
+                'إرسال الفاتورة',
+                style: TextStyle(
+                  fontSize: 20.sp,
+                  color: Colors.white.withOpacity(1),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
