@@ -1,0 +1,2 @@
+G:/Flutter Projects/saudi_data_is_golden_app/android/app/.cxx/RelWithDebInfo/2e134j6d/armeabi-v7a/CMakeFiles/edit_cache.dir
+G:/Flutter Projects/saudi_data_is_golden_app/android/app/.cxx/RelWithDebInfo/2e134j6d/armeabi-v7a/CMakeFiles/rebuild_cache.dir
