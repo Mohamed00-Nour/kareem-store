@@ -56,159 +56,133 @@ class _DataEntryScreenState extends State<DataEntryScreen> {
     }
   }
 
-  Future<void> _addDepartment() async {
-    if (_departmentController.text.isNotEmpty) {
-      String newDepartment = _departmentController.text;
-      try {
-        await FirebaseFirestore.instance
-            .collection('departments')
-            .add({'name': newDepartment});
-        setState(() {
-          _departments.add(newDepartment);
-          _departmentController.clear();
-        });
-      } catch (e) {
-        print('Error adding department: $e');
-      }
-    }
-  }
+Future<void> _addDepartment() async {
+  if (_departmentController.text.isNotEmpty) {
+    String newDepartment = _departmentController.text.trim();
 
-  void _addProduct() async {
-    if (_formKey.currentState!.validate()) {
-      if (_selectedDepartment == null) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('يرجى اختيار قسم')),
-        );
-        return;
-      }
-
-      double costPrice = double.parse(_costPriceController.text);
-      double sellingPrice1 = double.parse(_sellingPrice1Controller.text);
-      double sellingPrice2 = double.parse(_sellingPrice2Controller.text);
-      double sellingPrice3 = double.parse(_sellingPrice3Controller.text);
-
-      if (sellingPrice1 <= costPrice || sellingPrice2 <= costPrice || sellingPrice3 <= costPrice) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('يجب أن يكون سعر البيع أكبر من سعر التكلفة')),
-        );
-        return;
-      }
-
-      if (sellingPrice1 == sellingPrice2 || sellingPrice1 == sellingPrice3 || sellingPrice2 == sellingPrice3) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('يجب أن تكون أسعار البيع مختلفة')),
-        );
-        return;
-      }
-
-      String productName = _productNameController.text.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
-
-      // Check if the product already exists
+    try {
+      // Check if the department already exists
       QuerySnapshot query = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: productName)
+          .collection('departments')
+          .where('name', isEqualTo: newDepartment)
           .get();
 
       if (query.docs.isNotEmpty) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('المنتج موجود بالفعل')),
+          const SnackBar(content: Text('القسم موجود بالفعل')),
         );
         return;
       }
 
-      var uuid = Uuid();
-      var random = Random();
-      Product newProduct = Product(
-        id: uuid.v4(),
-        randomNumber: random.nextInt(1000000),
-        name: productName,
-        department: _selectedDepartment!,
-        sellingPrice1: sellingPrice1,
-        sellingPrice2: sellingPrice2,
-        sellingPrice3: sellingPrice3,
-        costPrice: costPrice,
-        quantity: int.parse(_quantityController.text),
-        alertAmount: int.parse(_alertAmountController.text),
-        image: _selectedImage?.path,
-      );
+      // Add the new department if it doesn't exist
+      await FirebaseFirestore.instance
+          .collection('departments')
+          .add({'name': newDepartment});
 
-      try {
-        if (newProduct.image != null) {
-          newProduct.image = await _uploadImage(File(newProduct.image!));
-        }
-        // Save the product with the product name as the document ID
-        await FirebaseFirestore.instance
-            .collection('products')
-            .doc(productName)
-            .set(newProduct.toMap());
-        setState(() {
-          _products.add(newProduct);
-          _productNameController.clear();
-          _sellingPrice1Controller.clear();
-          _sellingPrice2Controller.clear();
-          _sellingPrice3Controller.clear();
-          _costPriceController.clear();
-          _quantityController.clear();
-          _alertAmountController.clear();
-          _imageController.clear();
-          _selectedImage = null;
-          _selectedDepartment = null;
-        });
-      } catch (e) {
-        print('Error adding product: $e');
-      }
+      setState(() {
+        _departments.add(newDepartment);
+        _departmentController.clear();
+      });
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تمت إضافة القسم بنجاح')),
+      );
+    } catch (e) {
+      print('Error adding department: $e');
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ أثناء إضافة القسم: $e')),
+      );
     }
   }
+}
+void _addProduct() async {
+  if (_formKey.currentState!.validate()) {
+    if (_selectedDepartment == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى اختيار قسم')),
+      );
+      return;
+    }
 
-  Future<void> _saveData() async {
+    String productName = _productNameController.text.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+
+    // Check if the product already exists in the local list
+    if (_products.any((product) => product.name == productName)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('المنتج موجود بالفعل في القائمة')),
+      );
+      return;
+    }
+
+    var uuid = Uuid();
+    var random = Random();
+    Product newProduct = Product(
+      id: productName,
+      randomNumber: random.nextInt(1000000),
+      name: productName,
+      department: _selectedDepartment!,
+      sellingPrice1: double.parse(_sellingPrice1Controller.text),
+      sellingPrice2: double.parse(_sellingPrice2Controller.text),
+      sellingPrice3: double.parse(_sellingPrice3Controller.text),
+      costPrice: double.parse(_costPriceController.text),
+      quantity: int.parse(_quantityController.text),
+      alertAmount: int.parse(_alertAmountController.text),
+      image: _selectedImage?.path,
+    );
+
     setState(() {
-      _isLoading = true;
+      _products.add(newProduct);
+      _productNameController.clear();
+      _sellingPrice1Controller.clear();
+      _sellingPrice2Controller.clear();
+      _sellingPrice3Controller.clear();
+      _costPriceController.clear();
+      _quantityController.clear();
+      _alertAmountController.clear();
+      _imageController.clear();
+      _selectedImage = null;
+      _selectedDepartment = null;
     });
+  }
+}
 
-    try {
-      // Save products
-      if (_products.isNotEmpty) {
-        CollectionReference productsRef = FirebaseFirestore.instance.collection('products');
-        for (var product in _products) {
+Future<void> _saveData() async {
+  if (_isLoading) return; // Prevent multiple triggers
+
+  setState(() {
+    _isLoading = true;
+  });
+
+  try {
+    // Save products
+    if (_products.isNotEmpty) {
+      CollectionReference productsRef = FirebaseFirestore.instance.collection('products');
+      for (var product in _products) {
+        // Check if the product already exists in Firestore
+        QuerySnapshot query = await productsRef.where('name', isEqualTo: product.name).get();
+        if (query.docs.isEmpty) {
           if (product.image != null) {
             product.image = await _uploadImage(File(product.image!));
           }
           await productsRef.doc(product.id).set(product.toMap());
         }
       }
-
-      // Save suppliers
-      if (_suppliers.isNotEmpty) {
-        CollectionReference suppliersRef = FirebaseFirestore.instance.collection('suppliers');
-        for (var supplier in _suppliers) {
-          await suppliersRef.add({'name': supplier});
-        }
-      }
-
-      // Save departments
-      if (_departments.isNotEmpty) {
-        CollectionReference departmentsRef = FirebaseFirestore.instance.collection('departments');
-        for (var department in _departments) {
-          QuerySnapshot query = await departmentsRef.where('name', isEqualTo: department).get();
-          if (query.docs.isEmpty) {
-            await departmentsRef.add({'name': department});
-          }
-        }
-      }
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('Data saved successfully')),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('Error saving data: $e')),
-      );
-    } finally {
-      setState(() {
-        _isLoading = false;
-      });
     }
+
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('Data saved successfully')),
+    );
+  } catch (e) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('Error saving data: $e')),
+    );
+  } finally {
+    setState(() {
+      _isLoading = false;
+    });
   }
+}
+
 
   Future<void> _pickImage(ImageSource source) async {
     try {

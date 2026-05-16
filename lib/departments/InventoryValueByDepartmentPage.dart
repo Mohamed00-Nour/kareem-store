@@ -59,7 +59,7 @@ class _InventoryValueByDepartmentPageState extends State<InventoryValueByDepartm
                   return Center(child: Text('Error: ${snapshot.error}'));
                 }
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return Center(child: Text('No departments found.'));
+                  return Center(child: Text('لا توجد أقسام بعد.'));
                 }
 
                 final departments = snapshot.data!.docs;

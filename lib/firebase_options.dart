@@ -27,10 +27,7 @@ class DefaultFirebaseOptions {
       case TargetPlatform.macOS:
         return macos;
       case TargetPlatform.windows:
-        throw UnsupportedError(
-          'DefaultFirebaseOptions have not been configured for windows - '
-          'you can reconfigure this by running the FlutterFire CLI again.',
-        );
+        return windows;
       case TargetPlatform.linux:
         throw UnsupportedError(
           'DefaultFirebaseOptions have not been configured for linux - '
@@ -44,38 +41,49 @@ class DefaultFirebaseOptions {
   }
 
   static const FirebaseOptions web = FirebaseOptions(
-    apiKey: 'AIzaSyDbXPnmpbOfnJQnvFmlCrb5a5GhUqg9opE',
-    appId: '1:679011368192:web:9f901e76f7c65d1fadc7e5',
-    messagingSenderId: '679011368192',
-    projectId: 'saudi-database',
-    authDomain: 'saudi-database.firebaseapp.com',
-    storageBucket: 'saudi-database.firebasestorage.app',
-    measurementId: 'G-Q1TH2C7QTV',
+    apiKey: 'AIzaSyDrORj7qXhYtDOJarJXXyEnLGl2Uvro-1k',
+    appId: '1:739436951854:web:d9a6623fe55607da6522bf',
+    messagingSenderId: '739436951854',
+    projectId: 'kareem-hammad',
+    authDomain: 'kareem-hammad.firebaseapp.com',
+    storageBucket: 'kareem-hammad.firebasestorage.app',
+    measurementId: 'G-F1P6JQSH7Y',
   );
 
   static const FirebaseOptions android = FirebaseOptions(
-    apiKey: 'AIzaSyDtpZvoo4K9HB80X50A2p9NRLtyB9NcB60',
-    appId: '1:679011368192:android:a147c97613370eaaadc7e5',
-    messagingSenderId: '679011368192',
-    projectId: 'saudi-database',
-    storageBucket: 'saudi-database.firebasestorage.app',
+    apiKey: 'AIzaSyDVLByU3ZYomy6WVsUDZStq1-Np2297N9Y',
+    appId: '1:739436951854:android:8db7a3fe0c2fcfee6522bf',
+    messagingSenderId: '739436951854',
+    projectId: 'kareem-hammad',
+    storageBucket: 'kareem-hammad.firebasestorage.app',
   );
 
   static const FirebaseOptions ios = FirebaseOptions(
-    apiKey: 'AIzaSyA6mHTAPzLsM-B0x4CQ30VQpXxa2vLv6wM',
-    appId: '1:679011368192:ios:45d0cca6382e17aaadc7e5',
-    messagingSenderId: '679011368192',
-    projectId: 'saudi-database',
-    storageBucket: 'saudi-database.firebasestorage.app',
-    iosBundleId: 'com.example.saudiDataIsGoldenApp',
+    apiKey: 'AIzaSyCAUcuZb4nW14LH38fuh6y1NPCJQWxLW_E',
+    appId: '1:739436951854:ios:42c8cc5796dc4c2e6522bf',
+    messagingSenderId: '739436951854',
+    projectId: 'kareem-hammad',
+    storageBucket: 'kareem-hammad.firebasestorage.app',
+    iosBundleId: 'com.kareemham.store',
   );
 
   static const FirebaseOptions macos = FirebaseOptions(
-    apiKey: 'AIzaSyA6mHTAPzLsM-B0x4CQ30VQpXxa2vLv6wM',
-    appId: '1:679011368192:ios:5bd6d842b09d6919adc7e5',
-    messagingSenderId: '679011368192',
-    projectId: 'saudi-database',
-    storageBucket: 'saudi-database.firebasestorage.app',
-    iosBundleId: 'com.example.saudiDataIsGoldenApp.RunnerTests',
+    apiKey: 'AIzaSyCAUcuZb4nW14LH38fuh6y1NPCJQWxLW_E',
+    appId: '1:739436951854:ios:42c8cc5796dc4c2e6522bf',
+    messagingSenderId: '739436951854',
+    projectId: 'kareem-hammad',
+    storageBucket: 'kareem-hammad.firebasestorage.app',
+    iosBundleId: 'com.kareemham.store',
   );
+
+  static const FirebaseOptions windows = FirebaseOptions(
+    apiKey: 'AIzaSyDrORj7qXhYtDOJarJXXyEnLGl2Uvro-1k',
+    appId: '1:739436951854:web:c265a9c7e6de513a6522bf',
+    messagingSenderId: '739436951854',
+    projectId: 'kareem-hammad',
+    authDomain: 'kareem-hammad.firebaseapp.com',
+    storageBucket: 'kareem-hammad.firebasestorage.app',
+    measurementId: 'G-BYV8910YXT',
+  );
+
 }

@@ -6,8 +6,8 @@ import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
-
 import 'package:share_plus/share_plus.dart';
+
 
 
 class InvoiceDetailPage extends StatelessWidget {
@@ -28,7 +28,7 @@ class InvoiceDetailPage extends StatelessWidget {
       final file = File(imagePath);
       await file.writeAsBytes(pngBytes);
 
-      await Share.shareFiles([file.path], text: 'إليك فاتورتك من معرض العمدة للحدايد والبويات');
+      await Share.shareFiles([file.path], text: 'إليك فاتورتك من معرض كريم حماد للحدايد والبويات');
     } catch (e) {
       print(e);
     }
@@ -39,15 +39,18 @@ class InvoiceDetailPage extends StatelessWidget {
     DateTime invoiceDate = invoice['date'].toDate().toLocal();
     String formattedDate = invoiceDate.toString().split(' ')[0];
     String formattedTime = DateFormat('hh:mm a').format(invoiceDate);
+    final previousBalance = invoice.containsKey('previousBalance')
+        ? (double.tryParse(invoice['previousBalance'].toString()) ?? 0.0)
+        : 0.0;
     return Scaffold(
       appBar: AppBar(
         title: Text('رقم الفاتورة #${invoice['invoiceNumber']}', style: TextStyle(fontSize: 20.sp, color: Colors.white)),
         backgroundColor: Colors.black.withOpacity(0.7),
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: RepaintBoundary(
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            RepaintBoundary(
               key: _globalKey,
               child: Container(
                 color: Colors.white,
@@ -57,10 +60,10 @@ class InvoiceDetailPage extends StatelessWidget {
                   children: [
                     Center(
                       child: Image.asset(
-                        'assets/images/omda store.jpg',
-                        width: 200.w, // Adjust the width as needed
-                        height: 80.h, // Adjust the height as needed
-                        fit: BoxFit.fill, // Adjust the fit as needed
+                        'assets/images/boxes_11365317.png',
+                        width: 200.w,
+                        height: 80.h,
+                        fit: BoxFit.fill,
                       ),
                     ),
                     SizedBox(height: 5.h),
@@ -166,7 +169,6 @@ class InvoiceDetailPage extends StatelessWidget {
                       itemBuilder: (context, index) {
                         final product = invoice['products'][index];
                         final total = product['total'];
-
                         return Card(
                           margin: EdgeInsets.symmetric(vertical: 3.h),
                           elevation: 2,
@@ -209,9 +211,21 @@ class InvoiceDetailPage extends StatelessWidget {
                           Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
-                              Text(
-                                'إجمالي الفاتورة: ${invoice['totalSum'].toStringAsFixed(2)}',
-                                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                              Row(
+                                children: [
+                                  Text(
+                                    'الرصيد السابق: ${previousBalance.toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  SizedBox(width: 20.w),
+                                  Text(
+                                    'إجمالي الفاتورة: ${invoice['totalSum'].toStringAsFixed(2)}',
+                                    style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
                               ),
                               Text(
                                 'المدفوغ: ${invoice['paidAmount'].toStringAsFixed(2)}',
@@ -230,26 +244,26 @@ class InvoiceDetailPage extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-          Center(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8.0),
+            Center(
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                  backgroundColor: Colors.black.withOpacity(0.7),
                 ),
-                backgroundColor: Colors.black.withOpacity(0.7),
-              ),
-              onPressed: _captureAndShareScreenshot,
-              child: Text(
-                'إرسال الفاتورة',
-                style: TextStyle(
-                  fontSize: 20.sp,
-                  color: Colors.white.withOpacity(1),
+                onPressed: _captureAndShareScreenshot,
+                child: Text(
+                  'إرسال الفاتورة',
+                  style: TextStyle(
+                    fontSize: 20.sp,
+                    color: Colors.white.withOpacity(1),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

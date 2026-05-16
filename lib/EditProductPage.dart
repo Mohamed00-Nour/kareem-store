@@ -49,8 +49,13 @@ class _EditProductPageState extends State<EditProductPage> {
     try {
       QuerySnapshot querySnapshot = await FirebaseFirestore.instance.collection('departments').get();
       setState(() {
-        _departments = querySnapshot.docs.map((doc) => doc['name'] as String).toList();
+        _departments = querySnapshot.docs.map((doc) => doc['name'] as String).toSet().toList(); // Ensure unique values
+        if (!_departments.contains(_selectedDepartment)) {
+          _selectedDepartment = null; // Reset if the value is not in the list
+        }
       });
+      print('Departments: $_departments');
+      print('Selected Department: $_selectedDepartment');
     } catch (e) {
       print('Error loading departments: $e');
     }
@@ -80,8 +85,8 @@ class _EditProductPageState extends State<EditProductPage> {
         'sellingPrice2': double.parse(_sellingPrice2Controller.text),
         'sellingPrice3': double.parse(_sellingPrice3Controller.text),
         'costPrice': double.parse(_costPriceController.text),
-        'quantity': int.parse(_quantityController.text),
-        'alertAmount': int.parse(_alertAmountController.text),
+        'quantity': double.parse(_quantityController.text),
+        'alertAmount': double.parse(_alertAmountController.text),
         'image': _imageController.text.isNotEmpty ? _imageController.text : null,
         'randomNumber': int.parse(_randomNumberController.text),
         'department': _selectedDepartment,
@@ -305,7 +310,7 @@ class ProductChangesPage extends StatelessWidget {
               rows: changes.map((change) {
                 return DataRow(cells: [
                   DataCell(Text((change['date'] as Timestamp).toDate().toString().split(' ')[0], style: TextStyle(fontSize: 14.sp))),
-                  DataCell(Text(change['amount'].toString(), style: TextStyle(fontSize: 14.sp))),
+                  DataCell(Text(change['amount'].toStringAsFixed(2), style: TextStyle(fontSize: 14.sp))),
                   DataCell(Text(
                     change['type'] == 'decrease' ? 'بيع' : change['type'] == 'update' ? 'تحديث' : 'شراء',
                     style: TextStyle(fontSize: 14.sp),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 
+import '../auth/LoginScreen.dart';
 import 'g_Nav.dart';
 
 class SplashScreen extends StatefulWidget {
@@ -41,7 +42,7 @@ class _SplashScreenState extends State<SplashScreen>
     await Future.delayed(Duration(seconds: 3), () {});
     Navigator.pushReplacement(
       context,
-      MaterialPageRoute(builder: (context) => GNavPage()),
+      MaterialPageRoute(builder: (context) => LoginScreen()),
     );
   }
 
@@ -69,7 +70,7 @@ class _SplashScreenState extends State<SplashScreen>
                   child: ScaleTransition(
                     scale: _animation,
                     child: Text(
-                      'العمدة للحدايد والبويات',
+                      'Kareem Store',
                       style: TextStyle(
                         fontSize: 24,
                       ),

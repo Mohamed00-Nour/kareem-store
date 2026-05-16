@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../EditProductPage.dart';
 
 class DepartmentProductsPage extends StatefulWidget {
@@ -16,11 +17,184 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
   String _searchQuery = "";
   final TextEditingController _searchController = TextEditingController();
   bool _showLowStock = false;
+  String _currentDepartmentName = ""; // Initialize with a default value
+
+  String _userRole = 'user'; // Default to user role
+
+  Future<void> _loadUserRole() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _userRole = prefs.getString('user_role') ?? 'user';
+      });
+    } catch (e) {
+      print('Error loading user role: $e');
+    }
+  }
+
+  void _handleDeleteProduct(BuildContext context, String productId) {
+    if (_userRole == 'admin') {
+      _deleteProduct(context, productId);
+    } else {
+      _showPermissionDeniedDialog();
+    }
+  }
+
+  void _showPermissionDeniedDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('ليس لديك صلاحية'),
+          content: Text('ليس لديك الصلاحية لحذف المنتجات'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('موافق'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+
+  @override
+  void initState() {
+    super.initState();
+    _currentDepartmentName = widget.departmentName;
+    _loadUserRole();
+  }
 
   @override
   void dispose() {
     _searchController.dispose();
     super.dispose();
+  }
+
+  void _editDepartmentName(BuildContext context) {
+    final TextEditingController _editController =
+        TextEditingController(text: _currentDepartmentName);
+
+    showDialog(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: Text('تعديل اسم القسم'),
+          content: TextField(
+            controller: _editController,
+            decoration: InputDecoration(labelText: 'اسم القسم الجديد'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(),
+              child: Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () async {
+                String newName = _editController.text.trim();
+                if (newName.isNotEmpty && newName != _currentDepartmentName) {
+                  try {
+                    QuerySnapshot query = await FirebaseFirestore.instance
+                        .collection('departments')
+                        .where('name', isEqualTo: _currentDepartmentName)
+                        .get();
+
+                    if (query.docs.isNotEmpty) {
+                      await query.docs.first.reference.update({'name': newName});
+                    }
+
+                    setState(() {
+                      _currentDepartmentName = newName;
+                    });
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('تم تعديل اسم القسم بنجاح')),
+                    );
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('حدث خطأ أثناء تعديل اسم القسم: $e')),
+                    );
+                  }
+                }
+                Navigator.of(context).pop();
+              },
+              child: Text('حفظ'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _confirmDeleteDepartment(BuildContext context) {
+    if (_userRole == 'admin') {
+      showDialog(
+        context: context,
+        builder: (context) {
+          return AlertDialog(
+            title: Text('حذف القسم'),
+            content: Text(
+                'هل أنت متأكد أنك تريد حذف القسم $_currentDepartmentName؟\nلن يتم حذف المنتجات المرتبطة.'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: Text('إلغاء'),
+              ),
+              TextButton(
+                onPressed: () async {
+                  try {
+                    QuerySnapshot query = await FirebaseFirestore.instance
+                        .collection('departments')
+                        .where('name', isEqualTo: _currentDepartmentName)
+                        .get();
+
+                    if (query.docs.isNotEmpty) {
+                      await query.docs.first.reference.delete();
+                    }
+
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('تم حذف القسم بنجاح')),
+                    );
+                    Navigator.of(context).pop();
+                    Navigator.of(context).pop();
+                  } catch (e) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      SnackBar(content: Text('حدث خطأ أثناء حذف القسم: $e')),
+                    );
+                  }
+                },
+                child: Text('حذف'),
+              ),
+            ],
+          );
+        },
+      );
+    } else {
+      _showPermissionDeniedForDepartmentDialog();
+    }
+  }
+
+  void _showPermissionDeniedForDepartmentDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('ليس لديك صلاحية'),
+          content: Text('ليس لديك الصلاحية لحذف الأقسام'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('موافق'),
+            ),
+          ],
+        );
+      },
+    );
   }
 
   void _deleteProduct(BuildContext context, String productId) {
@@ -29,19 +203,19 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
       builder: (context) {
         return AlertDialog(
           title: Text('هل تريد حذف المنتج؟'),
-          content: Text('سيتم حذف المنتج من القسم ${widget.departmentName}'),
+          content: Text('سيتم حذف المنتج من القسم $_currentDepartmentName'),
           actions: [
             TextButton(
-              onPressed: () {
-                Navigator.of(context).pop();
-              },
+              onPressed: () => Navigator.of(context).pop(),
               child: Text('إلغاء'),
             ),
             TextButton(
               onPressed: () async {
                 try {
-                  // Delete the product from Firebase
-                  await FirebaseFirestore.instance.collection('products').doc(productId).delete();
+                  await FirebaseFirestore.instance
+                      .collection('products')
+                      .doc(productId)
+                      .delete();
                   Navigator.of(context).pop();
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -71,9 +245,18 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('قسم ${widget.departmentName}', style: TextStyle(fontSize: 20.sp, color: Colors.white)),
+        title: Text('قسم $_currentDepartmentName',
+            style: TextStyle(fontSize: 14.sp, color: Colors.white)),
         backgroundColor: Colors.black.withOpacity(0.7),
         actions: [
+          IconButton(
+            icon: Icon(Icons.edit, color: Colors.white , size: 16,),
+            onPressed: () => _editDepartmentName(context),
+          ),
+          IconButton(
+            icon: Icon(Icons.delete, color: Colors.red, size: 16,),
+            onPressed: () => _confirmDeleteDepartment(context),
+          ),
           TextButton(
             onPressed: () {
               setState(() {
@@ -82,14 +265,13 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
             },
             child: Text(
               _showLowStock ? 'عرض الكل' : 'عرض النواقص',
-              style: TextStyle(fontSize: 16.sp, color: Colors.white),
+              style: TextStyle(fontSize: 14.sp, color: Colors.white),
             ),
           ),
         ],
       ),
       body: Column(
         children: [
-          // Search Bar
           Padding(
             padding: EdgeInsets.symmetric(vertical: 5.h, horizontal: 10.w),
             child: TextField(
@@ -119,7 +301,6 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
               },
             ),
           ),
-          // Headers
           Padding(
             padding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
             child: Row(
@@ -156,12 +337,11 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
               ],
             ),
           ),
-          // Product List
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
                   .collection('products')
-                  .where('department', isEqualTo: widget.departmentName)
+                  .where('department', isEqualTo: _currentDepartmentName)
                   .snapshots(),
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
@@ -254,7 +434,7 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
                             ),
                           );
                         },
-                        onLongPress: () => _deleteProduct(context, productId),
+                        onLongPress: () => _handleDeleteProduct(context, productId),
                       ),
                     );
                   },

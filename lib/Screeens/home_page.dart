@@ -3,12 +3,16 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../MonthsListScreen.dart';
 import '../Services/FirebaseService.dart';
 import '../Widgets/main-cards.dart';
+import '../box/BoxChangesScreen.dart';
+import '../box/MainBoxScreen.dart';
 import '../clients/ClientsPage.dart';
 import '../departments/DepartmentsPage.dart';
 import '../suppliers/SuppliersPage.dart';
+import '../reports/ReportsPage.dart';
 import 'AddProductPage.dart';
 import 'DecreaseProductPage.dart';
 import 'Data/DataEntryScreen.dart';
+import 'PrinterSettingsPage.dart';
 
 class HomePage extends StatelessWidget {
   const HomePage({super.key});
@@ -78,7 +82,7 @@ class HomePage extends StatelessWidget {
           backgroundColor: Colors.black.withOpacity(0.7),
           title: Row(
             children: [
-              Text('العمدة للحدايد والبويات',
+              Text('Kareem Store',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20.sp,
@@ -106,216 +110,204 @@ class HomePage extends StatelessWidget {
           child: Column(
             children: [
               SizedBox(height: 0.0001.sh),
-              Padding(
-                padding: EdgeInsets.symmetric(vertical: 10.h, horizontal: 5.w),
-                child: GestureDetector(
-                  onTap: () {
-                    Navigator.push(
-                      context,
-                      MaterialPageRoute(
-                          builder: (context) => MonthsListScreen()),
-                    );
-                  },
-                  child: Card(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(15.0.r),
-                    ),
-                    elevation: 3,
-                    child: Container(
-                      decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(15.r),
-                        color: Colors.orange.withOpacity(0.7),
+              /*Card(
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(15.0.r),
+                ),
+                elevation: 3,
+                child: Container(
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(15.r),
+                    color: Colors.orange.withOpacity(0.7),
+                  ),
+                  width: double.infinity,
+                  height: 160.h,
+                  child: Column(
+                    children: [
+                      SizedBox(height: 3.h),
+                      Center(
+                        child: Text(
+                          'الملخص الشهري',
+                          style: TextStyle(
+                            fontSize: 15.sp,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
                       ),
-                      width: double.infinity,
-                      height: 160.h,
-                      child: Column(
-                        children: [
-                          SizedBox(height: 3.h),
-                          Center(
-                            child: Text(
-                              'الملخص الشهري',
-                              style: TextStyle(
-                                fontSize: 15.sp,
-                                fontWeight: FontWeight.bold,
+                      StreamBuilder<Map<String, double>>(
+                        stream:
+                            firebaseService.getMonthlyProfitAndSumStream(),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return Center(
+                              child: SizedBox(
+                                width: 20.w,
+                                height: 20.h,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.w,
+                                  color: Colors.black.withOpacity(0.7),
+                                ),
                               ),
-                            ),
-                          ),
-                          StreamBuilder<Map<String, double>>(
-                            stream:
-                                firebaseService.getMonthlyProfitAndSumStream(),
-                            builder: (context, snapshot) {
-                              if (snapshot.connectionState ==
-                                  ConnectionState.waiting) {
-                                return Center(
-                                  child: SizedBox(
-                                    width: 20.w,
-                                    height: 20.h,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.w,
-                                      color: Colors.black.withOpacity(0.7),
-                                    ),
+                            );
+                          } else if (snapshot.hasError) {
+                            return Text('Error: ${snapshot.error}');
+                          } else {
+                            final data = snapshot.data!;
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceAround,
+                              children: [
+                                Padding(
+                                  padding: EdgeInsets.symmetric(
+                                      vertical: 10.h, horizontal: 10.w),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'إجمالي الربح',
+                                        style: TextStyle(
+                                          fontSize: 15.sp,
+                                          color:
+                                              Colors.black.withOpacity(0.7),
+                                        ),
+                                      ),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            '${data['totalProfitMargin']!.toStringAsFixed(1)}',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 15.sp,
+                                            ),
+                                          ),
+                                          SizedBox(width: 5.w),
+                                          Text(
+                                            'L.E',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.normal,
+                                              fontSize: 15.sp,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
                                   ),
-                                );
-                              } else if (snapshot.hasError) {
-                                return Text('Error: ${snapshot.error}');
-                              } else {
-                                final data = snapshot.data!;
-                                return Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceAround,
-                                  children: [
-                                    Padding(
-                                      padding: EdgeInsets.symmetric(
-                                          vertical: 10.h, horizontal: 10.w),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
+                                ),
+                                Padding(
+                                  padding: EdgeInsets.symmetric(
+                                      vertical: 10.h, horizontal: 10.w),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'إجمالي المبيعات',
+                                        style: TextStyle(
+                                          fontSize: 15.sp,
+                                          color:
+                                              Colors.black.withOpacity(0.7),
+                                        ),
+                                      ),
+                                      Row(
                                         children: [
                                           Text(
-                                            'إجمالي الربح',
+                                            '${data['totalSum']!.toStringAsFixed(1)}',
                                             style: TextStyle(
+                                              fontWeight: FontWeight.bold,
                                               fontSize: 15.sp,
-                                              color:
-                                                  Colors.black.withOpacity(0.7),
                                             ),
                                           ),
-                                          Row(
-                                            children: [
-                                              Text(
-                                                '${data['totalProfitMargin']!.toStringAsFixed(1)}',
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 15.sp,
-                                                ),
-                                              ),
-                                              SizedBox(width: 5.w),
-                                              Text(
-                                                'L.E',
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.normal,
-                                                  fontSize: 15.sp,
-                                                ),
-                                              ),
-                                            ],
+                                          SizedBox(width: 5.w),
+                                          Text(
+                                            'L.E',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.normal,
+                                              fontSize: 15.sp,
+                                            ),
                                           ),
                                         ],
                                       ),
-                                    ),
-                                    Padding(
-                                      padding: EdgeInsets.symmetric(
-                                          vertical: 10.h, horizontal: 10.w),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'إجمالي المبيعات',
-                                            style: TextStyle(
-                                              fontSize: 15.sp,
-                                              color:
-                                                  Colors.black.withOpacity(0.7),
-                                            ),
-                                          ),
-                                          Row(
-                                            children: [
-                                              Text(
-                                                '${data['totalSum']!.toStringAsFixed(1)}',
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 15.sp,
-                                                ),
-                                              ),
-                                              SizedBox(width: 5.w),
-                                              Text(
-                                                'L.E',
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.normal,
-                                                  fontSize: 15.sp,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                );
-                              }
-                            },
-                          ),
-                          StreamBuilder<double>(
-                            stream: firebaseService
-                                .getMonthlyBuyingInvoicesSumStream(),
-                            builder: (context, snapshot) {
-                              if (snapshot.connectionState ==
-                                  ConnectionState.waiting) {
-                                return Center(
-                                  child: SizedBox(
-                                    width: 20.w,
-                                    height: 20.h,
-                                    child: CircularProgressIndicator(
-                                      strokeWidth: 2.w,
-                                      color: Colors.black.withOpacity(0.7),
-                                    ),
+                                    ],
                                   ),
-                                );
-                              } else if (snapshot.hasError) {
-                                return Text('Error: ${snapshot.error}');
-                              } else {
-                                return Row(
-                                  crossAxisAlignment: CrossAxisAlignment.center,
-                                  mainAxisAlignment:
-                                      MainAxisAlignment.spaceAround,
-                                  children: [
-                                    Padding(
-                                      padding: EdgeInsets.symmetric(
-                                          vertical: 10.h, horizontal: 10.w),
-                                      child: Column(
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.start,
-                                        children: [
-                                          Text(
-                                            'إجمالي المشتريات',
-                                            style: TextStyle(
-                                              fontSize: 15.sp,
-                                              color:
-                                                  Colors.black.withOpacity(0.7),
-                                            ),
-                                          ),
-                                          Row(
-                                            children: [
-                                              Text(
-                                                '${snapshot.data!.toStringAsFixed(1)}',
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.bold,
-                                                  fontSize: 15.sp,
-                                                ),
-                                              ),
-                                              SizedBox(width: 5.w),
-                                              Text(
-                                                'L.E',
-                                                style: TextStyle(
-                                                  fontWeight: FontWeight.normal,
-                                                  fontSize: 15.sp,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                );
-                              }
-                            },
-                          ),
-                        ],
+                                ),
+                              ],
+                            );
+                          }
+                        },
                       ),
-                    ),
+                      StreamBuilder<double>(
+                        stream: firebaseService
+                            .getMonthlyBuyingInvoicesSumStream(),
+                        builder: (context, snapshot) {
+                          if (snapshot.connectionState ==
+                              ConnectionState.waiting) {
+                            return Center(
+                              child: SizedBox(
+                                width: 20.w,
+                                height: 20.h,
+                                child: CircularProgressIndicator(
+                                  strokeWidth: 2.w,
+                                  color: Colors.black.withOpacity(0.7),
+                                ),
+                              ),
+                            );
+                          } else if (snapshot.hasError) {
+                            return Text('Error: ${snapshot.error}');
+                          } else {
+                            return Row(
+                              crossAxisAlignment: CrossAxisAlignment.center,
+                              mainAxisAlignment:
+                                  MainAxisAlignment.spaceAround,
+                              children: [
+                                Padding(
+                                  padding: EdgeInsets.symmetric(
+                                      vertical: 10.h, horizontal: 10.w),
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'إجمالي المشتريات',
+                                        style: TextStyle(
+                                          fontSize: 15.sp,
+                                          color:
+                                              Colors.black.withOpacity(0.7),
+                                        ),
+                                      ),
+                                      Row(
+                                        children: [
+                                          Text(
+                                            '${snapshot.data!.toStringAsFixed(1)}',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 15.sp,
+                                            ),
+                                          ),
+                                          SizedBox(width: 5.w),
+                                          Text(
+                                            'L.E',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.normal,
+                                              fontSize: 15.sp,
+                                            ),
+                                          ),
+                                        ],
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ],
+                            );
+                          }
+                        },
+                      ),
+                    ],
                   ),
                 ),
-              ),
+              ),*/
               Padding(
                 padding: EdgeInsets.symmetric(vertical: 10.h, horizontal: 0.w),
                 child: Column(
@@ -383,7 +375,8 @@ class HomePage extends StatelessWidget {
                             text: 'المنتجات',
                             onPressed: () {
                               Navigator.of(context).push(MaterialPageRoute(
-                                  builder: (context) => const DataEntryScreen()));
+                                  builder: (context) =>
+                                      const DataEntryScreen()));
                             },
                           ),
                           CardWidget(
@@ -393,12 +386,14 @@ class HomePage extends StatelessWidget {
                               Navigator.of(context).push(MaterialPageRoute(
                                   builder: (context) => const SuppliersPage()));
                             },
-                          ),CardWidget(
-                            imagePath: 'assets/images/shopping-store_5542724.png',
+                          ),
+                          CardWidget(
+                            imagePath:
+                                'assets/images/shopping-store_5542724.png',
                             text: 'الاقسام',
                             onPressed: () {
                               Navigator.of(context).push(MaterialPageRoute(
-                                  builder: (context) =>  DepartmentsPage()));
+                                  builder: (context) => DepartmentsPage()));
                             },
                           ),
                           // CardWidget(
@@ -426,6 +421,40 @@ class HomePage extends StatelessWidget {
                           //         builder: (context) => EmployeeList()));
                           //   },
                           // ),
+                        ],
+                      ),
+                    ),
+                    Padding(
+                      padding:
+                          EdgeInsets.symmetric(vertical: 5.h, horizontal: 5.w),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.start,
+                        children: [
+                          CardWidget(
+                            imagePath: 'assets/images/money-bag.png',
+                            text: 'صندوق المالية',
+                            onPressed: () {
+                              Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (context) => const MainBoxScreen()));
+                            },
+                          ),
+                          CardWidget(
+                            imagePath: 'assets/images/data-analytics.png',
+                            text: 'الإستعلامات',
+                            onPressed: () {
+                              Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (context) => const ReportsPage()));
+                            },
+                          ),
+                          CardWidget(
+                            imagePath: 'assets/images/appliance.png',
+                            text: 'الطابعة',
+                            onPressed: () {
+                              Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (context) =>
+                                      const PrinterSettingsPage()));
+                            },
+                          ),
                         ],
                       ),
                     ),

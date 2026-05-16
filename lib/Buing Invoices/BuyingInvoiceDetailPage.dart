@@ -26,7 +26,7 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
       final file = File(imagePath);
       await file.writeAsBytes(pngBytes);
 
-      await Share.shareFiles([file.path], text: 'إليك فاتورتك من معرض العمدة للحدايد والبويات');
+      await Share.shareFiles([file.path], text: 'إليك فاتورتك من معرض  كريم حماد للحدايد والبويات');
     } catch (e) {
       print(e);
     }
@@ -42,10 +42,10 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
         title: Text('رقم الفاتورة #${invoice['invoiceNumber']}', style: TextStyle(fontSize: 20.sp, color: Colors.white)),
         backgroundColor: Colors.black.withOpacity(0.7),
       ),
-      body: Column(
-        children: [
-          Expanded(
-            child: RepaintBoundary(
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            RepaintBoundary(
               key: _globalKey,
               child: Container(
                 color: Colors.white,
@@ -55,7 +55,7 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
                   children: [
                     Center(
                       child: Image.asset(
-                        'assets/images/omda store.jpg',
+                        'assets/images/boxes_11365317.png',
                         width: 200.w, // Adjust the width as needed
                         height: 100.h, // Adjust the height as needed
                         fit: BoxFit.fill, // Adjust the fit as needed
@@ -117,10 +117,22 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
                                     text: 'اسم المورد: ',
                                     style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.bold),
                                   ),
-                                  TextSpan(
-                                    text: invoice['supplierName'],
-                                    style: TextStyle(fontSize: 13.sp),
-                                  ),
+                                  ...(() {
+                                    final supplierName = invoice['supplierName'] ?? '';
+                                    List<TextSpan> textSpans = [];
+                                    for (int i = 0; i < supplierName.length; i += 15) {
+                                      textSpans.add(
+                                        TextSpan(
+                                          text: supplierName.substring(
+                                            i,
+                                            i + 15 > supplierName.length ? supplierName.length : i + 15
+                                          ) + (i + 15 < supplierName.length ? '\n' : ''),
+                                          style: TextStyle(fontSize: 13.sp),
+                                        ),
+                                      );
+                                    }
+                                    return textSpans;
+                                  })(),
                                 ],
                               ),
                             ),
@@ -162,11 +174,11 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
                       itemCount: invoice['products'].length,
                       itemBuilder: (context, index) {
                         final product = invoice['products'][index];
-                        final total = (double.parse(product['totalCost'] ?? 0.0).toStringAsFixed(2)); // Ensure total is not null and convert to String
+                        final total = (double.tryParse(product['totalCost']?.toString() ?? '0') ?? 0.0).toStringAsFixed(2);
                         final productName = product['product'] ?? '';
-                        final amount = (double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0).toStringAsFixed(2); // Convert amount to double and then to String
-                        final cost = (product['cost'] ?? 0.0).toString(); // Ensure cost is not null and convert to String
-
+                        final amount = (double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0).toStringAsFixed(2);
+                        final cost = (double.tryParse(product['cost']?.toString() ?? '0') ?? 0.0).toStringAsFixed(2);// Ensure cost is not null and convert to String
+            
                         return Card(
                           margin: EdgeInsets.symmetric(vertical: 3.h),
                           elevation: 2,
@@ -206,9 +218,34 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
                       child: Row(
                         mainAxisAlignment: MainAxisAlignment.end,
                         children: [
-                          Text(
-                            'إجمالي الفاتورة: ${invoice['totalSum'].toStringAsFixed(2)}',
-                            style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                          Column(
+                            crossAxisAlignment: CrossAxisAlignment.end,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    'الرصيد السابق: ${(invoice.containsKey('previousBalance') ? (double.tryParse(invoice['previousBalance'].toString()) ?? 0.0) : 0.0).toStringAsFixed(2)}',
+                                    style: const TextStyle(
+                                      fontSize: 16,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  SizedBox(width: 20.w),
+                                  Text(
+                                    'إجمالي الفاتورة: ${invoice['totalSum'].toStringAsFixed(2)}',
+                                    style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                                  ),
+                                ],
+                              ),
+                              Text(
+                                'المدفوع: ${invoice['paidAmount'].toStringAsFixed(2)}',
+                                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold, color: Colors.green),
+                              ),
+                              Text(
+                                'المتبقي: ${invoice['balance'].toStringAsFixed(2)}',
+                                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold, color: Colors.redAccent),
+                              ),
+                            ],
                           ),
                         ],
                       ),
@@ -217,26 +254,26 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
                 ),
               ),
             ),
-          ),
-          Center(
-            child: ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8.0),
+            Center(
+              child: ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(8.0),
+                  ),
+                  backgroundColor: Colors.black.withOpacity(0.7),
                 ),
-                backgroundColor: Colors.black.withOpacity(0.7),
-              ),
-              onPressed: _captureAndShareScreenshot,
-              child: Text(
-                'إرسال الفاتورة',
-                style: TextStyle(
-                  fontSize: 20.sp,
-                  color: Colors.white.withOpacity(1),
+                onPressed: _captureAndShareScreenshot,
+                child: Text(
+                  'إرسال الفاتورة',
+                  style: TextStyle(
+                    fontSize: 20.sp,
+                    color: Colors.white.withOpacity(1),
+                  ),
                 ),
               ),
             ),
-          ),
-        ],
+          ],
+        ),
       ),
     );
   }

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 import '../EditProductPage.dart';
 import 'TotalInventoryValuePage.dart';
 
@@ -15,6 +16,71 @@ class _ProductListPageState extends State<ProductListPage> {
   String _searchQuery = "";
   final TextEditingController _searchController = TextEditingController();
   bool _showLowStock = false;
+  String _userRole = 'user';
+  Future<void> _loadUserRole() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      setState(() {
+        _userRole = prefs.getString('user_role') ?? 'user';
+      });
+    } catch (e) {
+      print('Error loading user role: $e');
+    }
+  }
+
+  void _handleDeleteProduct(BuildContext context, String productId, Map<String, dynamic> product) {
+    if (_userRole == 'admin') {
+      _deleteProduct(context, productId, product);
+    } else {
+      _showPermissionDeniedDialog();
+    }
+  }
+
+  void _showPermissionDeniedDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('ليس لديك صلاحية'),
+          content: Text('ليس لديك الصلاحية لحذف المنتجات'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('موافق'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showInventoryPermissionDeniedDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('ليس لديك صلاحية'),
+          content: Text('ليس لديك الصلاحية للوصول إلى جرد المخزن'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('موافق'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+@override
+void initState() {
+  super.initState();
+  _loadUserRole();
+}
 
   @override
   void dispose() {
@@ -87,10 +153,15 @@ class _ProductListPageState extends State<ProductListPage> {
         actions: [
           TextButton(
             onPressed: () {
-              Navigator.of(context).push(
-                MaterialPageRoute(
-                    builder: (context) => TotalInventoryValuePage()),
-              );
+              if (_userRole == 'admin') {
+                Navigator.of(context).push(
+                  MaterialPageRoute(
+                      builder: (context) => TotalInventoryValuePage()
+                  ),
+                );
+              } else {
+                _showInventoryPermissionDeniedDialog();
+              }
             },
             child: Text('جرد المخزن',
                 style: TextStyle(fontSize: 16.sp, color: Colors.white)),
@@ -183,6 +254,7 @@ class _ProductListPageState extends State<ProductListPage> {
             child: StreamBuilder<QuerySnapshot>(
               stream:
                   FirebaseFirestore.instance.collection('products').snapshots(),
+
               builder: (context, snapshot) {
                 if (snapshot.connectionState == ConnectionState.waiting) {
                   return Center(
@@ -193,6 +265,7 @@ class _ProductListPageState extends State<ProductListPage> {
                 }
                 if (snapshot.hasError) {
                   return Center(child: Text('Error: ${snapshot.error}'));
+
                 }
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
                 }
@@ -230,7 +303,7 @@ class _ProductListPageState extends State<ProductListPage> {
                           children: [
                             Expanded(
                               child: Text(
-                                product['quantity']?.toString() ?? '0',
+                                product['quantity']?.toStringAsFixed(2) ?? '0',
                                 style: TextStyle(
                                   fontSize: 14.sp,
                                   color: (product['quantity'] <=
@@ -274,8 +347,7 @@ class _ProductListPageState extends State<ProductListPage> {
                             ),
                           ));
                         },
-                        onLongPress: () =>
-                            _deleteProduct(context, productId, product),
+                        onLongPress: () => _handleDeleteProduct(context, productId, product),
                       ),
                     );
                   },

@@ -1,6 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:intl/intl.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
 import 'BuyingInvoiceDetailPage.dart';
 
@@ -17,10 +19,14 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
   final TextEditingController _searchController = TextEditingController();
   bool _isFetching = true;
   DateTime? _selectedMonth;
+  String _userRole = 'user'; // Default to user role
 
   @override
   void initState() {
     super.initState();
+    // Initialize with current month
+    _selectedMonth = DateTime.now();
+    _loadUserRole();
     _fetchInvoices();
     _searchController.addListener(_filterInvoices);
   }
@@ -31,20 +37,35 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     super.dispose();
   }
 
+  Future<void> _loadUserRole() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(() {
+        _userRole = prefs.getString('user_role') ?? 'user';
+      });
+    } catch (e) {
+      print('Error loading user role: $e');
+    }
+  }
+
   Future<void> _fetchInvoices() async {
     try {
       QuerySnapshot querySnapshot = await FirebaseFirestore.instance
           .collection('buying invoices')
           .orderBy('date', descending: true)
           .get();
+      if (!mounted) return;
       setState(() {
+        _invoices.clear();
         _invoices.addAll(querySnapshot.docs
             .map((doc) => doc.data() as Map<String, dynamic>));
-        _filteredInvoices.addAll(_invoices);
+        _filterInvoices(); // Apply filtering after fetching
         _isFetching = false;
       });
     } catch (e) {
       print('Error fetching invoices: $e');
+      if (!mounted) return;
       setState(() {
         _isFetching = false;
       });
@@ -71,6 +92,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
   Future<void> _selectMonth(BuildContext context) async {
     final DateTime? picked = await _showMonthYearPicker(context);
     if (picked != null && picked != _selectedMonth) {
+      if (!mounted) return;
       setState(() {
         _selectedMonth = picked;
         _filterInvoices();
@@ -80,8 +102,8 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
 
   Future<DateTime?> _showMonthYearPicker(BuildContext context) async {
     DateTime now = DateTime.now();
-    int selectedYear = now.year;
-    int selectedMonth = now.month;
+    int selectedYear = _selectedMonth?.year ?? now.year;
+    int selectedMonth = _selectedMonth?.month ?? now.month;
 
     // List of Arabic month names
     List<String> arabicMonths = [
@@ -159,6 +181,61 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     );
   }
 
+  void _handleDeleteAction(int index) {
+    if (_userRole == 'admin') {
+      _showDeleteConfirmationDialog(index);
+    } else {
+      _showPermissionDeniedDialog();
+    }
+  }
+
+  void _showDeleteConfirmationDialog(int index) {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('تأكيد الحذف'),
+          content: Text('هل أنت متأكد أنك تريد حذف هذه الفاتورة؟'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+                _deleteInvoice(index);
+              },
+              child: Text('حذف'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
+  void _showPermissionDeniedDialog() {
+    showDialog(
+      context: context,
+      builder: (BuildContext context) {
+        return AlertDialog(
+          title: Text('ليس لديك صلاحية'),
+          content: Text('ليس لديك الصلاحية لحذف الفواتير'),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Navigator.of(context).pop();
+              },
+              child: Text('موافق'),
+            ),
+          ],
+        );
+      },
+    );
+  }
+
   void _deleteInvoice(int index) async {
     final removedInvoice = _filteredInvoices.removeAt(index);
     final invoiceId = removedInvoice['id']; // Ensure 'id' field exists and is correct
@@ -176,9 +253,9 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
         SnackBar(
           content: Text('تم حذف الفاتورة بنجاح'),
           action: SnackBarAction(
-            label: 'Undo',
+            label: 'تراجع',
             onPressed: () async {
-              // Re-add the invoice to Firestor
+              // Re-add the invoice to Firestore
               await FirebaseFirestore.instance
                   .collection('buying invoices')
                   .doc(invoiceId)
@@ -195,6 +272,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     } catch (e) {
       print('Error deleting invoice: $e');
       // Re-add the invoice to the list if deletion fails
+      if (!mounted) return;
       setState(() {
         _filteredInvoices.insert(index, removedInvoice);
       });
@@ -249,7 +327,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
                         child: Text('المورد: ${invoice['supplierName']}')),
                     trailing: IconButton(
                       icon: Icon(Icons.delete, color: Colors.black.withOpacity(0.7)),
-                      onPressed: () => _deleteInvoice(index),
+                      onPressed: () => _handleDeleteAction(index),
                     ),
                     onTap: () => _navigateToInvoiceDetail(invoice),
                   ),

@@ -27,23 +27,26 @@ class SupplierBalanceHistoryPage extends StatelessWidget {
 
           final history = snapshot.data!.docs;
 
-          return DataTable(
-            columns: const [
-              DataColumn(label: Text('الرصيد المدخل')),
-              DataColumn(label: Text('الرصيد قبل')),
-              DataColumn(label: Text('التاريخ')),
-            ],
-            rows: history.map((doc) {
-              final data = doc.data() as Map<String, dynamic>;
-              final timestamp = (data['timestamp'] as Timestamp).toDate();
-              final formattedDate = DateFormat('yyyy-MM-dd').format(timestamp);
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: DataTable(
+              columns: const [
+                DataColumn(label: Text('الرصيد المدخل')),
+                DataColumn(label: Text('الرصيد قبل')),
+                DataColumn(label: Text('التاريخ')),
+              ],
+              rows: history.map((doc) {
+                final data = doc.data() as Map<String, dynamic>;
+                final timestamp = (data['timestamp'] as Timestamp).toDate();
+                final formattedDate = DateFormat('yyyy-MM-dd').format(timestamp);
 
-              return DataRow(cells: [
-                DataCell(Text(data['enteredBalance'].toString())),
-                DataCell(Text(data['balanceBefore'].toString())),
-                DataCell(Text(formattedDate)),
-              ]);
-            }).toList(),
+                return DataRow(cells: [
+                  DataCell(Text((data['enteredBalance'] as num).toStringAsFixed(2))), // Format to 2 decimal places
+                  DataCell(Text((data['balanceBefore'] as num).toStringAsFixed(2))), // Format to 2 decimal places
+                  DataCell(Text(formattedDate)),
+                ]);
+              }).toList(),
+            ),
           );
         },
       ),

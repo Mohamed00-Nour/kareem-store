@@ -1,46 +1,2654 @@
-import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+// import 'package:flutter/material.dart';
+// import 'package:cloud_firestore/cloud_firestore.dart';
+//
+// import '../DeletedClientsPage.dart';
+// import 'ClientInvoicesPage.dart';
+//
+// class ClientsPage extends StatefulWidget {
+//   const ClientsPage({Key? key}) : super(key: key);
+//
+//   @override
+//   _ClientsPageState createState() => _ClientsPageState();
+// }
+//
+// class _ClientsPageState extends State<ClientsPage> {
+//   String _searchQuery = '';
+//   final Set<String> _deletedClients = {}; // Track deleted client IDs
+//   void _showDeleteConfirmationDialog(String clientId) {
+//     showDialog(
+//       context: context,
+//       builder: (context) => AlertDialog(
+//         title: const Text('تأكيد الحذف'),
+//         content: const Text('هل تريد حذف هذا العميل من القائمة؟'),
+//         actions: [
+//           TextButton(
+//             onPressed: () => Navigator.pop(context),
+//             child: const Text('لا'),
+//           ),
+//           TextButton(
+//             onPressed: () {
+//               setState(() {
+//                 _deletedClients.add(clientId); // Add client ID to deleted list
+//               });
+//               Navigator.pop(context);
+//             },
+//             child: const Text('نعم'),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+//
+//   @override
+//   Widget build(BuildContext context) {
+//     return Scaffold(
+//       appBar: AppBar(
+//         actions: [
+//           IconButton(
+//             icon: const Icon(Icons.delete, color: Colors.white),
+//             onPressed: () {
+//               Navigator.push(
+//                 context,
+//                 MaterialPageRoute(
+//                   builder: (context) => DeletedClientsPage(
+//                     deletedClients: _deletedClients,
+//                     onRestoreClient: (clientId) {
+//                       setState(() {
+//                         _deletedClients.remove(clientId); // Remove client ID from deleted list
+//                       });
+//                     },
+//                   ),
+//                 ),
+//               );
+//             },
+//           ),
+//         ],
+//         backgroundColor: Colors.black.withOpacity(0.7),
+//         title: const Text('العملاء' , style: TextStyle(
+//           color: Colors.white,
+//           fontSize: 20,
+//           fontWeight: FontWeight.bold,
+//         )),
+//       ),
+//       body: Column(
+//         children: [
+//           Padding(
+//             padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+//             child: TextField(
+//               decoration: InputDecoration(
+//                 focusedBorder: OutlineInputBorder(
+//                   borderSide:  BorderSide(color: Colors.black.withOpacity(0.7)),
+//                 ),
+//                 filled: true,
+//                 fillColor: Colors.grey.withOpacity(0.1),
+//                 labelText: 'ابحث عن عميل',
+//                 labelStyle:  TextStyle(
+//                   color: Colors.black.withOpacity(0.7),
+//                   fontSize:18,
+//                 ),
+//                 border: OutlineInputBorder(
+//                   borderSide: BorderSide(
+//                     color: Colors.black.withOpacity(0.7),
+//                   )
+//                 ),
+//                 prefixIcon: Icon(Icons.search),
+//               ),
+//               onChanged: (query) {
+//                 setState(() {
+//                   _searchQuery = query;
+//                 });
+//               },
+//             ),
+//           ),
+//           Expanded(
+//             child: StreamBuilder<QuerySnapshot>(
+//               stream: FirebaseFirestore.instance.collection('clients').snapshots(),
+//               builder: (context, snapshot) {
+//                 if (!snapshot.hasData) {
+//                   return  Center(child: CircularProgressIndicator(
+//                     color: Colors.black.withOpacity(0.7),
+//                   ));
+//                 }
+//
+//                 final allClients = snapshot.data!.docs;
+//                 final filteredClients = _searchQuery.isEmpty
+//                     ? allClients
+//                     : allClients.where((client) {
+//                         final clientName = client['clientName']?.toString().toLowerCase() ?? '';
+//                         return clientName.contains(_searchQuery.toLowerCase());
+//                       }).toList();
+//                 final visibleClients = filteredClients.where((client) => !_deletedClients.contains(client.id)).toList();
+//
+//                 return ListView.builder(
+//                   itemCount: visibleClients.length,
+//                   itemBuilder: (context, index) {
+//                     final client = visibleClients[index];
+//                     return Card(
+//                       elevation: 2,
+//                       color: Colors.orange.withOpacity(0.7),
+//                       margin: const EdgeInsets.all(10.0),
+//                       child: ListTile(
+//                         title: Center(child: Text(client['clientName'])),
+//                         subtitle: Center(child: Text('الرصيد: ${client['balance'].toStringAsFixed(2)}')),
+//                         onTap: () {
+//                           Navigator.push(
+//                             context,
+//                             MaterialPageRoute(
+//                               builder: (context) => ClientInvoicesPage(clientId: client.id),
+//                             ),
+//                           );
+//                         },
+//                         onLongPress: () {
+//                           _showDeleteConfirmationDialog(client.id);
+//                         },
+//                       ),
+//                     );
+//                   },
+//                 );
+//               },
+//             ),
+//           ),
+//         ],
+//       ),
+//     );
+//   }
+// }
 
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:io';
+import 'dart:ui' as ui;
+import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
+import 'package:hive/hive.dart';
+import 'package:intl/intl.dart';
+import 'package:open_filex/open_filex.dart';
+import 'package:path_provider/path_provider.dart';
+import 'package:pdf/pdf.dart' hide TextDirection;
+import 'package:pdf/widgets.dart' as pw;
+import 'package:share_plus/share_plus.dart';
+import '../DeletedClientsPage.dart';
 import 'ClientInvoicesPage.dart';
 
-class ClientsPage extends StatefulWidget {
+// ─── Main Menu Page ──────────────────────────────────────────────────────────
+
+class ClientsPage extends StatelessWidget {
   const ClientsPage({Key? key}) : super(key: key);
 
+  void _addNewClient(BuildContext context) {
+    final nameCtrl = TextEditingController();
+    final balanceCtrl = TextEditingController();
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: ui.TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('إضافة عميل جديد'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: nameCtrl,
+                decoration: const InputDecoration(labelText: 'اسم العميل'),
+                textAlign: TextAlign.right,
+              ),
+              const SizedBox(height: 8),
+              TextField(
+                controller: balanceCtrl,
+                decoration:
+                    const InputDecoration(labelText: 'الرصيد الافتتاحي'),
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.right,
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.black.withOpacity(0.7)),
+              onPressed: () async {
+                final name = nameCtrl.text.trim();
+                if (name.isEmpty) return;
+                final balance =
+                    double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
+                final ref = await FirebaseFirestore.instance
+                    .collection('clients')
+                    .add({
+                  'clientName': name,
+                  'balance': balance,
+                });
+                await ref.update({'id': ref.id});
+                if (ctx.mounted) Navigator.pop(ctx);
+              },
+              child: const Text('حفظ',
+                  style: TextStyle(color: Colors.white)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
-  _ClientsPageState createState() => _ClientsPageState();
+  Widget build(BuildContext context) {
+    final items = [
+      _MenuItem(
+        label: 'اضافة عميل جديد',
+        icon: Icons.add,
+        iconColor: Colors.green,
+        onTap: () => _addNewClient(context),
+      ),
+      _MenuItem(
+        label: 'الأرصدة الافتتاحيه والمبالغ النقدية للعملاء',
+        customIcon: const Icon(Icons.settings, color: Colors.grey),
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const _ClientOpeningBalancesPage())),
+      ),
+      _MenuItem(
+        label: 'ذمم العملاء - المبالغ المتبقية عند العملاء من الفواتير الآجل',
+        icon: Icons.people,
+        iconColor: Colors.brown,
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const _ClientDeferredPage())),
+      ),
+      _MenuItem(
+        label: 'ذمم العملاء - تقرير',
+        icon: Icons.receipt_long,
+        iconColor: Colors.black54,
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const _ClientRemainingReportPage())),
+      ),
+      _MenuItem(
+        label: 'العملاء المتبقي لهم أرصدة - تقرير',
+        icon: Icons.receipt_long,
+        iconColor: Colors.black54,
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const _ClientBalanceReportPage())),
+      ),
+      _MenuItem(
+        label: 'فحص ارصدة العملاء',
+        icon: Icons.receipt_long,
+        iconColor: Colors.black54,
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const _ClientBalanceCheckPage())),
+      ),
+      _MenuItem(
+        label: 'عرض العملاء',
+        icon: Icons.search,
+        iconColor: Colors.black54,
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const _ClientListPage())),
+      ),
+    ];
+
+    return Directionality(
+      textDirection: ui.TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: Colors.grey.shade100,
+        appBar: AppBar(
+          backgroundColor: Colors.black.withOpacity(0.7),
+          title: const Text(
+            'العملاء',
+            style: TextStyle(
+              color: Colors.white,
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+            ),
+          ),
+          centerTitle: true,
+          iconTheme: const IconThemeData(color: Colors.white),
+        ),
+        body: ListView.separated(
+          itemCount: items.length,
+          separatorBuilder: (_, __) =>
+              Divider(height: 1, color: Colors.grey.shade300),
+          itemBuilder: (context, index) {
+            final item = items[index];
+            return InkWell(
+              onTap: item.onTap,
+              child: Container(
+                color: Colors.white,
+                padding: const EdgeInsets.symmetric(
+                    horizontal: 20, vertical: 22),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    item.customIcon ??
+                        Icon(item.icon, color: item.iconColor, size: 28),
+                    const SizedBox(width: 12),
+                    Expanded(
+                      child: Text(
+                        item.label,
+                        textAlign: TextAlign.right,
+                        style: const TextStyle(
+                            fontSize: 16, fontWeight: FontWeight.w500),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
 }
 
-class _ClientsPageState extends State<ClientsPage> {
+class _MenuItem {
+  final String label;
+  final IconData? icon;
+  final Color? iconColor;
+  final Widget? customIcon;
+  final VoidCallback onTap;
+
+  const _MenuItem({
+    required this.label,
+    required this.onTap,
+    this.icon,
+    this.iconColor,
+    this.customIcon,
+  });
+}
+
+// ─── Opening Balances Page ───────────────────────────────────────────────────
+
+class _ClientOpeningBalancesPage extends StatefulWidget {
+  const _ClientOpeningBalancesPage();
+
+  @override
+  State<_ClientOpeningBalancesPage> createState() =>
+      _ClientOpeningBalancesPageState();
+}
+
+class _ClientOpeningBalancesPageState
+    extends State<_ClientOpeningBalancesPage> {
+  String _search = '';
+  bool _generating = false;
+
+  void _showReportChoiceDialog() {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => Directionality(
+        textDirection: ui.TextDirection.rtl,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'اختر نوع التقرير',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const Divider(),
+              ListTile(
+                leading:
+                    const Icon(Icons.picture_as_pdf, color: Colors.blue),
+                title: const Text(
+                    'تقرير الأرصدة الافتتاحية والمبالغ النقدية'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _generatePdf();
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.picture_as_pdf, color: Colors.red),
+                title: const Text('تقرير سند الصرف'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _generateVoucherPdf('عليه', 'تقرير سند الصرف');
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.picture_as_pdf, color: Colors.green),
+                title: const Text('تقرير سند القبض'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _generateVoucherPdf('له', 'تقرير سند القبض');
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _generateVoucherPdf(
+      String direction, String reportTitle) async {
+    final voucherCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: ui.TextDirection.rtl,
+        child: AlertDialog(
+          title: Text(reportTitle),
+          content: TextField(
+            controller: voucherCtrl,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'رقم السند',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.black87,
+                  foregroundColor: Colors.white),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('طباعة'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || voucherCtrl.text.trim().isEmpty) return;
+    final voucherNumber = int.tryParse(voucherCtrl.text.trim());
+    if (voucherNumber == null) return;
+
+    setState(() => _generating = true);
+    try {
+      final amiriRegularData =
+          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
+      final amiriRegular =
+          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
+
+      final now = DateTime.now();
+      final dateStr = DateFormat('dd/MM/yyyy').format(now);
+      final timeStr = DateFormat('hh:mm:ss a').format(now);
+
+      final snap = await FirebaseFirestore.instance
+          .collection('client_vouchers')
+          .where('direction', isEqualTo: direction)
+          .where('voucherNumber', isEqualTo: voucherNumber)
+          .limit(1)
+          .get();
+
+      if (snap.docs.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content:
+                    Text('لم يتم العثور على سند برقم $voucherNumber')),
+          );
+        }
+        return;
+      }
+
+      final data = snap.docs.first.data();
+      final voucherDate = (data['date'] is Timestamp)
+          ? DateFormat('yyyy/MM/dd')
+              .format((data['date'] as Timestamp).toDate())
+          : data['date']?.toString() ?? '';
+      final clientName = (data['clientName'] ?? '').toString();
+      final amount = (data['amount'] ?? 0.0).toDouble();
+      final description = (data['description'] ?? '').toString();
+      final vNum = data['voucherNumber']?.toString() ?? '';
+
+      pw.TextStyle s(
+              {bool bold = false,
+              PdfColor color = PdfColors.black,
+              double fontSize = 11}) =>
+          pw.TextStyle(
+            font: bold ? amiriBold : amiriRegular,
+            fontSize: fontSize,
+            color: color,
+          );
+
+      pw.TableRow row3(String arabic, String english, String value) =>
+          pw.TableRow(
+            children: [
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 7),
+                child: pw.Text(english, style: s()),
+              ),
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 7),
+                child: pw.Text(value,
+                    textDirection: pw.TextDirection.rtl,
+                    textAlign: pw.TextAlign.center,
+                    style: s(bold: true)),
+              ),
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 7),
+                child: pw.Text(arabic,
+                    textDirection: pw.TextDirection.rtl,
+                    textAlign: pw.TextAlign.right,
+                    style: s(bold: true)),
+              ),
+            ],
+          );
+
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(32),
+          build: (pw.Context ctx) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('Date: $dateStr', style: s(fontSize: 9)),
+                        pw.Text('Time: $timeStr', style: s(fontSize: 9)),
+                      ],
+                    ),
+                    pw.SizedBox(),
+                  ],
+                ),
+                pw.SizedBox(height: 20),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('#$vNum#', style: s(fontSize: 12)),
+                    pw.Text(
+                      reportTitle,
+                      textDirection: pw.TextDirection.rtl,
+                      style: s(bold: true, fontSize: 16),
+                    ),
+                    pw.Text('ج.م', style: s(fontSize: 12)),
+                  ],
+                ),
+                pw.SizedBox(height: 16),
+                pw.Table(
+                  border:
+                      pw.TableBorder.all(color: PdfColors.black, width: 0.7),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(2),
+                    1: const pw.FlexColumnWidth(3),
+                    2: const pw.FlexColumnWidth(2),
+                  },
+                  children: [
+                    row3('رقم السند', 'No.', vNum),
+                    row3('التاريخ', 'Date', voucherDate),
+                    row3('تم تسليم السيد/الساده', 'Pay To Mr/Mrs',
+                        clientName),
+                    row3('مبلغ وقدره', 'Amount',
+                        'فقط ${amount.toStringAsFixed(2)} ج.م لا غير'),
+                    row3('وذلك مقابل', 'For', description),
+                  ],
+                ),
+                pw.SizedBox(height: 60),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Text('المدير',
+                            textDirection: pw.TextDirection.rtl,
+                            style: s(bold: true)),
+                        pw.SizedBox(height: 30),
+                        pw.Container(
+                            width: 120, height: 1, color: PdfColors.black),
+                      ],
+                    ),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Text('المستلم',
+                            textDirection: pw.TextDirection.rtl,
+                            style: s(bold: true)),
+                        pw.SizedBox(height: 30),
+                        pw.Container(
+                            width: 120, height: 1, color: PdfColors.black),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      );
+
+      final dir = await getTemporaryDirectory();
+      final safeTitle = direction == 'عليه' ? 'sarf' : 'qabdh';
+      final file = File(
+          '${dir.path}/client_voucher_${safeTitle}_${vNum}_${dateStr.replaceAll('/', '-')}.pdf');
+      await file.writeAsBytes(await pdf.save());
+
+      if (mounted) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => Directionality(
+            textDirection: ui.TextDirection.rtl,
+            child: AlertDialog(
+              title: Text(reportTitle),
+              content: const Text('تم إنشاء السند. ماذا تريد أن تفعل؟'),
+              actions: [
+                TextButton.icon(
+                  icon: const Icon(Icons.share),
+                  label: const Text('مشاركة'),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await Share.shareXFiles([XFile(file.path)],
+                        text: reportTitle);
+                  },
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('فتح'),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black87,
+                      foregroundColor: Colors.white),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await OpenFilex.open(file.path);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في إنشاء السند: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  Future<void> _generatePdf() async {
+    setState(() => _generating = true);
+    try {
+      final amiriRegularData =
+          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
+      final amiriRegular =
+          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
+
+      final now = DateTime.now();
+      final dateStr = DateFormat('dd/MM/yyyy').format(now);
+      final timeStr = DateFormat('hh:mm:ss a').format(now);
+
+      final snap = await FirebaseFirestore.instance
+          .collection('clients')
+          .orderBy('clientName')
+          .get();
+
+      final rows = <Map<String, dynamic>>[];
+      for (final doc in snap.docs) {
+        final name = (doc['clientName'] ?? '').toString();
+        final balance = (doc['balance'] ?? 0.0).toDouble();
+        final lahu = balance < 0 ? balance.abs() : 0.0;
+        final alayhi = balance > 0 ? balance : 0.0;
+        rows.add({'name': name, 'lahu': lahu, 'alayhi': alayhi});
+      }
+
+      final grandLahu =
+          rows.fold<double>(0.0, (s, r) => s + (r['lahu'] as double));
+      final grandAlayhi =
+          rows.fold<double>(0.0, (s, r) => s + (r['alayhi'] as double));
+
+      pw.TextStyle cell(
+              {bool bold = false,
+              PdfColor color = PdfColors.black,
+              double fontSize = 10}) =>
+          pw.TextStyle(
+            font: bold ? amiriBold : amiriRegular,
+            fontSize: fontSize,
+            color: color,
+          );
+
+      pw.Widget headerCell(String text) => pw.Padding(
+            padding:
+                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: pw.Text(text,
+                textDirection: pw.TextDirection.rtl,
+                textAlign: pw.TextAlign.center,
+                style: cell(bold: true, fontSize: 9)),
+          );
+
+      pw.Widget dataCell(String text,
+              {bool red = false, bool bold = false}) =>
+          pw.Padding(
+            padding:
+                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            child: pw.Text(text,
+                textDirection: pw.TextDirection.rtl,
+                textAlign: pw.TextAlign.center,
+                style: cell(
+                    bold: bold,
+                    color: red ? PdfColors.red : PdfColors.black)),
+          );
+
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(24),
+          build: (pw.Context ctx) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Row(
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('Date: $dateStr',
+                            style: cell(fontSize: 9)),
+                        pw.Text('Time: $timeStr',
+                            style: cell(fontSize: 9)),
+                      ],
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 16),
+                pw.Center(
+                  child: pw.Text(
+                    'الأرصدة الافتتاحية والمبالغ النقدية للعملاء',
+                    textDirection: pw.TextDirection.rtl,
+                    style: cell(bold: true, fontSize: 14),
+                  ),
+                ),
+                pw.SizedBox(height: 12),
+                pw.Table(
+                  border: pw.TableBorder.all(
+                      color: PdfColors.grey400, width: 0.5),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(1),
+                    1: const pw.FlexColumnWidth(3),
+                    2: const pw.FlexColumnWidth(2),
+                    3: const pw.FlexColumnWidth(2),
+                  },
+                  children: [
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey200),
+                      children: [
+                        headerCell('#'),
+                        headerCell('اسم العميل'),
+                        headerCell('له'),
+                        headerCell('عليه'),
+                      ],
+                    ),
+                    for (int i = 0; i < rows.length; i++)
+                      pw.TableRow(
+                        decoration: pw.BoxDecoration(
+                          color: i.isEven
+                              ? PdfColors.white
+                              : PdfColors.grey50,
+                        ),
+                        children: [
+                          dataCell('${i + 1}'),
+                          dataCell(rows[i]['name'] as String),
+                          dataCell(
+                              (rows[i]['lahu'] as double)
+                                  .toStringAsFixed(2),
+                              red: (rows[i]['lahu'] as double) > 0),
+                          dataCell((rows[i]['alayhi'] as double)
+                              .toStringAsFixed(2)),
+                        ],
+                      ),
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey100),
+                      children: [
+                        dataCell(''),
+                        dataCell('الإجمالي', bold: true, red: true),
+                        dataCell(grandLahu.toStringAsFixed(2),
+                            bold: true, red: true),
+                        dataCell(grandAlayhi.toStringAsFixed(2),
+                            bold: true),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      );
+
+      final dir = await getTemporaryDirectory();
+      final file = File(
+          '${dir.path}/client_opening_balances_${dateStr.replaceAll('/', '-')}.pdf');
+      await file.writeAsBytes(await pdf.save());
+
+      if (mounted) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => Directionality(
+            textDirection: ui.TextDirection.rtl,
+            child: AlertDialog(
+              title: const Text('تقرير الأرصدة الافتتاحية'),
+              content: const Text('تم إنشاء التقرير. ماذا تريد أن تفعل؟'),
+              actions: [
+                TextButton.icon(
+                  icon: const Icon(Icons.share),
+                  label: const Text('مشاركة'),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await Share.shareXFiles([XFile(file.path)],
+                        text: 'الأرصدة الافتتاحية والمبالغ النقدية للعملاء');
+                  },
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('فتح'),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black87,
+                      foregroundColor: Colors.white),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await OpenFilex.open(file.path);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في إنشاء التقرير: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  void _showAddAmountDialog(BuildContext context, String clientId,
+      String clientName, double currentBalance) async {
+    final voucherSnap = await FirebaseFirestore.instance
+        .collection('client_vouchers')
+        .orderBy('voucherNumber', descending: true)
+        .limit(1)
+        .get();
+    final nextVoucher = voucherSnap.docs.isNotEmpty
+        ? (voucherSnap.docs.first['voucherNumber'] as int) + 1
+        : 1;
+
+    String direction = 'عليه';
+    String paymentMethod = 'نقداً';
+    DateTime selectedDate = DateTime.now();
+    final amountCtrl = TextEditingController(text: '0');
+    final descCtrl = TextEditingController();
+    final voucherCtrl =
+        TextEditingController(text: nextVoucher.toString());
+
+    await showDialog(
+      context: context,
+      builder: (ctx) => StatefulBuilder(
+        builder: (ctx, setDlg) {
+          return Directionality(
+            textDirection: ui.TextDirection.rtl,
+            child: Dialog(
+              shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(16)),
+              child: SingleChildScrollView(
+                child: Padding(
+                  padding: const EdgeInsets.all(20),
+                  child: Column(
+                    mainAxisSize: MainAxisSize.min,
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      const Text(
+                        'اضف مبلغ للعميل',
+                        textAlign: TextAlign.center,
+                        style: TextStyle(
+                            fontSize: 18, fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 4),
+                      Text(
+                        clientName,
+                        textAlign: TextAlign.center,
+                        style: const TextStyle(
+                            fontSize: 16,
+                            color: Colors.red,
+                            fontWeight: FontWeight.bold),
+                      ),
+                      const SizedBox(height: 16),
+                      Container(
+                        color: Colors.grey.shade100,
+                        padding:
+                            const EdgeInsets.symmetric(vertical: 8),
+                        child: Row(
+                          mainAxisAlignment:
+                              MainAxisAlignment.spaceEvenly,
+                          children: [
+                            Row(children: [
+                              Radio<String>(
+                                value: 'عليه',
+                                groupValue: direction,
+                                activeColor: Colors.green,
+                                onChanged: (v) =>
+                                    setDlg(() => direction = v!),
+                              ),
+                              const Text('عليه',
+                                  style: TextStyle(fontSize: 15)),
+                            ]),
+                            Row(children: [
+                              Radio<String>(
+                                value: 'له',
+                                groupValue: direction,
+                                activeColor: Colors.green,
+                                onChanged: (v) =>
+                                    setDlg(() => direction = v!),
+                              ),
+                              const Text('له',
+                                  style: TextStyle(fontSize: 15)),
+                            ]),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: voucherCtrl,
+                              textAlign: TextAlign.center,
+                              keyboardType: TextInputType.number,
+                              decoration: InputDecoration(
+                                border: OutlineInputBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(8)),
+                                contentPadding:
+                                    const EdgeInsets.symmetric(
+                                        vertical: 10, horizontal: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text('رقم السند',
+                              style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: descCtrl,
+                        textAlign: TextAlign.right,
+                        decoration: InputDecoration(
+                          hintText: 'البيان : تفاصيل السند',
+                          border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(8)),
+                          contentPadding: const EdgeInsets.symmetric(
+                              vertical: 12, horizontal: 12),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      InkWell(
+                        onTap: () async {
+                          final picked = await showDatePicker(
+                            context: ctx,
+                            initialDate: selectedDate,
+                            firstDate: DateTime(2020),
+                            lastDate: DateTime(2030),
+                          );
+                          if (picked != null)
+                            setDlg(() => selectedDate = picked);
+                        },
+                        child: Container(
+                          decoration: BoxDecoration(
+                            border: Border.all(
+                                color: Colors.blue.shade300),
+                            borderRadius: BorderRadius.circular(8),
+                          ),
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 12),
+                          child: Row(
+                            children: [
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                    horizontal: 14, vertical: 8),
+                                decoration: BoxDecoration(
+                                  color: Colors.grey.shade300,
+                                  borderRadius:
+                                      BorderRadius.circular(6),
+                                ),
+                                child: Text(
+                                  '${selectedDate.year}-${selectedDate.month.toString().padLeft(2, '0')}-${selectedDate.day.toString().padLeft(2, '0')}',
+                                  style:
+                                      const TextStyle(fontSize: 14),
+                                ),
+                              ),
+                              const SizedBox(width: 12),
+                              const Expanded(
+                                child: Text('التاريخ',
+                                    textAlign: TextAlign.right,
+                                    style: TextStyle(fontSize: 15)),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Container(
+                        decoration: BoxDecoration(
+                          border:
+                              Border.all(color: Colors.blue.shade300),
+                          borderRadius: BorderRadius.circular(8),
+                        ),
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 6),
+                        child: Wrap(
+                          alignment: WrapAlignment.spaceEvenly,
+                          crossAxisAlignment: WrapCrossAlignment.center,
+                          children: [
+                            Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Radio<String>(
+                                    value: 'شيك',
+                                    groupValue: paymentMethod,
+                                    activeColor: Colors.green,
+                                    onChanged: (v) => setDlg(
+                                        () => paymentMethod = v!),
+                                  ),
+                                  const Text('شيك'),
+                                ]),
+                            Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Radio<String>(
+                                    value: 'بطاقة',
+                                    groupValue: paymentMethod,
+                                    activeColor: Colors.green,
+                                    onChanged: (v) => setDlg(
+                                        () => paymentMethod = v!),
+                                  ),
+                                  const Text('بطاقة'),
+                                ]),
+                            Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Radio<String>(
+                                    value: 'نقداً',
+                                    groupValue: paymentMethod,
+                                    activeColor: Colors.green,
+                                    onChanged: (v) => setDlg(
+                                        () => paymentMethod = v!),
+                                  ),
+                                  const Text('نقداً'),
+                                ]),
+                            const Text('طريقة الدفع',
+                                style: TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.bold)),
+                          ],
+                        ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: TextField(
+                              controller: amountCtrl,
+                              textAlign: TextAlign.center,
+                              keyboardType:
+                                  const TextInputType.numberWithOptions(
+                                      decimal: true),
+                              style: const TextStyle(
+                                  fontSize: 18,
+                                  color: Colors.red,
+                                  fontWeight: FontWeight.bold),
+                              decoration: InputDecoration(
+                                filled: true,
+                                fillColor: Colors.yellow.shade200,
+                                border: OutlineInputBorder(
+                                    borderRadius:
+                                        BorderRadius.circular(8)),
+                                contentPadding:
+                                    const EdgeInsets.symmetric(
+                                        vertical: 12, horizontal: 12),
+                              ),
+                            ),
+                          ),
+                          const SizedBox(width: 12),
+                          const Text('المبلغ',
+                              style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.bold)),
+                        ],
+                      ),
+                      const SizedBox(height: 20),
+                      Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceAround,
+                        children: [
+                          TextButton(
+                            onPressed: () => Navigator.pop(ctx),
+                            child: const Text('تراجع',
+                                style: TextStyle(
+                                    color: Colors.pink, fontSize: 15)),
+                          ),
+                          TextButton(
+                            onPressed: () async {
+                              final amount =
+                                  double.tryParse(amountCtrl.text) ??
+                                      0.0;
+                              if (amount == 0) return;
+
+                              double delta = direction == 'عليه'
+                                  ? amount
+                                  : -amount;
+                              double newBalance =
+                                  currentBalance + delta;
+
+                              await FirebaseFirestore.instance
+                                  .collection('clients')
+                                  .doc(clientId)
+                                  .update({'balance': newBalance});
+
+                              await FirebaseFirestore.instance
+                                  .collection('client_vouchers')
+                                  .add({
+                                'clientId': clientId,
+                                'clientName': clientName,
+                                'voucherNumber':
+                                    int.tryParse(voucherCtrl.text) ??
+                                        nextVoucher,
+                                'direction': direction,
+                                'amount': amount,
+                                'description': descCtrl.text,
+                                'date': selectedDate,
+                                'paymentMethod': paymentMethod,
+                                'timestamp':
+                                    FieldValue.serverTimestamp(),
+                              });
+
+                              if (ctx.mounted) Navigator.pop(ctx);
+                              if (context.mounted) {
+                                ScaffoldMessenger.of(context)
+                                    .showSnackBar(
+                                  const SnackBar(
+                                      content:
+                                          Text('تم إضافة المبلغ بنجاح')),
+                                );
+                              }
+                            },
+                            child: const Text('اضافة المبلغ',
+                                style: TextStyle(
+                                    color: Colors.pink, fontSize: 15)),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: ui.TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.black.withOpacity(0.7),
+          iconTheme: const IconThemeData(color: Colors.white),
+          title: const Text(
+            'الأرصدة الافتتاحية والمبالغ النقدية للعملاء',
+            style: TextStyle(
+                color: Colors.white,
+                fontWeight: FontWeight.bold,
+                fontSize: 15),
+          ),
+        ),
+        body: Column(
+          children: [
+            Padding(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              child: Row(
+                children: [
+                  Expanded(
+                    child: ElevatedButton(
+                      style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.grey.shade300,
+                          foregroundColor: Colors.black),
+                      onPressed:
+                          _generating ? null : _showReportChoiceDialog,
+                      child: _generating
+                          ? const SizedBox(
+                              width: 18,
+                              height: 18,
+                              child: CircularProgressIndicator(
+                                  strokeWidth: 2))
+                          : const Text('تقرير'),
+                    ),
+                  ),
+                  const SizedBox(width: 8),
+                  Expanded(
+                    flex: 2,
+                    child: TextField(
+                      textAlign: TextAlign.right,
+                      decoration: const InputDecoration(
+                        hintText: 'بحث',
+                        border: OutlineInputBorder(),
+                        contentPadding: EdgeInsets.symmetric(
+                            vertical: 8, horizontal: 12),
+                      ),
+                      onChanged: (v) => setState(() => _search = v),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            Container(
+              color: Colors.grey.shade200,
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 8),
+              child: const Row(
+                children: [
+                  Expanded(
+                      child: Text('عليه',
+                          textAlign: TextAlign.center,
+                          style:
+                              TextStyle(fontWeight: FontWeight.bold))),
+                  Expanded(
+                      child: Text('له',
+                          textAlign: TextAlign.center,
+                          style:
+                              TextStyle(fontWeight: FontWeight.bold))),
+                  Expanded(
+                      flex: 2,
+                      child: Text('بيانات العميل',
+                          textAlign: TextAlign.right,
+                          style:
+                              TextStyle(fontWeight: FontWeight.bold))),
+                ],
+              ),
+            ),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('clients')
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(
+                        child: CircularProgressIndicator());
+                  }
+                  final clients = snapshot.data!.docs.where((d) {
+                    if (_search.isEmpty) return true;
+                    return (d['clientName'] ?? '')
+                        .toString()
+                        .toLowerCase()
+                        .contains(_search.toLowerCase());
+                  }).toList();
+
+                  return ListView.separated(
+                    itemCount: clients.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final doc = clients[index];
+                      final name =
+                          (doc['clientName'] ?? '').toString();
+                      final balance =
+                          (doc['balance'] ?? 0.0).toDouble();
+                      final lahu =
+                          balance < 0 ? balance.abs() : 0.0;
+                      final alayhi = balance > 0 ? balance : 0.0;
+
+                      return InkWell(
+                        onTap: () => _showAddAmountDialog(
+                            context, doc.id, name, balance),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                              horizontal: 12, vertical: 10),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Container(
+                                  alignment: Alignment.center,
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 6),
+                                  color: Colors.grey.shade200,
+                                  child: Text(
+                                    alayhi.toStringAsFixed(2),
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                child: Container(
+                                  alignment: Alignment.center,
+                                  padding: const EdgeInsets.symmetric(
+                                      vertical: 6),
+                                  color: Colors.brown.shade100,
+                                  child: Text(
+                                    lahu.toStringAsFixed(2),
+                                    style: const TextStyle(
+                                        fontWeight: FontWeight.bold),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Expanded(
+                                flex: 2,
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.end,
+                                  children: [
+                                    Text(name,
+                                        textAlign: TextAlign.right,
+                                        style: const TextStyle(
+                                            fontWeight:
+                                                FontWeight.bold)),
+                                    Text(
+                                      '${index + 1}',
+                                      textAlign: TextAlign.right,
+                                      style: TextStyle(
+                                          color: Colors.grey.shade500,
+                                          fontSize: 12),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Deferred Page ───────────────────────────────────────────────────────────
+
+class _ClientDeferredPage extends StatefulWidget {
+  const _ClientDeferredPage();
+
+  @override
+  State<_ClientDeferredPage> createState() => _ClientDeferredPageState();
+}
+
+class _ClientDeferredPageState extends State<_ClientDeferredPage> {
+  String _search = '';
+  bool _generating = false;
+
+  void _showReportChoiceDialog(
+      List<MapEntry<String, double>> allEntries, double grandTotal) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => Directionality(
+        textDirection: ui.TextDirection.rtl,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 8),
+                child: Text(
+                  'اختر نوع التقرير',
+                  style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.picture_as_pdf,
+                    color: Colors.orange),
+                title: const Text(
+                    'تقرير المبالغ المتبقية من الفواتير الآجل'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _generatePdf(allEntries, grandTotal);
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.picture_as_pdf, color: Colors.red),
+                title: const Text('تقرير سند الصرف'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _generateVoucherPdf('عليه', 'تقرير سند الصرف');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.picture_as_pdf,
+                    color: Colors.green),
+                title: const Text('تقرير سند القبض'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _generateVoucherPdf('له', 'تقرير سند القبض');
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _generateVoucherPdf(
+      String direction, String reportTitle) async {
+    final voucherCtrl = TextEditingController();
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: ui.TextDirection.rtl,
+        child: AlertDialog(
+          title: Text(reportTitle),
+          content: TextField(
+            controller: voucherCtrl,
+            keyboardType: TextInputType.number,
+            textAlign: TextAlign.center,
+            autofocus: true,
+            decoration: const InputDecoration(
+              labelText: 'رقم السند',
+              border: OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.black87,
+                  foregroundColor: Colors.white),
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('طباعة'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (confirmed != true || voucherCtrl.text.trim().isEmpty) return;
+    final voucherNumber = int.tryParse(voucherCtrl.text.trim());
+    if (voucherNumber == null) return;
+
+    setState(() => _generating = true);
+    try {
+      final amiriRegularData =
+          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
+      final amiriRegular =
+          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
+
+      final now = DateTime.now();
+      final dateStr = DateFormat('dd/MM/yyyy').format(now);
+      final timeStr = DateFormat('hh:mm:ss a').format(now);
+
+      final snap = await FirebaseFirestore.instance
+          .collection('client_vouchers')
+          .where('direction', isEqualTo: direction)
+          .where('voucherNumber', isEqualTo: voucherNumber)
+          .limit(1)
+          .get();
+
+      if (snap.docs.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+                content:
+                    Text('لم يتم العثور على سند برقم $voucherNumber')),
+          );
+        }
+        return;
+      }
+
+      final data = snap.docs.first.data();
+      final voucherDate = (data['date'] is Timestamp)
+          ? DateFormat('yyyy/MM/dd')
+              .format((data['date'] as Timestamp).toDate())
+          : data['date']?.toString() ?? '';
+      final clientName = (data['clientName'] ?? '').toString();
+      final amount = (data['amount'] ?? 0.0).toDouble();
+      final description = (data['description'] ?? '').toString();
+      final vNum = data['voucherNumber']?.toString() ?? '';
+
+      pw.TextStyle s(
+              {bool bold = false,
+              PdfColor color = PdfColors.black,
+              double fontSize = 11}) =>
+          pw.TextStyle(
+            font: bold ? amiriBold : amiriRegular,
+            fontSize: fontSize,
+            color: color,
+          );
+
+      pw.TableRow row3(String arabic, String english, String value) =>
+          pw.TableRow(
+            children: [
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 7),
+                child: pw.Text(english, style: s()),
+              ),
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 7),
+                child: pw.Text(value,
+                    textDirection: pw.TextDirection.rtl,
+                    textAlign: pw.TextAlign.center,
+                    style: s(bold: true)),
+              ),
+              pw.Padding(
+                padding: const pw.EdgeInsets.symmetric(
+                    horizontal: 6, vertical: 7),
+                child: pw.Text(arabic,
+                    textDirection: pw.TextDirection.rtl,
+                    textAlign: pw.TextAlign.right,
+                    style: s(bold: true)),
+              ),
+            ],
+          );
+
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(32),
+          build: (pw.Context ctx) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('Date: $dateStr', style: s(fontSize: 9)),
+                        pw.Text('Time: $timeStr', style: s(fontSize: 9)),
+                      ],
+                    ),
+                    pw.SizedBox(),
+                  ],
+                ),
+                pw.SizedBox(height: 20),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Text('#$vNum#', style: s(fontSize: 12)),
+                    pw.Text(reportTitle,
+                        textDirection: pw.TextDirection.rtl,
+                        style: s(bold: true, fontSize: 16)),
+                    pw.Text('ج.م', style: s(fontSize: 12)),
+                  ],
+                ),
+                pw.SizedBox(height: 16),
+                pw.Table(
+                  border:
+                      pw.TableBorder.all(color: PdfColors.black, width: 0.7),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(2),
+                    1: const pw.FlexColumnWidth(3),
+                    2: const pw.FlexColumnWidth(2),
+                  },
+                  children: [
+                    row3('رقم السند', 'No.', vNum),
+                    row3('التاريخ', 'Date', voucherDate),
+                    row3('تم تسليم السيد/الساده', 'Pay To Mr/Mrs',
+                        clientName),
+                    row3('مبلغ وقدره', 'Amount',
+                        'فقط ${amount.toStringAsFixed(2)} ج.م لا غير'),
+                    row3('وذلك مقابل', 'For', description),
+                  ],
+                ),
+                pw.SizedBox(height: 60),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Text('المدير',
+                            textDirection: pw.TextDirection.rtl,
+                            style: s(bold: true)),
+                        pw.SizedBox(height: 30),
+                        pw.Container(
+                            width: 120, height: 1, color: PdfColors.black),
+                      ],
+                    ),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Text('المستلم',
+                            textDirection: pw.TextDirection.rtl,
+                            style: s(bold: true)),
+                        pw.SizedBox(height: 30),
+                        pw.Container(
+                            width: 120, height: 1, color: PdfColors.black),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      );
+
+      final dir = await getTemporaryDirectory();
+      final safeTitle = direction == 'عليه' ? 'sarf' : 'qabdh';
+      final file = File(
+          '${dir.path}/client_voucher_${safeTitle}_${vNum}_${dateStr.replaceAll('/', '-')}.pdf');
+      await file.writeAsBytes(await pdf.save());
+
+      if (mounted) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => Directionality(
+            textDirection: ui.TextDirection.rtl,
+            child: AlertDialog(
+              title: Text(reportTitle),
+              content: const Text('تم إنشاء السند. ماذا تريد أن تفعل؟'),
+              actions: [
+                TextButton.icon(
+                  icon: const Icon(Icons.share),
+                  label: const Text('مشاركة'),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await Share.shareXFiles([XFile(file.path)],
+                        text: reportTitle);
+                  },
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('فتح'),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black87,
+                      foregroundColor: Colors.white),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await OpenFilex.open(file.path);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في إنشاء السند: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  Future<void> _generatePdf(
+      List<MapEntry<String, double>> entries, double grandTotal) async {
+    setState(() => _generating = true);
+    try {
+      final amiriRegularData =
+          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
+      final amiriRegular =
+          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
+
+      final now = DateTime.now();
+      final dateStr = DateFormat('dd/MM/yyyy').format(now);
+      final timeStr = DateFormat('hh:mm:ss a').format(now);
+
+      pw.TextStyle cell(
+              {bool bold = false,
+              PdfColor color = PdfColors.black,
+              double fontSize = 10}) =>
+          pw.TextStyle(
+            font: bold ? amiriBold : amiriRegular,
+            fontSize: fontSize,
+            color: color,
+          );
+
+      pw.Widget headerCell(String text) => pw.Padding(
+            padding:
+                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: pw.Text(text,
+                textDirection: pw.TextDirection.rtl,
+                textAlign: pw.TextAlign.center,
+                style: cell(bold: true, fontSize: 9)),
+          );
+
+      pw.Widget dataCell(String text,
+              {bool red = false, bool bold = false}) =>
+          pw.Padding(
+            padding:
+                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            child: pw.Text(text,
+                textDirection: pw.TextDirection.rtl,
+                textAlign: pw.TextAlign.center,
+                style: cell(
+                    bold: bold,
+                    color: red ? PdfColors.red : PdfColors.black)),
+          );
+
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(24),
+          build: (pw.Context ctx) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('Date: $dateStr',
+                            style: cell(fontSize: 9)),
+                        pw.Text('Time: $timeStr',
+                            style: cell(fontSize: 9)),
+                      ],
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 16),
+                pw.Center(
+                  child: pw.Text(
+                    'ذمم العملاء - المبالغ المتبقية من الفواتير الآجل',
+                    textDirection: pw.TextDirection.rtl,
+                    style: cell(bold: true, fontSize: 14),
+                  ),
+                ),
+                pw.SizedBox(height: 12),
+                pw.Table(
+                  border: pw.TableBorder.all(
+                      color: PdfColors.grey400, width: 0.5),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(1),
+                    1: const pw.FlexColumnWidth(3),
+                    2: const pw.FlexColumnWidth(2),
+                  },
+                  children: [
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey200),
+                      children: [
+                        headerCell('#'),
+                        headerCell('اسم العميل'),
+                        headerCell('المبلغ المتبقي'),
+                      ],
+                    ),
+                    for (int i = 0; i < entries.length; i++)
+                      pw.TableRow(
+                        decoration: pw.BoxDecoration(
+                          color: i.isEven
+                              ? PdfColors.white
+                              : PdfColors.grey50,
+                        ),
+                        children: [
+                          dataCell('${i + 1}'),
+                          dataCell(entries[i].key),
+                          dataCell(entries[i].value.toStringAsFixed(2),
+                              red: true),
+                        ],
+                      ),
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey100),
+                      children: [
+                        dataCell(''),
+                        dataCell('الإجمالي', bold: true, red: true),
+                        dataCell(grandTotal.toStringAsFixed(2),
+                            bold: true, red: true),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      );
+
+      final dir = await getTemporaryDirectory();
+      final file = File(
+          '${dir.path}/client_deferred_${dateStr.replaceAll('/', '-')}.pdf');
+      await file.writeAsBytes(await pdf.save());
+
+      if (mounted) {
+        await showDialog(
+          context: context,
+          builder: (ctx) => Directionality(
+            textDirection: ui.TextDirection.rtl,
+            child: AlertDialog(
+              title: const Text(
+                  'تقرير المبالغ المتبقية من الفواتير الآجل'),
+              content:
+                  const Text('تم إنشاء التقرير. ماذا تريد أن تفعل؟'),
+              actions: [
+                TextButton.icon(
+                  icon: const Icon(Icons.share),
+                  label: const Text('مشاركة'),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await Share.shareXFiles([XFile(file.path)],
+                        text:
+                            'ذمم العملاء - المبالغ المتبقية من الفواتير الآجل');
+                  },
+                ),
+                ElevatedButton.icon(
+                  icon: const Icon(Icons.open_in_new),
+                  label: const Text('فتح'),
+                  style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.black87,
+                      foregroundColor: Colors.white),
+                  onPressed: () async {
+                    Navigator.pop(ctx);
+                    await OpenFilex.open(file.path);
+                  },
+                ),
+              ],
+            ),
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في إنشاء التقرير: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: ui.TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.black.withOpacity(0.7),
+          iconTheme: const IconThemeData(color: Colors.white),
+          title: const Text(
+            'ذمم العملاء - الفواتير الآجل',
+            style: TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('clients')
+              .where('balance', isGreaterThan: 0)
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final docs = snapshot.data!.docs;
+            if (docs.isEmpty) {
+              return const Center(
+                  child: Text('لا توجد ذمم متبقية للعملاء'));
+            }
+
+            final allEntries = docs
+                .map<MapEntry<String, double>>((d) => MapEntry(
+                    (d['clientName'] ?? '').toString(),
+                    ((d['balance'] ?? 0.0) as num).toDouble()))
+                .toList()
+              ..sort((a, b) => b.value.compareTo(a.value));
+            final double grandTotal =
+                allEntries.fold(0.0, (s, e) => s + e.value);
+            final clientIds = {
+              for (final d in docs)
+                (d['clientName'] ?? '').toString(): d.id
+            };
+
+            final filtered = _search.isEmpty
+                ? allEntries
+                : allEntries
+                    .where((e) => e.key
+                        .toLowerCase()
+                        .contains(_search.toLowerCase()))
+                    .toList();
+
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 8, vertical: 8),
+                  child: Row(
+                    children: [
+                      Expanded(
+                        child: ElevatedButton.icon(
+                          style: ElevatedButton.styleFrom(
+                              backgroundColor: Colors.grey.shade300,
+                              foregroundColor: Colors.black),
+                          onPressed: _generating
+                              ? null
+                              : () => _showReportChoiceDialog(
+                                  allEntries, grandTotal),
+                          icon: _generating
+                              ? const SizedBox(
+                                  width: 16,
+                                  height: 16,
+                                  child: CircularProgressIndicator(
+                                      strokeWidth: 2))
+                              : const Icon(Icons.picture_as_pdf,
+                                  size: 18),
+                          label: const Text('تقرير'),
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        flex: 2,
+                        child: TextField(
+                          textAlign: TextAlign.right,
+                          decoration: const InputDecoration(
+                            hintText: 'بحث',
+                            prefixIcon: Icon(Icons.search),
+                            border: OutlineInputBorder(),
+                            contentPadding: EdgeInsets.symmetric(
+                                vertical: 8, horizontal: 12),
+                          ),
+                          onChanged: (v) =>
+                              setState(() => _search = v),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                Container(
+                  color: Colors.orange.shade100,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 10),
+                  child: Row(
+                    mainAxisAlignment:
+                        MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(grandTotal.toStringAsFixed(2),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Colors.red)),
+                      const Text('الإجمالي',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16)),
+                    ],
+                  ),
+                ),
+                Expanded(
+                  child: ListView.separated(
+                    itemCount: filtered.length,
+                    separatorBuilder: (_, __) =>
+                        const Divider(height: 1),
+                    itemBuilder: (context, index) {
+                      final e = filtered[index];
+                      final id = clientIds[e.key] ?? '';
+                      return ListTile(
+                        onTap: () => id.isNotEmpty
+                            ? Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ClientInvoicesPage(
+                                      clientId: id),
+                                ))
+                            : null,
+                        title: Text(e.key,
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15)),
+                        trailing: Text(
+                          e.value.toStringAsFixed(2),
+                          style: const TextStyle(
+                              color: Colors.red,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16),
+                        ),
+                        leading: const Icon(Icons.arrow_back_ios,
+                            size: 16, color: Colors.grey),
+                      );
+                    },
+                  ),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Remaining Report Page ───────────────────────────────────────────────────
+
+class _ClientRemainingReportPage extends StatefulWidget {
+  const _ClientRemainingReportPage();
+
+  @override
+  State<_ClientRemainingReportPage> createState() =>
+      _ClientRemainingReportPageState();
+}
+
+class _ClientRemainingReportPageState
+    extends State<_ClientRemainingReportPage> {
+  bool _generating = false;
+
+  Future<void> _generatePdf(List<QueryDocumentSnapshot> clients) async {
+    setState(() => _generating = true);
+    try {
+      final amiriRegularData =
+          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
+      final amiriRegular =
+          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
+
+      final now = DateTime.now();
+      final dateStr = DateFormat('dd/MM/yyyy').format(now);
+      final timeStr = DateFormat('hh:mm:ss a').format(now);
+
+      pw.TextStyle cell(
+              {bool bold = false,
+              PdfColor color = PdfColors.black,
+              double fontSize = 10}) =>
+          pw.TextStyle(
+            font: bold ? amiriBold : amiriRegular,
+            fontSize: fontSize,
+            color: color,
+          );
+
+      pw.Widget headerCell(String text) => pw.Padding(
+            padding:
+                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: pw.Text(text,
+                textDirection: pw.TextDirection.rtl,
+                textAlign: pw.TextAlign.center,
+                style: cell(bold: true, fontSize: 9)),
+          );
+
+      pw.Widget dataCell(String text,
+              {bool red = false, bool bold = false}) =>
+          pw.Padding(
+            padding:
+                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            child: pw.Text(text,
+                textDirection: pw.TextDirection.rtl,
+                textAlign: pw.TextAlign.center,
+                style: cell(
+                    bold: bold,
+                    color: red ? PdfColors.red : PdfColors.black)),
+          );
+
+      final grandTotal = clients.fold<double>(
+          0.0, (s, d) => s + (d['balance'] ?? 0.0).toDouble());
+
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(24),
+          build: (pw.Context ctx) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Row(
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('Date: $dateStr',
+                            style: cell(fontSize: 9)),
+                        pw.Text('Time: $timeStr',
+                            style: cell(fontSize: 9)),
+                      ],
+                    ),
+                  ],
+                ),
+                pw.SizedBox(height: 16),
+                pw.Center(
+                  child: pw.Text(
+                    'تقرير بالمتبقي للعملاء',
+                    textDirection: pw.TextDirection.rtl,
+                    style: cell(bold: true, fontSize: 14),
+                  ),
+                ),
+                pw.SizedBox(height: 12),
+                pw.Table(
+                  border: pw.TableBorder.all(
+                      color: PdfColors.grey400, width: 0.5),
+                  columnWidths: {
+                    0: const pw.FlexColumnWidth(1),
+                    1: const pw.FlexColumnWidth(3),
+                    2: const pw.FlexColumnWidth(2),
+                  },
+                  children: [
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey200),
+                      children: [
+                        headerCell('#'),
+                        headerCell('اسم العميل'),
+                        headerCell('الإجمالي'),
+                      ],
+                    ),
+                    for (int i = 0; i < clients.length; i++)
+                      pw.TableRow(
+                        decoration: pw.BoxDecoration(
+                          color: i.isEven
+                              ? PdfColors.white
+                              : PdfColors.grey50,
+                        ),
+                        children: [
+                          dataCell('${i + 1}'),
+                          dataCell(
+                              (clients[i]['clientName'] ?? '').toString()),
+                          dataCell(
+                              (clients[i]['balance'] ?? 0.0)
+                                  .toDouble()
+                                  .toStringAsFixed(2),
+                              red: true),
+                        ],
+                      ),
+                    pw.TableRow(
+                      decoration: const pw.BoxDecoration(
+                          color: PdfColors.grey100),
+                      children: [
+                        dataCell(''),
+                        dataCell('الإجمالي', bold: true, red: true),
+                        dataCell(grandTotal.toStringAsFixed(2),
+                            bold: true, red: true),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      );
+
+      final dir = await getTemporaryDirectory();
+      final file = File(
+          '${dir.path}/client_remaining_${dateStr.replaceAll('/', '-')}.pdf');
+      await file.writeAsBytes(await pdf.save());
+
+      await Share.shareXFiles([XFile(file.path)],
+          text: 'تقرير المبالغ المتبقية للعملاء');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في إنشاء التقرير: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: ui.TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.black.withOpacity(0.7),
+          iconTheme: const IconThemeData(color: Colors.white),
+          title: const Text(
+            'ذمم العملاء - تقرير',
+            style: TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('clients')
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final clients = snapshot.data!.docs
+                .where((d) => (d['balance'] ?? 0.0) != 0.0)
+                .toList()
+              ..sort((a, b) => (b['balance'] as num)
+                  .compareTo(a['balance'] as num));
+
+            if (clients.isEmpty) {
+              return const Center(
+                  child: Text('لا توجد أرصدة متبقية للعملاء'));
+            }
+
+            final grandTotal = clients.fold<double>(
+                0.0, (s, d) => s + (d['balance'] ?? 0.0).toDouble());
+
+            return Stack(
+              children: [
+                Column(
+                  children: [
+                    Container(
+                      color: Colors.orange.shade100,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                      child: Row(
+                        mainAxisAlignment:
+                            MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(grandTotal.toStringAsFixed(2),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: Colors.red)),
+                          const Text('الإجمالي',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16)),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: clients.length,
+                        itemBuilder: (context, index) {
+                          final doc = clients[index];
+                          final balance =
+                              (doc['balance'] ?? 0.0).toDouble();
+                          return ListTile(
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => ClientInvoicesPage(
+                                    clientId: doc.id),
+                              ),
+                            ),
+                            title: Text(
+                                (doc['clientName'] ?? '').toString(),
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            trailing: Text(
+                              balance.toStringAsFixed(2),
+                              style: TextStyle(
+                                color: balance > 0
+                                    ? Colors.red
+                                    : Colors.green,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                if (_generating)
+                  Container(
+                    color: Colors.black38,
+                    child:
+                        const Center(child: CircularProgressIndicator()),
+                  ),
+              ],
+            );
+          },
+        ),
+        floatingActionButton: StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('clients')
+              .where('balance', isGreaterThan: 0)
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) return const SizedBox();
+            final clients = snapshot.data!.docs;
+            return FloatingActionButton.extended(
+              backgroundColor: Colors.black87,
+              onPressed: _generating ? null : () => _generatePdf(clients),
+              icon: const Icon(Icons.picture_as_pdf, color: Colors.white),
+              label: const Text('تقرير PDF',
+                  style: TextStyle(color: Colors.white)),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Balance Report Page ─────────────────────────────────────────────────────
+
+class _ClientBalanceReportPage extends StatelessWidget {
+  const _ClientBalanceReportPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: ui.TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.black.withOpacity(0.7),
+          iconTheme: const IconThemeData(color: Colors.white),
+          title: const Text(
+            'العملاء المتبقي لهم أرصدة',
+            style: TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: StreamBuilder<QuerySnapshot>(
+          stream: FirebaseFirestore.instance
+              .collection('clients')
+              .where('balance', isGreaterThan: 0)
+              .snapshots(),
+          builder: (context, snapshot) {
+            if (!snapshot.hasData) {
+              return const Center(child: CircularProgressIndicator());
+            }
+            final clients = snapshot.data!.docs;
+            if (clients.isEmpty) {
+              return const Center(
+                  child: Text('لا يوجد عملاء لديهم أرصدة'));
+            }
+            return ListView.builder(
+              itemCount: clients.length,
+              itemBuilder: (context, index) {
+                final doc = clients[index];
+                final balance = (doc['balance'] ?? 0.0).toDouble();
+                return ListTile(
+                  onTap: () => Navigator.push(
+                    context,
+                    MaterialPageRoute(
+                      builder: (_) =>
+                          ClientInvoicesPage(clientId: doc.id),
+                    ),
+                  ),
+                  title: Text(
+                      (doc['clientName'] ?? '').toString(),
+                      textAlign: TextAlign.right,
+                      style: const TextStyle(
+                          fontWeight: FontWeight.bold)),
+                  trailing: Text(
+                    balance.toStringAsFixed(2),
+                    style: const TextStyle(
+                        color: Colors.red,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 15),
+                  ),
+                );
+              },
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Balance Check Page ──────────────────────────────────────────────────────
+
+class _ClientBalanceCheckPage extends StatefulWidget {
+  const _ClientBalanceCheckPage();
+
+  @override
+  State<_ClientBalanceCheckPage> createState() =>
+      _ClientBalanceCheckPageState();
+}
+
+class _ClientBalanceCheckPageState
+    extends State<_ClientBalanceCheckPage> {
+  String _search = '';
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: ui.TextDirection.rtl,
+      child: Scaffold(
+        appBar: AppBar(
+          backgroundColor: Colors.black.withOpacity(0.7),
+          iconTheme: const IconThemeData(color: Colors.white),
+          title: const Text(
+            'فحص ارصدة العملاء',
+            style: TextStyle(
+                color: Colors.white, fontWeight: FontWeight.bold),
+          ),
+        ),
+        body: Column(
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(
+                  horizontal: 12, vertical: 8),
+              child: TextField(
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  hintText: 'ابحث عن عميل',
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(),
+                ),
+                onChanged: (v) => setState(() => _search = v),
+              ),
+            ),
+            Expanded(
+              child: StreamBuilder<QuerySnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('clients')
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  if (!snapshot.hasData) {
+                    return const Center(
+                        child: CircularProgressIndicator());
+                  }
+                  final all = snapshot.data!.docs.where((d) {
+                    if (_search.isEmpty) return true;
+                    return (d['clientName'] ?? '')
+                        .toString()
+                        .toLowerCase()
+                        .contains(_search.toLowerCase());
+                  }).toList();
+
+                  return ListView.builder(
+                    itemCount: all.length,
+                    itemBuilder: (context, index) {
+                      final doc = all[index];
+                      final balance =
+                          (doc['balance'] ?? 0.0).toDouble();
+                      return ListTile(
+                        onTap: () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => ClientInvoicesPage(
+                                clientId: doc.id),
+                          ),
+                        ),
+                        title: Text(
+                            (doc['clientName'] ?? '').toString(),
+                            textAlign: TextAlign.right,
+                            style: const TextStyle(
+                                fontWeight: FontWeight.bold)),
+                        trailing: Text(
+                          balance.toStringAsFixed(2),
+                          style: TextStyle(
+                            color: balance > 0
+                                ? Colors.red
+                                : balance < 0
+                                    ? Colors.orange
+                                    : Colors.green,
+                            fontWeight: FontWeight.bold,
+                            fontSize: 15,
+                          ),
+                        ),
+                      );
+                    },
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+// ─── Client List Page (عرض العملاء) ─────────────────────────────────────────
+
+class _ClientListPage extends StatefulWidget {
+  const _ClientListPage();
+
+  @override
+  State<_ClientListPage> createState() => _ClientListPageState();
+}
+
+class _ClientListPageState extends State<_ClientListPage> {
   String _searchQuery = '';
+  Box<String>? _deletedClientsBox;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeHive();
+  }
+
+  Future<void> _initializeHive() async {
+    final dir = await getApplicationDocumentsDirectory();
+    Hive.init(dir.path);
+    final box = await Hive.openBox<String>('deletedClients');
+    if (mounted) {
+      setState(() {
+        _deletedClientsBox = box;
+      });
+    }
+  }
+
+  void _showDeleteConfirmationDialog(String clientId) {
+    showDialog(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: const Text('هل تريد حذف هذا العميل من القائمة؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('لا'),
+          ),
+          TextButton(
+            onPressed: () {
+              _deletedClientsBox?.put(clientId, clientId);
+              setState(() {});
+              Navigator.pop(context);
+            },
+            child: const Text('نعم'),
+          ),
+        ],
+      ),
+    );
+  }
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: const Text('العملاء'),
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.delete, color: Colors.white),
+            onPressed: _deletedClientsBox == null
+                ? null
+                : () {
+                    Navigator.push(
+                      context,
+                      MaterialPageRoute(
+                        builder: (context) => DeletedClientsPage(
+                          deletedClients:
+                              _deletedClientsBox!.values.toSet(),
+                          onRestoreClient: (clientId) {
+                            _deletedClientsBox!.delete(clientId);
+                            setState(() {});
+                          },
+                        ),
+                      ),
+                    );
+                  },
+          ),
+        ],
+        backgroundColor: Colors.black.withOpacity(0.7),
+        title: const Text(
+          'عرض العملاء',
+          style: TextStyle(
+            color: Colors.white,
+            fontSize: 20,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
       ),
       body: Column(
         children: [
           Padding(
-            padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+            padding:
+                const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
             child: TextField(
               decoration: InputDecoration(
                 focusedBorder: OutlineInputBorder(
-                  borderSide:  BorderSide(color: Colors.black.withOpacity(0.7)),
+                  borderSide:
+                      BorderSide(color: Colors.black.withOpacity(0.7)),
                 ),
                 filled: true,
                 fillColor: Colors.grey.withOpacity(0.1),
                 labelText: 'ابحث عن عميل',
-                labelStyle:  TextStyle(
+                labelStyle: TextStyle(
                   color: Colors.black.withOpacity(0.7),
-                  fontSize:18,
+                  fontSize: 18,
                 ),
                 border: OutlineInputBorder(
                   borderSide: BorderSide(
                     color: Colors.black.withOpacity(0.7),
-                  )
+                  ),
                 ),
-                prefixIcon: Icon(Icons.search),
+                prefixIcon: const Icon(Icons.search),
               ),
               onChanged: (query) {
                 setState(() {
@@ -51,38 +2659,58 @@ class _ClientsPageState extends State<ClientsPage> {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('clients').snapshots(),
+              stream: FirebaseFirestore.instance
+                  .collection('clients')
+                  .snapshots(),
               builder: (context, snapshot) {
-                if (!snapshot.hasData) {
-                  return const Center(child: CircularProgressIndicator());
+                if (!snapshot.hasData || _deletedClientsBox == null) {
+                  return Center(
+                    child: CircularProgressIndicator(
+                      color: Colors.black.withOpacity(0.7),
+                    ),
+                  );
                 }
 
                 final allClients = snapshot.data!.docs;
                 final filteredClients = _searchQuery.isEmpty
                     ? allClients
                     : allClients.where((client) {
-                        final clientName = client['clientName']?.toString().toLowerCase() ?? '';
-                        return clientName.contains(_searchQuery.toLowerCase());
+                        final clientName =
+                            client['clientName']?.toString().toLowerCase() ??
+                                '';
+                        return clientName
+                            .contains(_searchQuery.toLowerCase());
                       }).toList();
+                final visibleClients = filteredClients
+                    .where((client) =>
+                        !_deletedClientsBox!.containsKey(client.id))
+                    .toList();
 
                 return ListView.builder(
-                  itemCount: filteredClients.length,
+                  itemCount: visibleClients.length,
                   itemBuilder: (context, index) {
-                    final client = filteredClients[index];
+                    final client = visibleClients[index];
                     return Card(
                       elevation: 2,
                       color: Colors.orange.withOpacity(0.7),
                       margin: const EdgeInsets.all(10.0),
                       child: ListTile(
-                        title: Center(child: Text(client['clientName'])),
-                        subtitle: Center(child: Text('الرصيد: ${client['balance'].toStringAsFixed(2)}')),
+                        title: Center(
+                            child: Text(client['clientName'] ?? '')),
+                        subtitle: Center(
+                            child: Text(
+                                'الرصيد: ${(client['balance'] ?? 0.0).toDouble().toStringAsFixed(2)}')),
                         onTap: () {
                           Navigator.push(
                             context,
                             MaterialPageRoute(
-                              builder: (context) => ClientInvoicesPage(clientId: client.id),
+                              builder: (context) => ClientInvoicesPage(
+                                  clientId: client.id),
                             ),
                           );
+                        },
+                        onLongPress: () {
+                          _showDeleteConfirmationDialog(client.id);
                         },
                       ),
                     );

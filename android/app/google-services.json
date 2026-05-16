@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "739436951854",
+    "project_id": "kareem-hammad",
+    "storage_bucket": "kareem-hammad.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:739436951854:android:8db7a3fe0c2fcfee6522bf",
+        "android_client_info": {
+          "package_name": "com.kareemham.store"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyDVLByU3ZYomy6WVsUDZStq1-Np2297N9Y"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
