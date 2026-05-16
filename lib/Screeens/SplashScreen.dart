@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../Services/app_error_logger.dart';
 import '../Services/bluetooth_permission_service.dart';
 import '../auth/LoginScreen.dart';
 
@@ -38,10 +39,18 @@ class _SplashScreenState extends State<SplashScreen>
   }
 
   Future<void> _prepareApp() async {
-    await Future.wait([
-      Future.delayed(const Duration(seconds: 3)),
-      BluetoothPermissionService.ensureOnAppStart(context),
-    ]);
+    try {
+      await Future.wait([
+        Future.delayed(const Duration(seconds: 3)),
+        BluetoothPermissionService.ensureOnAppStart(context),
+      ]);
+    } catch (e, st) {
+      await AppErrorLogger.record(
+        error: e,
+        stackTrace: st,
+        step: 'splash_prepare',
+      );
+    }
     if (!mounted) return;
     Navigator.pushReplacement(
       context,

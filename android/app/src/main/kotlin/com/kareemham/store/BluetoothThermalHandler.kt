@@ -1,8 +1,10 @@
 package com.kareemham.store
 
 import android.Manifest
+import android.annotation.SuppressLint
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothDevice
+import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
@@ -14,14 +16,17 @@ import io.flutter.plugin.common.MethodCall
 import io.flutter.plugin.common.MethodChannel
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeout
+import java.io.IOException
 import java.io.OutputStream
 import java.util.UUID
+import java.util.concurrent.atomic.AtomicBoolean
 
 /**
- * Reliable Bluetooth thermal printer bridge (SPP + RFCOMM channel 1 fallback).
- * Used instead of the stock plugin connect path which often fails on paired printers.
+ * Bluetooth thermal printer bridge with permission checks and RFCOMM fallbacks.
  */
 class BluetoothThermalHandler(
     private val context: Context,
@@ -31,14 +36,16 @@ class BluetoothThermalHandler(
     companion object {
         private const val TAG = "KareemThermalBT"
         private const val CHANNEL = "kareem.store/thermal_bt"
+        private const val CONNECT_TIMEOUT_MS = 15_000L
         private val SPP_UUID: UUID =
             UUID.fromString("00001101-0000-1000-8000-00805F9B34FB")
     }
 
     private val channel = MethodChannel(messenger, CHANNEL)
+    private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var outputStream: OutputStream? = null
     private var activeSocket: BluetoothSocket? = null
-    private var lastMac: String = ""
+    private val isConnecting = AtomicBoolean(false)
 
     init {
         channel.setMethodCallHandler(this)
@@ -50,113 +57,172 @@ class BluetoothThermalHandler(
     }
 
     override fun onMethodCall(call: MethodCall, result: MethodChannel.Result) {
-        when (call.method) {
-            "ispermissionbluetoothgranted" -> {
-                if (Build.VERSION.SDK_INT < 31) {
-                    result.success(true)
-                } else {
-                    result.success(
-                        ContextCompat.checkSelfPermission(
-                            context,
-                            Manifest.permission.BLUETOOTH_CONNECT,
-                        ) == PackageManager.PERMISSION_GRANTED,
-                    )
+        try {
+            when (call.method) {
+                "ispermissionbluetoothgranted" -> {
+                    result.success(hasBluetoothPermission())
                 }
-            }
 
-            "bluetoothenabled" -> {
-                val adapter = BluetoothAdapter.getDefaultAdapter()
-                result.success(adapter != null && adapter.isEnabled)
-            }
-
-            "pairedbluetooths" -> {
-                result.success(listPairedDevices())
-            }
-
-            "connectionstatus" -> {
-                result.success(isSocketAlive())
-            }
-
-            "disconnect" -> {
-                closeConnection()
-                result.success(true)
-            }
-
-            "connect" -> {
-                val mac = normalizeMac(call.arguments?.toString().orEmpty())
-                if (mac.isEmpty()) {
-                    result.success(false)
-                    return
+                "bluetoothenabled" -> {
+                    val adapter = getAdapter()
+                    result.success(adapter != null && adapter.isEnabled)
                 }
-                CoroutineScope(Dispatchers.Main).launch {
-                    val ok = withContext(Dispatchers.IO) { openConnection(mac) }
-                    result.success(ok)
-                }
-            }
 
-            "writebytes" -> {
-                @Suppress("UNCHECKED_CAST")
-                val bytes = (call.arguments as? List<Int>)?.map { it.toByte() }?.toByteArray()
-                if (bytes == null || outputStream == null) {
-                    result.success(false)
-                    return
-                }
-                try {
-                    outputStream?.write(bytes)
-                    outputStream?.flush()
-                    result.success(true)
-                } catch (e: Exception) {
-                    Log.e(TAG, "writebytes: ${e.message}")
-                    closeConnection()
-                    result.success(false)
-                }
-            }
-
-            "printstring" -> {
-                val payload = call.arguments?.toString().orEmpty()
-                if (outputStream == null) {
-                    result.success(false)
-                    return
-                }
-                try {
-                    val parts = payload.split("///", limit = 2)
-                    var size = 2
-                    var text = payload
-                    if (parts.size == 2) {
-                        size = parts[0].toIntOrNull()?.coerceIn(1, 5) ?: 2
-                        text = parts[1]
+                "pairedbluetooths" -> {
+                    if (!hasBluetoothPermission()) {
+                        result.success(emptyList<String>())
+                        return
                     }
-                    val stream = outputStream!!
-                    stream.write(byteArrayOf(0x1d, 0x21, 0x00))
-                    stream.write(byteArrayOf(0x1C, 0x2E))
-                    stream.write(byteArrayOf(0x1B, 0x74, 0x10))
-                    stream.write(escPosSizeBytes(size))
-                    stream.write(text.toByteArray(charset("ISO-8859-1")))
-                    stream.flush()
-                    result.success(true)
-                } catch (e: Exception) {
-                    Log.e(TAG, "printstring: ${e.message}")
-                    closeConnection()
-                    result.success(false)
+                    result.success(listPairedDevices())
                 }
-            }
 
-            else -> result.notImplemented()
+                "connectionstatus" -> {
+                    result.success(isSocketAlive())
+                }
+
+                "disconnect" -> {
+                    closeConnection()
+                    result.success(true)
+                }
+
+                "connect" -> {
+                    val mac = normalizeMac(call.arguments?.toString().orEmpty())
+                    if (mac.isEmpty()) {
+                        result.success(false)
+                        return
+                    }
+                    if (!hasBluetoothPermission()) {
+                        Log.w(TAG, "connect denied: missing BLUETOOTH_CONNECT")
+                        result.success(false)
+                        return
+                    }
+                    if (!isConnecting.compareAndSet(false, true)) {
+                        Log.w(TAG, "connect already in progress")
+                        result.success(false)
+                        return
+                    }
+                    scope.launch {
+                        try {
+                            val ok = withContext(Dispatchers.IO) {
+                                withTimeout(CONNECT_TIMEOUT_MS) {
+                                    openConnection(mac)
+                                }
+                            }
+                            safeSuccess(result, ok)
+                        } catch (e: Throwable) {
+                            Log.e(TAG, "connect failed: ${e.message}", e)
+                            closeConnection()
+                            safeSuccess(result, false)
+                        } finally {
+                            isConnecting.set(false)
+                        }
+                    }
+                }
+
+                "writebytes" -> {
+                    @Suppress("UNCHECKED_CAST")
+                    val bytes =
+                        (call.arguments as? List<Int>)?.map { it.toByte() }?.toByteArray()
+                    if (bytes == null || outputStream == null) {
+                        result.success(false)
+                        return
+                    }
+                    try {
+                        outputStream?.write(bytes)
+                        outputStream?.flush()
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "writebytes: ${e.message}")
+                        closeConnection()
+                        result.success(false)
+                    }
+                }
+
+                "printstring" -> {
+                    val payload = call.arguments?.toString().orEmpty()
+                    if (outputStream == null) {
+                        result.success(false)
+                        return
+                    }
+                    try {
+                        val parts = payload.split("///", limit = 2)
+                        var size = 2
+                        var text = payload
+                        if (parts.size == 2) {
+                            size = parts[0].toIntOrNull()?.coerceIn(1, 5) ?: 2
+                            text = parts[1]
+                        }
+                        val stream = outputStream!!
+                        stream.write(byteArrayOf(0x1d, 0x21, 0x00))
+                        stream.write(byteArrayOf(0x1C, 0x2E))
+                        stream.write(byteArrayOf(0x1B, 0x74, 0x10))
+                        stream.write(escPosSizeBytes(size))
+                        stream.write(text.toByteArray(charset("ISO-8859-1")))
+                        stream.flush()
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "printstring: ${e.message}")
+                        closeConnection()
+                        result.success(false)
+                    }
+                }
+
+                else -> result.notImplemented()
+            }
+        } catch (e: Throwable) {
+            Log.e(TAG, "onMethodCall crash: ${e.message}", e)
+            safeSuccess(result, false)
         }
+    }
+
+    private fun safeSuccess(result: MethodChannel.Result, value: Boolean) {
+        try {
+            result.success(value)
+        } catch (e: IllegalStateException) {
+            Log.w(TAG, "result already submitted: ${e.message}")
+        }
+    }
+
+    private fun hasBluetoothPermission(): Boolean {
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+            return true
+        }
+        return ContextCompat.checkSelfPermission(
+            context,
+            Manifest.permission.BLUETOOTH_CONNECT,
+        ) == PackageManager.PERMISSION_GRANTED
+    }
+
+    private fun getAdapter(): BluetoothAdapter? {
+        val manager =
+            context.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager
+        return manager?.adapter ?: BluetoothAdapter.getDefaultAdapter()
     }
 
     private fun normalizeMac(raw: String): String {
         return raw.trim().uppercase()
     }
 
+    @SuppressLint("MissingPermission")
     private fun listPairedDevices(): List<String> {
         val items = mutableListOf<String>()
-        val adapter = BluetoothAdapter.getDefaultAdapter() ?: return items
-        val bonded = adapter.bondedDevices ?: return items
+        val adapter = getAdapter() ?: return items
+        if (!adapter.isEnabled) return items
+        val bonded: Set<BluetoothDevice> = try {
+            adapter.bondedDevices ?: emptySet()
+        } catch (e: SecurityException) {
+            Log.e(TAG, "bondedDevices SecurityException: ${e.message}")
+            return items
+        }
         for (device in bonded) {
-            val name = device.name ?: "Unknown"
-            val address = device.address ?: continue
-            items.add("$name#$address")
+            try {
+                val name = device.name ?: "Printer"
+                val address = device.address ?: continue
+                if (address.isBlank()) continue
+                items.add("$name#$address")
+            } catch (e: SecurityException) {
+                Log.w(TAG, "device name SecurityException: ${e.message}")
+            }
         }
         return items
     }
@@ -186,11 +252,11 @@ class BluetoothThermalHandler(
         activeSocket = null
     }
 
+    @SuppressLint("MissingPermission")
     private fun openConnection(mac: String): Boolean {
         closeConnection()
-        lastMac = mac
 
-        val adapter = BluetoothAdapter.getDefaultAdapter()
+        val adapter = getAdapter()
         if (adapter == null || !adapter.isEnabled) {
             Log.w(TAG, "Bluetooth adapter off")
             return false
@@ -203,7 +269,11 @@ class BluetoothThermalHandler(
             return false
         }
 
-        adapter.cancelDiscovery()
+        try {
+            adapter.cancelDiscovery()
+        } catch (e: SecurityException) {
+            Log.w(TAG, "cancelDiscovery: ${e.message}")
+        }
 
         val socket = connectSocket(adapter, device) ?: return false
         return try {
@@ -221,55 +291,76 @@ class BluetoothThermalHandler(
         }
     }
 
-    private fun connectSocket(adapter: BluetoothAdapter, device: BluetoothDevice): BluetoothSocket? {
-        // 1) Standard SPP UUID (most 58/80mm ESC/POS printers)
-        try {
-            val socket = device.createRfcommSocketToServiceRecord(SPP_UUID)
-            socket.connect()
-            if (socket.isConnected) {
-                Log.i(TAG, "Connected via SPP UUID")
-                return socket
-            }
-            socket.close()
-        } catch (e: Exception) {
-            Log.w(TAG, "SPP UUID failed: ${e.message}")
-        }
+    @SuppressLint("MissingPermission")
+    private fun connectSocket(
+        adapter: BluetoothAdapter,
+        device: BluetoothDevice,
+    ): BluetoothSocket? {
+        val attempts = listOf(
+            { createRfcommChannel1(device) },
+            { createSppSocket(device) },
+            { createInsecureSppSocket(device) },
+        )
 
-        // 2) Hidden RFCOMM channel 1 — fixes many printers that pair but refuse UUID socket
-        try {
-            val method = device.javaClass.getMethod(
-                "createRfcommSocket",
-                Int::class.javaPrimitiveType,
-            )
-            val socket = method.invoke(device, 1) as BluetoothSocket
-            adapter.cancelDiscovery()
-            socket.connect()
-            if (socket.isConnected) {
-                Log.i(TAG, "Connected via RFCOMM channel 1")
-                return socket
+        for (attempt in attempts) {
+            var socket: BluetoothSocket? = null
+            try {
+                socket = attempt()
+                if (socket == null) continue
+                try {
+                    adapter.cancelDiscovery()
+                } catch (_: SecurityException) {
+                }
+                socket.connect()
+                if (socket.isConnected) {
+                    return socket
+                }
+                socket.close()
+            } catch (e: IOException) {
+                Log.w(TAG, "socket connect IOException: ${e.message}")
+                try {
+                    socket?.close()
+                } catch (_: Exception) {
+                }
+            } catch (e: SecurityException) {
+                Log.e(TAG, "socket connect SecurityException: ${e.message}")
+                try {
+                    socket?.close()
+                } catch (_: Exception) {
+                }
+                return null
+            } catch (e: Exception) {
+                Log.w(TAG, "socket connect failed: ${e.message}")
+                try {
+                    socket?.close()
+                } catch (_: Exception) {
+                }
             }
-            socket.close()
-        } catch (e: Exception) {
-            Log.w(TAG, "RFCOMM ch1 failed: ${e.message}")
         }
-
-        // 3) Reflection on createRfcommSocket with channel 1 via BluetoothDevice
-        try {
-            val socket = device.javaClass
-                .getDeclaredMethod("createInsecureRfcommSocketToServiceRecord", UUID::class.java)
-                .invoke(device, SPP_UUID) as BluetoothSocket
-            adapter.cancelDiscovery()
-            socket.connect()
-            if (socket.isConnected) {
-                Log.i(TAG, "Connected via insecure SPP")
-                return socket
-            }
-            socket.close()
-        } catch (e: Exception) {
-            Log.w(TAG, "Insecure SPP failed: ${e.message}")
-        }
-
         return null
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun createSppSocket(device: BluetoothDevice): BluetoothSocket? {
+        return device.createRfcommSocketToServiceRecord(SPP_UUID)
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun createRfcommChannel1(device: BluetoothDevice): BluetoothSocket? {
+        val method = device.javaClass.getMethod(
+            "createRfcommSocket",
+            Int::class.javaPrimitiveType,
+        )
+        return method.invoke(device, 1) as? BluetoothSocket
+    }
+
+    @SuppressLint("MissingPermission")
+    private fun createInsecureSppSocket(device: BluetoothDevice): BluetoothSocket? {
+        return if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.GINGERBREAD_MR1) {
+            device.createInsecureRfcommSocketToServiceRecord(SPP_UUID)
+        } else {
+            null
+        }
     }
 
     private fun escPosSizeBytes(size: Int): ByteArray {

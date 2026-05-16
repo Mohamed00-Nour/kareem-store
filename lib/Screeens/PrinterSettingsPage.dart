@@ -1,4 +1,6 @@
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import '../Services/app_error_logger.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../Services/bluetooth_printer_service.dart';
@@ -325,27 +327,15 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
         ),
       );
 
-      if (selected != null) {
-        setState(() {
-          _macController.text = selected.macAddress;
-          _deviceName = selected.name;
-        });
-        final connected =
-            await BluetoothPrinterService.connect(selected.macAddress);
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(SnackBar(
-            duration: Duration(seconds: connected ? 3 : 8),
-            content: Text(connected
-                ? 'تم الاتصال بـ ${selected.name}'
-                : 'تعذر الاتصال بـ ${selected.name}\n'
-                    '• تأكد أن الطابعة مشغّلة وليست متصلة بهاتف آخر\n'
-                    '• افصلها من إعدادات البلوتوث ثم اربطها من جديد\n'
-                    '• جرّب إيقاف الطابعة 5 ثوانٍ ثم تشغيلها\n'
-                    'MAC: ${selected.macAddress}'),
-          ));
-        }
+      if (selected != null && mounted) {
+        await _connectToSelectedPrinter(selected);
       }
-    } catch (e) {
+    } catch (e, st) {
+      await AppErrorLogger.record(
+        error: e,
+        stackTrace: st,
+        step: 'printer_search_devices',
+      );
       if (mounted) {
         setState(() => _searching = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -353,6 +343,77 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
         );
       }
     }
+  }
+
+  Future<void> _connectToSelectedPrinter(PairedBluetoothDevice selected) async {
+    if (!mounted) return;
+
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => PopScope(
+        canPop: false,
+        child: AlertDialog(
+          backgroundColor: const Color(0xffead1ac),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const CircularProgressIndicator(color: Colors.orange),
+              SizedBox(height: 16.h),
+              Text(
+                'جاري الاتصال بالطابعة...',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 15.sp, fontWeight: FontWeight.bold),
+              ),
+              SizedBox(height: 8.h),
+              Text(
+                selected.name,
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 13.sp, color: Colors.black54),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    var connected = false;
+    try {
+      connected = await BluetoothPrinterService.connect(selected.macAddress);
+    } catch (e, st) {
+      if (kDebugMode) {
+        debugPrint('Printer connect crashed: $e\n$st');
+      }
+      await AppErrorLogger.record(
+        error: e,
+        stackTrace: st,
+        step: 'printer_connect_ui',
+        metadata: {
+          'deviceName': selected.name,
+          'mac': selected.macAddress,
+        },
+      );
+      connected = false;
+    }
+
+    if (!mounted) return;
+    Navigator.of(context, rootNavigator: true).pop();
+
+    setState(() {
+      _macController.text = selected.macAddress;
+      _deviceName = selected.name;
+    });
+
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      duration: Duration(seconds: connected ? 3 : 10),
+      content: Text(connected
+          ? 'تم الاتصال بـ ${selected.name}'
+          : 'تعذر الاتصال بـ ${selected.name}\n'
+              '• شغّل الطابعة وضع ورق الإيصال\n'
+              '• تأكد أنها غير متصلة بهاتف آخر\n'
+              '• من إعدادات البلوتوث: اضغط على الطابعة ثم «نسيان» واربطها من جديد\n'
+              'MAC: ${selected.macAddress}'),
+    ));
   }
 
   Future<void> _testPrint() async {

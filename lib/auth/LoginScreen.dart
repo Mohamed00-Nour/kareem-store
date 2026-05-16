@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Screeens/g_Nav.dart';
+import '../Services/app_error_logger.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -47,6 +48,7 @@ Future<void> _login() async {
         // Save user role to SharedPreferences
         final prefs = await SharedPreferences.getInstance();
         await prefs.setString('user_role', role);
+        await prefs.setString('user_email', email);
 
         if (role == 'admin') {
           print('Navigating to admin home.');
@@ -69,8 +71,15 @@ Future<void> _login() async {
       ScaffoldMessenger.of(context)
           .showSnackBar(const SnackBar(content: Text('User not found')));
     }
-  } catch (e) {
+  } catch (e, st) {
     print('Error during login: $e');
+    await AppErrorLogger.record(
+      error: e,
+      stackTrace: st,
+      step: 'login',
+      metadata: {'email': email},
+    );
+    if (!mounted) return;
     ScaffoldMessenger.of(context)
         .showSnackBar(SnackBar(content: Text('Error during login: $e')));
   }

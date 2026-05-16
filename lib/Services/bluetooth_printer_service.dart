@@ -1,4 +1,7 @@
+import 'package:flutter/foundation.dart';
+
 import '../models/paired_bluetooth_device.dart';
+import 'app_error_logger.dart';
 import '../models/printer_settings.dart';
 import 'bluetooth_permission_service.dart';
 import 'invoice_print_formatter.dart';
@@ -32,15 +35,32 @@ class BluetoothPrinterService {
     await ensurePermissions();
 
     // Clear stale socket (common cause of "paired but connect fails").
-    await ThermalPrintChannel.disconnect();
-    await Future<void>.delayed(const Duration(milliseconds: 350));
-
-    for (var attempt = 0; attempt < 3; attempt++) {
-      if (await ThermalPrintChannel.connect(mac)) return true;
+    try {
       await ThermalPrintChannel.disconnect();
-      await Future<void>.delayed(const Duration(milliseconds: 500));
+    } catch (_) {}
+    await Future<void>.delayed(const Duration(milliseconds: 400));
+
+    // One connect attempt — multiple native fallbacks run inside Android code.
+    try {
+      final ok = await ThermalPrintChannel.connect(mac);
+      if (!ok) {
+        AppErrorLogger.logFailure(
+          step: 'bluetooth_printer_connect',
+          message: 'Bluetooth connect returned false',
+          metadata: {'mac': mac},
+        );
+      }
+      return ok;
+    } catch (e, st) {
+      debugPrint('Bluetooth connect error: $e\n$st');
+      await AppErrorLogger.record(
+        error: e,
+        stackTrace: st,
+        step: 'bluetooth_printer_connect',
+        metadata: {'mac': mac},
+      );
+      return false;
     }
-    return false;
   }
 
   static Future<bool> isConnected() async {
