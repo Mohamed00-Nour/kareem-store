@@ -141,6 +141,89 @@ class InvoicePrintFormatter {
     return buffer.toString();
   }
 
+  /// Plain-text test slip (matches [BluetoothPrinterService.printTestReceipt]).
+  static String buildPrinterTestPreview(PrinterSettings settings) {
+    final buffer = StringBuffer();
+    buffer.writeln('Kareem Store');
+    buffer.writeln('اختبار الطابعة');
+    final deviceLabel = settings.bluetoothDeviceName.isNotEmpty
+        ? settings.bluetoothDeviceName
+        : settings.bluetoothMacAddress;
+    if (deviceLabel.isNotEmpty) {
+      buffer.writeln(deviceLabel);
+    }
+    if (settings.salesInvoiceFooter.isNotEmpty) {
+      buffer.writeln('------------------------------');
+      buffer.writeln(settings.salesInvoiceFooter);
+    }
+    return buffer.toString().trimRight();
+  }
+
+  static Map<String, dynamic> _sampleSalesInvoice() {
+    return {
+      'invoiceNumber': 1001,
+      'date': DateTime.now().toIso8601String(),
+      'clientName': 'عميل تجريبي',
+      'previousBalance': 150.0,
+      'totalSum': 250.0,
+      'paidAmount': 200.0,
+      'balance': 50.0,
+      'notes': 'معاينة — لا حاجة لطابعة',
+      'products': [
+        {
+          'product': 'سكر 1 كجم',
+          'amount': '2',
+          'selectedPrice': 50.0,
+          'total': 100.0,
+          'description': 'وصف تجريبي',
+        },
+        {
+          'product': 'زيت عباد الشمس',
+          'amount': '1',
+          'selectedPrice': 150.0,
+          'total': 150.0,
+        },
+      ],
+    };
+  }
+
+  /// Sample sales invoice using current label/footer/toggle settings.
+  static String buildSampleSalesInvoicePreview(PrinterSettings settings) {
+    final body = format(
+      invoice: _sampleSalesInvoice(),
+      settings: settings,
+      context: const InvoicePrintContext(
+        clientAddress: 'القاهرة — معاينة',
+        clientPhone: '01000000000',
+        productDetailsByName: {
+          'سكر 1 كجم': {'randomNumber': 'A-001'},
+        },
+      ),
+    );
+    if (settings.salesInvoiceFooter.isEmpty) return body;
+    return '$body------------------------------\n${settings.salesInvoiceFooter}\n';
+  }
+
+  /// Full on-screen preview: test slip + sample invoice.
+  static String buildFullReceiptPreview(PrinterSettings settings) {
+    final paperLabel =
+        settings.paperSize == ThermalPaperSize.mm58 ? '58mm' : '80mm';
+    final buffer = StringBuffer();
+    buffer.writeln('══════════════════════════════');
+    buffer.writeln('معاينة الإيصال ($paperLabel)');
+    buffer.writeln('للاختبار بدون طابعة بلوتوث');
+    buffer.writeln('══════════════════════════════');
+    buffer.writeln();
+    buffer.writeln('── اختبار الطابعة ──');
+    buffer.writeln(buildPrinterTestPreview(settings));
+    buffer.writeln();
+    buffer.writeln('── فاتورة مبيعات (نموذج) ──');
+    buffer.write(buildSampleSalesInvoicePreview(settings));
+    buffer.writeln();
+    buffer.writeln('══════════════════════════════');
+    return buffer.toString();
+  }
+
   static double _num(dynamic value) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '') ?? 0.0;

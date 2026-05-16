@@ -1,7 +1,6 @@
-import 'package:permission_handler/permission_handler.dart';
-
 import '../models/paired_bluetooth_device.dart';
 import '../models/printer_settings.dart';
+import 'bluetooth_permission_service.dart';
 import 'invoice_print_formatter.dart';
 import 'thermal_print_channel.dart';
 
@@ -10,14 +9,10 @@ class BluetoothPrinterService {
   static const _escDrawerKick = [0x1B, 0x70, 0x00, 0x19, 0xFA];
 
   static Future<bool> ensurePermissions() async {
-    final granted = await ThermalPrintChannel.isPermissionBluetoothGranted();
-    if (granted) return true;
-
-    final status = await Permission.bluetoothConnect.request();
-    if (status.isGranted) return true;
-
-    final scanStatus = await Permission.bluetoothScan.request();
-    return scanStatus.isGranted || status.isGranted;
+    if (await BluetoothPermissionService.hasPrinterBluetoothAccess()) {
+      return true;
+    }
+    return BluetoothPermissionService.requestPrinterBluetoothAccess();
   }
 
   static Future<bool> isBluetoothOn() async {
@@ -29,10 +24,23 @@ class BluetoothPrinterService {
     return ThermalPrintChannel.pairedDevices();
   }
 
+  static String _normalizeMac(String mac) => mac.trim().toUpperCase();
+
   static Future<bool> connect(String macAddress) async {
-    if (macAddress.isEmpty) return false;
+    final mac = _normalizeMac(macAddress);
+    if (mac.isEmpty) return false;
     await ensurePermissions();
-    return ThermalPrintChannel.connect(macAddress);
+
+    // Clear stale socket (common cause of "paired but connect fails").
+    await ThermalPrintChannel.disconnect();
+    await Future<void>.delayed(const Duration(milliseconds: 350));
+
+    for (var attempt = 0; attempt < 3; attempt++) {
+      if (await ThermalPrintChannel.connect(mac)) return true;
+      await ThermalPrintChannel.disconnect();
+      await Future<void>.delayed(const Duration(milliseconds: 500));
+    }
+    return false;
   }
 
   static Future<bool> isConnected() async {

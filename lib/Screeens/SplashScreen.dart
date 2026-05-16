@@ -1,9 +1,8 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
-
+import '../Services/bluetooth_permission_service.dart';
 import '../auth/LoginScreen.dart';
-import 'g_Nav.dart';
 
 class SplashScreen extends StatefulWidget {
   const SplashScreen({super.key});
@@ -29,7 +28,7 @@ class _SplashScreenState extends State<SplashScreen>
       parent: _controller,
       curve: Curves.easeInOut,
     );
-    _navigateToNextScreen();
+    WidgetsBinding.instance.addPostFrameCallback((_) => _prepareApp());
   }
 
   @override
@@ -38,8 +37,12 @@ class _SplashScreenState extends State<SplashScreen>
     super.dispose();
   }
 
-  _navigateToNextScreen() async {
-    await Future.delayed(Duration(seconds: 3), () {});
+  Future<void> _prepareApp() async {
+    await Future.wait([
+      Future.delayed(const Duration(seconds: 3)),
+      BluetoothPermissionService.ensureOnAppStart(context),
+    ]);
+    if (!mounted) return;
     Navigator.pushReplacement(
       context,
       MaterialPageRoute(builder: (context) => LoginScreen()),

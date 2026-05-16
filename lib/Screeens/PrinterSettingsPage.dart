@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../Services/bluetooth_printer_service.dart';
+import '../Services/invoice_print_formatter.dart';
 import '../Services/printer_settings_service.dart';
 import '../models/invoice_labels.dart';
 import '../models/paired_bluetooth_device.dart';
@@ -333,9 +334,14 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
             await BluetoothPrinterService.connect(selected.macAddress);
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+            duration: Duration(seconds: connected ? 3 : 8),
             content: Text(connected
                 ? 'تم الاتصال بـ ${selected.name}'
-                : 'تعذر الاتصال بـ ${selected.name}'),
+                : 'تعذر الاتصال بـ ${selected.name}\n'
+                    '• تأكد أن الطابعة مشغّلة وليست متصلة بهاتف آخر\n'
+                    '• افصلها من إعدادات البلوتوث ثم اربطها من جديد\n'
+                    '• جرّب إيقاف الطابعة 5 ثوانٍ ثم تشغيلها\n'
+                    'MAC: ${selected.macAddress}'),
           ));
         }
       }
@@ -364,6 +370,97 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
     ));
   }
 
+  void _showReceiptPreview() {
+    final settings = _currentSettings();
+    final previewText =
+        InvoicePrintFormatter.buildFullReceiptPreview(settings);
+
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          backgroundColor: const Color(0xfff5f0e6),
+          title: Text(
+            'معاينة الإيصال',
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontWeight: FontWeight.bold,
+              fontSize: 18.sp,
+            ),
+          ),
+          content: SizedBox(
+            width: double.maxFinite,
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  'هذا ما سيُرسل للطابعة تقريباً. غيّر الإعدادات ثم اضغط «تحديث».',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(fontSize: 12.sp, color: Colors.black54),
+                ),
+                SizedBox(height: 10.h),
+                Container(
+                  width: double.infinity,
+                  constraints: BoxConstraints(maxHeight: 420.h),
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                  decoration: BoxDecoration(
+                    color: Colors.white,
+                    border: Border.all(color: Colors.grey.shade400),
+                    borderRadius: BorderRadius.circular(8.r),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.black.withOpacity(0.06),
+                        blurRadius: 6,
+                        offset: const Offset(0, 2),
+                      ),
+                    ],
+                  ),
+                  child: SingleChildScrollView(
+                    child: SelectableText(
+                      previewText,
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontFamily: 'monospace',
+                        fontSize: 13.sp,
+                        height: 1.35,
+                        color: Colors.black87,
+                      ),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () {
+                Clipboard.setData(ClipboardData(text: previewText));
+                Navigator.pop(ctx);
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('تم نسخ المعاينة')),
+                );
+              },
+              child: Text('نسخ', style: TextStyle(fontSize: 14.sp)),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: Text('إغلاق', style: TextStyle(fontSize: 14.sp)),
+            ),
+            TextButton(
+              onPressed: () {
+                Navigator.pop(ctx);
+                _showReceiptPreview();
+              },
+              child: Text('تحديث', style: TextStyle(fontSize: 14.sp)),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -378,6 +475,11 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
           ),
           iconTheme: const IconThemeData(color: Colors.white),
           actions: [
+            IconButton(
+              icon: const Icon(Icons.receipt_long, color: Colors.white),
+              tooltip: 'معاينة الإيصال',
+              onPressed: _loading ? null : _showReceiptPreview,
+            ),
             if (_connectionType == PrinterConnectionType.bluetooth)
               IconButton(
                 icon: const Icon(Icons.print, color: Colors.white),
@@ -404,6 +506,32 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
                     SizedBox(height: 14.h),
                     _sectionLabel('نوع الطابعه'),
                     _connectionTypeRadios(),
+                    SizedBox(height: 10.h),
+                    SizedBox(
+                      height: 46.h,
+                      child: OutlinedButton.icon(
+                        onPressed: _loading ? null : _showReceiptPreview,
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: Colors.black87,
+                          side: BorderSide(
+                              color: Colors.orange.withOpacity(0.85),
+                              width: 1.5),
+                          backgroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(8.r),
+                          ),
+                        ),
+                        icon: Icon(Icons.receipt_long,
+                            size: 22.sp, color: Colors.orange.shade800),
+                        label: Text(
+                          'معاينة الإيصال (بدون طابعة)',
+                          style: TextStyle(
+                            fontSize: 15.sp,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                    ),
                     if (_connectionType == PrinterConnectionType.bluetooth) ...[
                       SizedBox(height: 10.h),
                       Row(
