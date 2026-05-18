@@ -18,6 +18,9 @@ class PrinterSettingsPage extends StatefulWidget {
 }
 
 class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
+  final _storeNameController = TextEditingController();
+  final _storeAddressController = TextEditingController();
+  final _storePhoneController = TextEditingController();
   final _salesFooterController = TextEditingController();
   final _a4FooterController = TextEditingController();
   final _textHeightController = TextEditingController(text: '10');
@@ -57,6 +60,9 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
 
   @override
   void dispose() {
+    _storeNameController.dispose();
+    _storeAddressController.dispose();
+    _storePhoneController.dispose();
     _salesFooterController.dispose();
     _a4FooterController.dispose();
     _textHeightController.dispose();
@@ -71,6 +77,9 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
     final settings = await PrinterSettingsService.load();
     if (!mounted) return;
     setState(() {
+      _storeNameController.text = settings.receiptStoreName;
+      _storeAddressController.text = settings.receiptStoreAddress;
+      _storePhoneController.text = settings.receiptStorePhone;
       _salesFooterController.text = settings.salesInvoiceFooter;
       _a4FooterController.text = settings.a4ReportFooter;
       _textHeightController.text = settings.textHeightPosition.toString();
@@ -103,6 +112,9 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
 
   PrinterSettings _currentSettings() {
     return PrinterSettings(
+      receiptStoreName: _storeNameController.text.trim(),
+      receiptStoreAddress: _storeAddressController.text.trim(),
+      receiptStorePhone: _storePhoneController.text.trim(),
       salesInvoiceFooter: _salesFooterController.text.trim(),
       a4ReportFooter: _a4FooterController.text.trim(),
       textHeightPosition: int.tryParse(_textHeightController.text) ?? 10,
@@ -556,6 +568,44 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
+                    _sectionLabel('رأس الإيصال (اسم المحل)'),
+                    TextField(
+                      controller: _storeNameController,
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: Colors.white,
+                        hintText: 'اسم المحل',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6.r),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 8.h),
+                    TextField(
+                      controller: _storeAddressController,
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: Colors.white,
+                        hintText: 'العنوان (اختياري)',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6.r),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 8.h),
+                    TextField(
+                      controller: _storePhoneController,
+                      keyboardType: TextInputType.phone,
+                      decoration: InputDecoration(
+                        filled: true,
+                        fillColor: Colors.white,
+                        hintText: 'رقم الهاتف (اختياري)',
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(6.r),
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 14.h),
                     _sectionLabel('نص أسفل فواتير المبيعات'),
                     _multilineField(_salesFooterController, minLines: 2),
                     SizedBox(height: 10.h),

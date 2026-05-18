@@ -184,12 +184,12 @@ class BluetoothPrinterService {
       if (!await ThermalPrintChannel.initPaperLayout(settings.paperSize)) {
         return false;
       }
-      for (final line in text.split('\n')) {
-        final content = line.isEmpty ? '\n' : '$line\n';
-        if (!await _writeLine(content,
-            size: size, paperSize: settings.paperSize)) {
-          return false;
-        }
+      // Send the whole receipt in one job so Arabic renders as one continuous
+      // bitmap (per-line jobs caused band gaps / sliced text on thermal paper).
+      final payload = text.endsWith('\n') ? text : '$text\n';
+      if (!await _writeLine(payload,
+          size: size, paperSize: settings.paperSize)) {
+        return false;
       }
       if (!await _finishReceipt(settings)) return false;
     }

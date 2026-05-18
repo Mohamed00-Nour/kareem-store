@@ -1527,6 +1527,14 @@ Future<void> _saveBalance() async {
                         onChanged: (v) =>
                             setDialog(() => statementType = v!),
                       ),
+                      RadioListTile<ClientStatementType>(
+                        dense: true,
+                        title: const Text('كشف حساب فواتير المرتجع'),
+                        value: ClientStatementType.returns,
+                        groupValue: statementType,
+                        onChanged: (v) =>
+                            setDialog(() => statementType = v!),
+                      ),
                       const SizedBox(height: 12),
                       const Text('الفترة',
                           style: TextStyle(fontWeight: FontWeight.w600)),
@@ -1595,9 +1603,14 @@ Future<void> _saveBalance() async {
       );
 
       if (!mounted) return;
-      final title = statementType == ClientStatementType.financial
-          ? 'كشف حساب مالي'
-          : 'كشف حساب الفواتير';
+      String title;
+      if (statementType == ClientStatementType.financial) {
+        title = 'كشف حساب مالي';
+      } else if (statementType == ClientStatementType.returns) {
+        title = 'كشف حساب فواتير المرتجع';
+      } else {
+        title = 'كشف حساب الفواتير';
+      }
 
       await showDialog(
         context: context,
@@ -1640,6 +1653,99 @@ Future<void> _saveBalance() async {
     } finally {
       if (mounted) setState(() => _generatingStatement = false);
     }
+  }
+
+  Widget _buildInvoiceProductsTable(List<dynamic> products) {
+    final rows = products
+        .whereType<Map>()
+        .map((e) => Map<String, dynamic>.from(e))
+        .toList();
+
+    if (rows.isEmpty) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: 8.h),
+        child: const Text(
+          'لا توجد منتجات في هذه الفاتورة',
+          style: TextStyle(fontSize: 13, color: Colors.black54),
+        ),
+      );
+    }
+
+    var qtySum = 0.0;
+    for (final p in rows) {
+      qtySum += double.tryParse(p['amount']?.toString() ?? '') ?? 0;
+    }
+
+    Widget cell(
+      String text, {
+      bool bold = false,
+      TextAlign align = TextAlign.center,
+    }) {
+      return Padding(
+        padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 8.h),
+        child: Text(
+          text,
+          textAlign: align,
+          maxLines: 3,
+          overflow: TextOverflow.ellipsis,
+          style: TextStyle(
+            fontSize: 12.sp,
+            fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+          ),
+        ),
+      );
+    }
+
+    return Table(
+      border: TableBorder.all(color: Colors.grey.shade400, width: 0.8),
+      columnWidths: {
+        0: const FlexColumnWidth(3),
+        1: const FlexColumnWidth(1.1),
+        2: const FlexColumnWidth(1.1),
+        3: const FlexColumnWidth(1.2),
+      },
+      children: [
+        TableRow(
+          decoration: BoxDecoration(color: Colors.grey.shade200),
+          children: [
+            cell('اسم المنتج', bold: true, align: TextAlign.right),
+            cell('الكمية', bold: true),
+            cell('السعر', bold: true),
+            cell('الإجمالي', bold: true),
+          ],
+        ),
+        for (final p in rows)
+          TableRow(
+            decoration: BoxDecoration(
+              color: Colors.orange.withOpacity(0.12),
+            ),
+            children: [
+              cell(
+                p['product']?.toString() ?? '',
+                align: TextAlign.right,
+              ),
+              cell(p['amount']?.toString() ?? '0'),
+              cell(
+                (double.tryParse(p['selectedPrice']?.toString() ?? '') ?? 0)
+                    .toStringAsFixed(2),
+              ),
+              cell(
+                (double.tryParse(p['total']?.toString() ?? '') ?? 0)
+                    .toStringAsFixed(2),
+              ),
+            ],
+          ),
+        TableRow(
+          decoration: BoxDecoration(color: Colors.grey.shade100),
+          children: [
+            cell(''),
+            cell(qtySum.toStringAsFixed(1), bold: true),
+            cell(''),
+            cell(''),
+          ],
+        ),
+      ],
+    );
   }
 
   Future<void> _printInvoice(Map<String, dynamic> invoiceData) async {
@@ -1964,6 +2070,12 @@ Future<void> _saveBalance() async {
                                               onPressed: () =>
                                                   _printInvoice(invoiceData),
                                             ),
+                                            InvoicePrintUi
+                                                .temporaryPreviewIconButton(
+                                              context,
+                                              invoiceData,
+                                              clientId: widget.clientId,
+                                            ),
                                             IconButton(
                                               icon: FaIcon(
                                                 FontAwesomeIcons.whatsapp,
@@ -1998,80 +2110,11 @@ Future<void> _saveBalance() async {
                                         style: const TextStyle(fontSize: 14)),
                                     Text('$formattedTime :الوقت ',
                                         style: const TextStyle(fontSize: 14)),
-                                    const SizedBox(height: 10),
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceAround,
-                                      children: const [
-                                        Text('المنتج',
-                                            style: TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.bold)),
-                                        Text('الكمية',
-                                            style: TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.bold)),
-                                        Text('السعر',
-                                            style: TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.bold)),
-                                        Text('الإجمالي',
-                                            style: TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.bold)),
-                                      ],
-                                    ),
-                                    ListView.builder(
-                                      shrinkWrap: true,
-                                      physics: const NeverScrollableScrollPhysics(),
-                                      itemCount: invoice['products'].length,
-                                      itemBuilder: (context, index) {
-                                        final product = invoice['products'][index];
-                                        final total = double.tryParse(
-                                                product['total'].toString()) ??
-                                            0.0;
-
-                                        return Card(
-                                          margin: const EdgeInsets.symmetric(
-                                              vertical: 3.0),
-                                          elevation: 2,
-                                          color: Colors.orange.withOpacity(0.8),
-                                          child: Padding(
-                                            padding: const EdgeInsets.symmetric(
-                                                vertical: 8.0),
-                                            child: Row(
-                                              mainAxisAlignment:
-                                                  MainAxisAlignment.spaceAround,
-                                              children: [
-                                                Text(product['product'],
-                                                    style: const TextStyle(
-                                                        fontSize: 12)),
-                                                Text(product['amount'],
-                                                    style: const TextStyle(
-                                                        fontSize: 12)),
-                                                Text(
-                                                  (double.tryParse(product[
-                                                                  'selectedPrice']
-                                                              .toString()) ??
-                                                          0.0)
-                                                      .toStringAsFixed(2),
-                                                  style:
-                                                      const TextStyle(fontSize: 12),
-                                                ),
-                                                Text(total.toStringAsFixed(2),
-                                                    style: const TextStyle(
-                                                        fontSize: 12)),
-                                               /* IconButton(
-                                                  icon: const Icon(Icons.edit,
-                                                      color: Colors.black),
-                                                  onPressed: () => _editProduct(
-                                                      invoice.id, index, product),
-                                                ),*/
-                                              ],
-                                            ),
-                                          ),
-                                        );
-                                      },
+                                    SizedBox(height: 10.h),
+                                    _buildInvoiceProductsTable(
+                                      List<dynamic>.from(
+                                        invoiceData['products'] ?? [],
+                                      ),
                                     ),
                                     Padding(
                                       padding: const EdgeInsets.symmetric(

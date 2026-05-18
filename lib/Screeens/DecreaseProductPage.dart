@@ -7,12 +7,16 @@ import 'Invoices/All_invoices.dart';
 import 'Invoices/InvoiceDetailPage.dart';
 import 'Data/DataEntryScreen.dart';
 import '../Services/invoice_print_ui.dart';
+import '../Services/return_invoice_save_service.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../Widgets/egypt_phone_field.dart';
 import 'home_page.dart';
 
 class DecreaseProductPage extends StatefulWidget {
-  const DecreaseProductPage({super.key});
+  /// When true, saves as [returnInvoices] (stock in, reversed profit/sales/box).
+  final bool isReturnInvoice;
+
+  const DecreaseProductPage({super.key, this.isReturnInvoice = false});
 
   @override
   _DecreaseProductPageState createState() => _DecreaseProductPageState();
@@ -28,6 +32,15 @@ void _selectAllField(TextEditingController controller) {
 }
 
 class _DecreaseProductPageState extends State<DecreaseProductPage> {
+  String get _pageTitle =>
+      widget.isReturnInvoice ? 'فواتير المرتجع' : 'المبيعات';
+
+  String get _mainCollection =>
+      widget.isReturnInvoice ? 'returnInvoices' : 'invoices';
+
+  String get _clientInvoiceSubcollection =>
+      widget.isReturnInvoice ? 'returnInvoices' : 'invoices';
+
   final List<Product> _products = [];
   DateTime? _selectedDate;
 
@@ -619,143 +632,151 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     });
 
     try {
-      // Get the latest invoice number
-      QuerySnapshot invoiceQuery = await FirebaseFirestore.instance
-          .collection('invoices')
-          .orderBy('invoiceNumber', descending: true)
-          .limit(1)
-          .get();
-
-      int newInvoiceNumber = 1;
-      if (invoiceQuery.docs.isNotEmpty) {
-        newInvoiceNumber = invoiceQuery.docs.first['invoiceNumber'] + 1;
-      }
-
-      // Calculate the total cost and profit margin
-      double totalCost = await _calculateTotalCost();
-      double totalSum = _calculateTotalSum();
-      double effectiveDiscountAmt = discountIsPercent
-          ? totalSum * invoiceDiscount / 100
-          : invoiceDiscount;
-      double totalSumFinal = totalSum - effectiveDiscountAmt;
-      double profitMargin = totalSumFinal - totalCost;
-      double balance = totalSumFinal - effectivePaid;
-
-      // Fetch existing client balance
-      double existingBalance =
-      await _fetchClientBalance(effectiveClient);
-      double updatedBalance = existingBalance + balance;
-
-      // Create the invoice data
-      Map<String, dynamic> invoiceData = {
-        'invoiceNumber': newInvoiceNumber,
-        'clientName': effectiveClient,
-        'date': _selectedDate,
-        'totalSum': totalSumFinal,
-        'profitMargin': profitMargin,
-        'paidAmount': effectivePaid,
-        'balance': balance,
-        'previousBalance': _clientBalance,
-        'paymentMethod': paymentMethod,
-        'notes': notes,
-        'invoiceDiscount': effectiveDiscountAmt,
-        'products': _addedProducts,
-      };
-
-      // Save the invoice to Firestore with an auto-generated ID
-      DocumentReference docRef = await FirebaseFirestore.instance
-          .collection('invoices')
-          .add(invoiceData);
-
-      // Update the invoice data with the generated ID
-      await docRef.update({'id': docRef.id});
-      _lastInvoice = {...invoiceData, 'id': docRef.id};
-
-      // Update the product quantities and save changes
-      for (var product in _addedProducts) {
-        QuerySnapshot query = await FirebaseFirestore.instance
-            .collection('products')
-            .where('name', isEqualTo: product['product'])
+      if (widget.isReturnInvoice) {
+        _lastInvoice = await ReturnInvoiceSaveService.save(
+          clientName: effectiveClient,
+          selectedDate: _selectedDate,
+          products: List<Map<String, dynamic>>.from(_addedProducts),
+          paidAmount: effectivePaid,
+          paymentMethod: paymentMethod,
+          notes: notes,
+          invoiceDiscount: invoiceDiscount,
+          discountIsPercent: discountIsPercent,
+          previousBalanceSnapshot: _clientBalance,
+          totalSumBeforeDiscount: _calculateTotalSum(),
+          calculateTotalCost: (_) => _calculateTotalCost(),
+        );
+      } else {
+        final invoiceQuery = await FirebaseFirestore.instance
+            .collection(_mainCollection)
+            .orderBy('invoiceNumber', descending: true)
+            .limit(1)
             .get();
 
-        if (query.docs.isNotEmpty) {
-          for (var doc in query.docs) {
-            double existingAmount = (doc['quantity'] as num).toDouble();
-            double decrementAmount =
-                double.tryParse(product['amount'].toString()) ?? 0.0;
-            double newAmount = existingAmount - decrementAmount;
+        var newInvoiceNumber = 1;
+        if (invoiceQuery.docs.isNotEmpty) {
+          newInvoiceNumber =
+              (invoiceQuery.docs.first['invoiceNumber'] as num).toInt() + 1;
+        }
 
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(doc.id)
-                .update({'quantity': newAmount});
+        final totalCost = await _calculateTotalCost();
+        final totalSum = _calculateTotalSum();
+        final effectiveDiscountAmt = discountIsPercent
+            ? totalSum * invoiceDiscount / 100
+            : invoiceDiscount;
+        final totalSumFinal = totalSum - effectiveDiscountAmt;
+        final profitMargin = totalSumFinal - totalCost;
+        final balance = totalSumFinal - effectivePaid;
 
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(doc.id)
-                .collection('changes')
-                .add({
-              'date': product['date'],
-              'amount': decrementAmount,
-              'type': 'decrease',
-            });
+        final existingBalance = await _fetchClientBalance(effectiveClient);
+        final updatedBalance = existingBalance + balance;
+
+        final invoiceData = <String, dynamic>{
+          'invoiceNumber': newInvoiceNumber,
+          'clientName': effectiveClient,
+          'date': _selectedDate,
+          'totalSum': totalSumFinal,
+          'profitMargin': profitMargin,
+          'paidAmount': effectivePaid,
+          'balance': balance,
+          'previousBalance': _clientBalance,
+          'paymentMethod': paymentMethod,
+          'notes': notes,
+          'invoiceDiscount': effectiveDiscountAmt,
+          'invoiceType': 'sale',
+          'products': _addedProducts,
+        };
+
+        final docRef = await FirebaseFirestore.instance
+            .collection(_mainCollection)
+            .add(invoiceData);
+
+        await docRef.update({'id': docRef.id});
+        _lastInvoice = {...invoiceData, 'id': docRef.id};
+
+        for (final product in _addedProducts) {
+          final query = await FirebaseFirestore.instance
+              .collection('products')
+              .where('name', isEqualTo: product['product'])
+              .get();
+
+          if (query.docs.isNotEmpty) {
+            for (final doc in query.docs) {
+              final existingAmount = (doc['quantity'] as num).toDouble();
+              final decrementAmount =
+                  double.tryParse(product['amount'].toString()) ?? 0.0;
+              final newAmount = existingAmount - decrementAmount;
+
+              await FirebaseFirestore.instance
+                  .collection('products')
+                  .doc(doc.id)
+                  .update({'quantity': newAmount});
+
+              await FirebaseFirestore.instance
+                  .collection('products')
+                  .doc(doc.id)
+                  .collection('changes')
+                  .add({
+                'date': product['date'],
+                'amount': decrementAmount,
+                'type': 'decrease',
+              });
+            }
           }
         }
-      }
 
-      // Store the client balance and invoices in a new collection
-      DocumentReference clientDocRef = FirebaseFirestore.instance
-          .collection('clients')
-          .doc(effectiveClient);
+        final clientDocRef = FirebaseFirestore.instance
+            .collection('clients')
+            .doc(effectiveClient);
 
-      await clientDocRef.set({
-        'clientName': effectiveClient,
-        'balance': updatedBalance,
-      }, SetOptions(merge: true));
+        await clientDocRef.set({
+          'clientName': effectiveClient,
+          'balance': updatedBalance,
+        }, SetOptions(merge: true));
 
-      await clientDocRef.collection('invoices').add({
-        'invoiceId': docRef.id,
-        'invoiceNumber': newInvoiceNumber,
-        'date': _selectedDate,
-        'totalSum': totalSumFinal,
-        'paidAmount': effectivePaid,
-        'balance': balance,
-        'previousBalance': _clientBalance,
-        'paymentMethod': paymentMethod,
-        'notes': notes,
-        'products': _addedProducts,
-      });
-
-      // Save the balance history
-      await clientDocRef.collection('balanceHistory').add({
-        'enteredBalance': effectivePaid,
-        'balanceBefore': existingBalance,
-        'timestamp': FieldValue.serverTimestamp(),
-      });
-
-      // Update the box collection
-      DocumentReference boxDocRef =
-      FirebaseFirestore.instance.collection('box').doc('mainBox');
-
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        DocumentSnapshot boxSnapshot = await transaction.get(boxDocRef);
-
-        if (boxSnapshot.exists) {
-          double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-          transaction.update(boxDocRef, {'value': currentBoxValue + effectivePaid});
-        } else {
-          transaction.set(boxDocRef, {'value': effectivePaid});
-        }
-
-        // Add change to the subcollection
-        await boxDocRef.collection('changes').add({
-          'date': FieldValue.serverTimestamp(),
-          'value': effectivePaid,
-          'type': 'addition',
-          'name': effectiveClient,
+        await clientDocRef.collection(_clientInvoiceSubcollection).add({
+          'invoiceId': docRef.id,
           'invoiceNumber': newInvoiceNumber,
+          'date': _selectedDate,
+          'totalSum': totalSumFinal,
+          'paidAmount': effectivePaid,
+          'balance': balance,
+          'previousBalance': _clientBalance,
+          'paymentMethod': paymentMethod,
+          'notes': notes,
+          'products': _addedProducts,
         });
-      });
+
+        await clientDocRef.collection('balanceHistory').add({
+          'enteredBalance': effectivePaid,
+          'balanceBefore': existingBalance,
+          'timestamp': FieldValue.serverTimestamp(),
+          'type': 'sale',
+        });
+
+        final boxDocRef =
+            FirebaseFirestore.instance.collection('box').doc('mainBox');
+
+        await FirebaseFirestore.instance.runTransaction((transaction) async {
+          final boxSnapshot = await transaction.get(boxDocRef);
+
+          if (boxSnapshot.exists) {
+            final currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
+            transaction.update(
+                boxDocRef, {'value': currentBoxValue + effectivePaid});
+          } else {
+            transaction.set(boxDocRef, {'value': effectivePaid});
+          }
+
+          await boxDocRef.collection('changes').add({
+            'date': FieldValue.serverTimestamp(),
+            'value': effectivePaid,
+            'type': 'addition',
+            'name': effectiveClient,
+            'invoiceNumber': newInvoiceNumber,
+          });
+        });
+      }
 
       setState(() {
         _dataModified = false;
@@ -821,6 +842,30 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue.shade700,
                       foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: 10.h),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 8.h),
+                SizedBox(
+                  width: double.infinity,
+                  child: OutlinedButton.icon(
+                    onPressed: () {
+                      final clientName =
+                          invoice['clientName']?.toString() ?? '';
+                      InvoicePrintUi.previewInvoice(
+                        ctx,
+                        invoice,
+                        clientId: clientName.isNotEmpty
+                            ? clientName
+                            : null,
+                      );
+                    },
+                    icon: Icon(Icons.receipt_long,
+                        color: Colors.deepPurple.shade700),
+                    label: const Text('معاينة الطباعة (مؤقت)'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.deepPurple.shade700,
                       padding: EdgeInsets.symmetric(vertical: 10.h),
                     ),
                   ),
@@ -2214,18 +2259,38 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     builder: (_) =>
                         InvoiceDetailPage(invoice: _lastInvoice!)));
           } else {
-            Navigator.push(context,
-                MaterialPageRoute(builder: (_) => const InvoiceListPage()));
+            Navigator.push(
+              context,
+              MaterialPageRoute(
+                builder: (_) => InvoiceListPage(
+                  collection: _mainCollection,
+                  pageTitle: widget.isReturnInvoice
+                      ? 'فواتير المرتجع'
+                      : 'فواتير المبيعات',
+                ),
+              ),
+            );
           }
         },
       ),
       _DrawerItem(
         icon: Icons.edit_document,
-        label: 'تعديل فاتورة البيع',
+        label: widget.isReturnInvoice
+            ? 'تعديل فاتورة مرتجع'
+            : 'تعديل فاتورة البيع',
         onTap: () {
           Navigator.pop(context);
-          Navigator.push(context,
-              MaterialPageRoute(builder: (_) => const InvoiceListPage()));
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => InvoiceListPage(
+                collection: _mainCollection,
+                pageTitle: widget.isReturnInvoice
+                    ? 'فواتير المرتجع'
+                    : 'فواتير المبيعات',
+              ),
+            ),
+          );
         },
       ),
       _DrawerItem(
@@ -2333,11 +2398,20 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       ),
       _DrawerItem(
         icon: Icons.receipt_long_outlined,
-        label: 'عرض الفواتير',
+        label: widget.isReturnInvoice ? 'عرض فواتير المرتجع' : 'عرض الفواتير',
         onTap: () {
           Navigator.pop(context);
-          Navigator.push(context,
-              MaterialPageRoute(builder: (_) => const InvoiceListPage()));
+          Navigator.push(
+            context,
+            MaterialPageRoute(
+              builder: (_) => InvoiceListPage(
+                collection: _mainCollection,
+                pageTitle: widget.isReturnInvoice
+                    ? 'فواتير المرتجع'
+                    : 'فواتير المبيعات',
+              ),
+            ),
+          );
         },
       ),
       _DrawerItem(
@@ -2362,7 +2436,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                 top: MediaQuery.of(context).padding.top + 16.h,
                 bottom: 16.h,
                 right: 16.w),
-            child: Text('المبيعات',
+            child: Text(_pageTitle,
                 style: TextStyle(
                     color: Colors.white,
                     fontSize: 20.sp,
@@ -2421,7 +2495,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         drawer: _buildDrawer(),
         appBar: AppBar(
           backgroundColor: Colors.black.withOpacity(0.7),
-          title: Text('المبيعات',
+          title: Text(_pageTitle,
               style: TextStyle(
                   color: Colors.white,
                   fontSize: 20.sp,

@@ -4,11 +4,16 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
-import 'package:pdf/pdf.dart' hide TextDirection;
+import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import 'printer_settings_service.dart';
+
 class SalesInvoicePdfService {
+  static final _money = NumberFormat('#,##0.00', 'en_US');
+
   static Future<File> generate(Map<String, dynamic> invoice) async {
+    final settings = await PrinterSettingsService.load();
     final amiriRegular =
         pw.Font.ttf((await rootBundle.load('fonts/Amiri-Regular.ttf'))
             .buffer
@@ -30,22 +35,27 @@ class SalesInvoicePdfService {
           style: cell(bold: bold, fontSize: fontSize),
         );
 
+    pw.Widget center(String text, {bool bold = false, double fontSize = 11}) =>
+        pw.Text(
+          text,
+          textDirection: pw.TextDirection.rtl,
+          textAlign: pw.TextAlign.center,
+          style: cell(bold: bold, fontSize: fontSize),
+        );
+
     final products =
         List<Map<String, dynamic>>.from(invoice['products'] ?? []);
     final totalSum = (invoice['totalSum'] as num?)?.toDouble() ?? 0.0;
     final paid = (invoice['paidAmount'] as num?)?.toDouble() ?? 0.0;
     final balance = (invoice['balance'] as num?)?.toDouble() ?? 0.0;
-    final discount = (invoice['invoiceDiscount'] as num?)?.toDouble() ?? 0.0;
     final previous =
         (invoice['previousBalance'] as num?)?.toDouble() ?? 0.0;
-
-    String dateStr = '';
-    final date = invoice['date'];
-    if (date is Timestamp) {
-      dateStr = DateFormat('dd/MM/yyyy hh:mm a').format(date.toDate().toLocal());
-    } else if (date is DateTime) {
-      dateStr = DateFormat('dd/MM/yyyy hh:mm a').format(date.toLocal());
-    }
+    final when = _parseDateTime(invoice['date']);
+    final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
+    final qtySum = products.fold<double>(
+      0,
+      (s, p) => s + _num(p['amount']),
+    );
 
     pw.Widget h(String t) => pw.Padding(
           padding: const pw.EdgeInsets.all(4),
@@ -63,6 +73,20 @@ class SalesInvoicePdfService {
               style: cell(fontSize: 9)),
         );
 
+    final headerLines = <String>[
+      if (settings.receiptStoreName.trim().isNotEmpty)
+        settings.receiptStoreName.trim(),
+      if (settings.receiptStoreAddress.trim().isNotEmpty)
+        settings.receiptStoreAddress.trim(),
+      if (settings.receiptStorePhone.trim().isNotEmpty)
+        settings.receiptStorePhone.trim(),
+    ];
+    if (headerLines.isEmpty) {
+      headerLines.add('أبو مجدي للحدايد والعدد والديكور والخشب والحلايا');
+      headerLines.add('كفر الزيات - طنطا - الغربية');
+      headerLines.add('01010573888');
+    }
+
     final pdf = pw.Document();
     pdf.addPage(
       pw.Page(
@@ -72,21 +96,38 @@ class SalesInvoicePdfService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              pw.Center(child: rtl('Kareem Store', bold: true, fontSize: 14)),
-              pw.SizedBox(height: 6),
-              pw.Center(child: rtl('فاتورة مبيعات', bold: true, fontSize: 16)),
+              for (final line in headerLines) ...[
+                center(line, bold: true, fontSize: 13),
+                pw.SizedBox(height: 2),
+              ],
+              center(settings.labels.invoiceTitle, bold: true, fontSize: 16),
+              pw.Divider(),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  rtl('النوع : $typeLabel', fontSize: 10),
+                  rtl('الرقم : ${invoice['invoiceNumber']}', fontSize: 10),
+                ],
+              ),
+              pw.SizedBox(height: 4),
+              pw.Row(
+                mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                children: [
+                  rtl('التاريخ : ${when.date}', fontSize: 10),
+                  rtl('الوقت : ${when.time}', fontSize: 10),
+                ],
+              ),
+              pw.Divider(),
+              center('اسم العميل', bold: true),
+              center(invoice['clientName']?.toString() ?? '', fontSize: 12),
               pw.SizedBox(height: 10),
-              rtl('رقم الفاتورة: #${invoice['invoiceNumber']}'),
-              rtl('العميل: ${invoice['clientName']}'),
-              if (dateStr.isNotEmpty) rtl('التاريخ: $dateStr'),
-              rtl('طريقة الدفع: ${invoice['paymentMethod']}'),
-              pw.SizedBox(height: 12),
               pw.Table(
-                border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+                border:
+                    pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                 columnWidths: {
                   0: const pw.FlexColumnWidth(3),
-                  1: const pw.FlexColumnWidth(1.5),
-                  2: const pw.FlexColumnWidth(1.5),
+                  1: const pw.FlexColumnWidth(1.2),
+                  2: const pw.FlexColumnWidth(1.2),
                   3: const pw.FlexColumnWidth(1.5),
                 },
                 children: [
@@ -94,7 +135,7 @@ class SalesInvoicePdfService {
                     decoration:
                         const pw.BoxDecoration(color: PdfColors.grey200),
                     children: [
-                      h('المنتج'),
+                      h('اسم المنتج'),
                       h('الكمية'),
                       h('السعر'),
                       h('الإجمالي'),
@@ -105,21 +146,27 @@ class SalesInvoicePdfService {
                       children: [
                         d(p['product']?.toString() ?? ''),
                         d(p['amount']?.toString() ?? ''),
-                        d(((p['selectedPrice'] as num?)?.toDouble() ?? 0)
-                            .toStringAsFixed(2)),
-                        d(((p['total'] as num?)?.toDouble() ?? 0)
-                            .toStringAsFixed(2)),
+                        d(_formatMoney(_num(p['selectedPrice']))),
+                        d(_formatMoney(_num(p['total']))),
                       ],
                     ),
+                  pw.TableRow(
+                    children: [
+                      d(''),
+                      d(qtySum.toStringAsFixed(1)),
+                      d(''),
+                      d(''),
+                    ],
+                  ),
                 ],
               ),
               pw.SizedBox(height: 12),
-              if (discount > 0)
-                rtl('الخصم: ${discount.toStringAsFixed(2)}'),
-              rtl('الرصيد السابق: ${previous.toStringAsFixed(2)}'),
-              rtl('الإجمالي: ${totalSum.toStringAsFixed(2)}', bold: true),
-              rtl('المدفوع: ${paid.toStringAsFixed(2)}'),
-              rtl('المتبقي: ${balance.toStringAsFixed(2)}'),
+              rtl(
+                  '${settings.labels.previousBalance} : ${_formatMoney(previous)}'),
+              rtl('إجمالي ف. : ${_formatMoney(totalSum)}', bold: true),
+              rtl('${settings.labels.paid} : ${_formatMoney(paid)}'),
+              rtl('الرصيد الحالي (عليكم) : ${_formatMoney(balance)}',
+                  bold: true),
               if ((invoice['notes']?.toString() ?? '').isNotEmpty)
                 rtl('ملاحظات: ${invoice['notes']}'),
             ],
@@ -134,4 +181,44 @@ class SalesInvoicePdfService {
     await file.writeAsBytes(await pdf.save());
     return file;
   }
+
+  static String _formatMoney(double value) => _money.format(value);
+
+  static double _num(dynamic value) {
+    if (value is num) return value.toDouble();
+    return double.tryParse(value?.toString() ?? '') ?? 0.0;
+  }
+
+  static String _paymentTypeLabel(dynamic method) {
+    final m = method?.toString().trim() ?? '';
+    if (m.isEmpty) return 'نقد';
+    if (m.contains('آجل') || m.contains('اجل')) return 'اجل';
+    if (m.contains('نقد')) return 'نقد';
+    if (m.contains('بطاق')) return 'بطاقه';
+    return m;
+  }
+
+  static _InvoiceWhen _parseDateTime(dynamic date) {
+    DateTime? dt;
+    if (date is Timestamp) {
+      dt = date.toDate().toLocal();
+    } else if (date is DateTime) {
+      dt = date.toLocal();
+    }
+    if (dt == null) return const _InvoiceWhen(date: '', time: '');
+    final d = dt;
+    return _InvoiceWhen(
+      date:
+          '${d.day.toString().padLeft(2, '0')}-${d.month.toString().padLeft(2, '0')}-${d.year}',
+      time:
+          '${d.hour.toString().padLeft(2, '0')}:${d.minute.toString().padLeft(2, '0')}:${d.second.toString().padLeft(2, '0')}',
+    );
+  }
+}
+
+class _InvoiceWhen {
+  final String date;
+  final String time;
+
+  const _InvoiceWhen({required this.date, required this.time});
 }

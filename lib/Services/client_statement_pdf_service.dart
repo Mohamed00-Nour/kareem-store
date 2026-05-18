@@ -7,7 +7,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart' hide TextDirection;
 import 'package:pdf/widgets.dart' as pw;
 
-enum ClientStatementType { financial, invoices }
+enum ClientStatementType { financial, invoices, returns }
 
 class ClientStatementPdfService {
   static Future<File> generate({
@@ -53,36 +53,66 @@ class ClientStatementPdfService {
 
     final pdf = pw.Document();
 
-    if (type == ClientStatementType.financial) {
-      await _addFinancialPages(
-        pdf: pdf,
-        clientId: clientId,
-        clientName: clientName,
-        start: startInclusive,
-        end: endInclusive,
-        periodStr: periodStr,
-        nowStr: nowStr,
-        cell: cell,
-        rtl: rtl,
-      );
-    } else {
-      await _addInvoicePages(
-        pdf: pdf,
-        clientId: clientId,
-        clientName: clientName,
-        start: startInclusive,
-        end: endInclusive,
-        periodStr: periodStr,
-        nowStr: nowStr,
-        cell: cell,
-        rtl: rtl,
-      );
+    switch (type) {
+      case ClientStatementType.financial:
+        await _addFinancialPages(
+          pdf: pdf,
+          clientId: clientId,
+          clientName: clientName,
+          start: startInclusive,
+          end: endInclusive,
+          periodStr: periodStr,
+          nowStr: nowStr,
+          cell: cell,
+          rtl: rtl,
+        );
+        break;
+      case ClientStatementType.invoices:
+        await _addInvoicePages(
+          pdf: pdf,
+          clientId: clientId,
+          clientName: clientName,
+          start: startInclusive,
+          end: endInclusive,
+          periodStr: periodStr,
+          nowStr: nowStr,
+          cell: cell,
+          rtl: rtl,
+          invoicesSubcollection: 'invoices',
+          statementHeader: 'كشف حساب الفواتير',
+          invoiceTypeLabel: 'فاتورة مبيعات',
+          emptyMessage: 'لا توجد فواتير في هذه الفترة',
+        );
+        break;
+      case ClientStatementType.returns:
+        await _addInvoicePages(
+          pdf: pdf,
+          clientId: clientId,
+          clientName: clientName,
+          start: startInclusive,
+          end: endInclusive,
+          periodStr: periodStr,
+          nowStr: nowStr,
+          cell: cell,
+          rtl: rtl,
+          invoicesSubcollection: 'returnInvoices',
+          statementHeader: 'كشف حساب فواتير المرتجع',
+          invoiceTypeLabel: 'فاتورة مرتجع',
+          emptyMessage: 'لا توجد فواتير مرتجع في هذه الفترة',
+        );
+        break;
     }
 
     final dir = await getTemporaryDirectory();
     final safeName = clientName.replaceAll(RegExp(r'[^\w\s-]'), '').trim();
-    final typeLabel =
-        type == ClientStatementType.financial ? 'مالي' : 'فواتير';
+    String typeLabel;
+    if (type == ClientStatementType.financial) {
+      typeLabel = 'مالي';
+    } else if (type == ClientStatementType.returns) {
+      typeLabel = 'مرتجع';
+    } else {
+      typeLabel = 'فواتير';
+    }
     final fileName =
         'كشف_حساب_${typeLabel}_${safeName}_${DateFormat('yyyyMMdd').format(startInclusive)}.pdf';
     final file = File('${dir.path}/$fileName');
@@ -232,11 +262,15 @@ class ClientStatementPdfService {
     required String nowStr,
     required pw.TextStyle Function({bool bold, double fontSize}) cell,
     required pw.Widget Function(String text, {bool bold, double fontSize}) rtl,
+    required String invoicesSubcollection,
+    required String statementHeader,
+    required String invoiceTypeLabel,
+    required String emptyMessage,
   }) async {
     final snap = await FirebaseFirestore.instance
         .collection('clients')
         .doc(clientId)
-        .collection('invoices')
+        .collection(invoicesSubcollection)
         .orderBy('date', descending: true)
         .get();
 
@@ -256,13 +290,13 @@ class ClientStatementPdfService {
           margin: const pw.EdgeInsets.all(28),
           build: (ctx) => pw.Column(
             children: [
-              pw.Center(child: rtl('كشف حساب الفواتير', bold: true, fontSize: 16)),
+              pw.Center(child: rtl(statementHeader, bold: true, fontSize: 16)),
               pw.SizedBox(height: 8),
               pw.Center(child: rtl('العميل: $clientName')),
               pw.SizedBox(height: 8),
               pw.Center(child: rtl(periodStr)),
               pw.SizedBox(height: 16),
-              pw.Center(child: rtl('لا توجد فواتير في هذه الفترة')),
+              pw.Center(child: rtl(emptyMessage)),
             ],
           ),
         ),
@@ -312,7 +346,7 @@ class ClientStatementPdfService {
                     child: rtl('Kareem Store', bold: true, fontSize: 12)),
                 pw.SizedBox(height: 6),
                 pw.Center(
-                    child: rtl('كشف حساب الفواتير', bold: true, fontSize: 14)),
+                    child: rtl(statementHeader, bold: true, fontSize: 14)),
                 pw.SizedBox(height: 4),
                 pw.Center(child: rtl('العميل: $clientName', fontSize: 11)),
                 pw.SizedBox(height: 2),
@@ -320,7 +354,8 @@ class ClientStatementPdfService {
                 pw.SizedBox(height: 10),
                 pw.Divider(),
                 pw.SizedBox(height: 6),
-                rtl('فاتورة مبيعات #$invoiceNumber', bold: true, fontSize: 12),
+                rtl('$invoiceTypeLabel #$invoiceNumber',
+                    bold: true, fontSize: 12),
                 pw.SizedBox(height: 4),
                 rtl('التاريخ: ${DateFormat('dd/MM/yyyy hh:mm a').format(date)}',
                     fontSize: 10),

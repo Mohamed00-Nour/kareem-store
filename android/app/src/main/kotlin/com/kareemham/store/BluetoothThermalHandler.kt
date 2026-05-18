@@ -322,7 +322,10 @@ class BluetoothThermalHandler(
 
     private fun renderTextBitmap(text: String, paperMm: Int, textSizePx: Float): Bitmap {
         val widthDots = printWidthDots(paperMm)
-        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+        // No anti-alias: gray pixels cause missing dots / horizontal bands on thermal.
+        val paint = TextPaint().apply {
+            isAntiAlias = false
+            isSubpixelText = false
             typeface = getArabicTypeface()
             this.textSize = textSizePx
             color = Color.BLACK
@@ -331,8 +334,9 @@ class BluetoothThermalHandler(
         val layout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
             StaticLayout.Builder.obtain(text, 0, text.length, paint, widthDots)
                 .setAlignment(Layout.Alignment.ALIGN_OPPOSITE)
-                .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
-                .setIncludePad(false)
+                .setTextDirection(TextDirectionHeuristics.RTL)
+                .setIncludePad(true)
+                .setLineSpacing(0f, 1f)
                 .build()
         } else {
             @Suppress("DEPRECATION")
@@ -343,26 +347,33 @@ class BluetoothThermalHandler(
                 Layout.Alignment.ALIGN_OPPOSITE,
                 1f,
                 0f,
-                false,
+                true,
             )
         }
 
-        val height = layout.height.coerceAtLeast(1)
-        val bitmap = Bitmap.createBitmap(widthDots, height, Bitmap.Config.ARGB_8888)
+        val layoutHeight = layout.height.coerceAtLeast(1)
+        // ESC * mode 33 prints 24-dot bands — pad height to a multiple of 24.
+        val sliceHeight = 24
+        val paddedHeight =
+            ((layoutHeight + sliceHeight - 1) / sliceHeight) * sliceHeight
+        val bitmap =
+            Bitmap.createBitmap(widthDots, paddedHeight, Bitmap.Config.ARGB_8888)
         val canvas = Canvas(bitmap)
         canvas.drawColor(Color.WHITE)
-        canvas.save()
-        canvas.translate(0f, 0f)
         layout.draw(canvas)
-        canvas.restore()
         return bitmap
     }
 
     private fun printBitmapEscPos(stream: OutputStream, bitmap: Bitmap) {
         val width = bitmap.width
         val height = bitmap.height
-        var y = 0
         val sliceHeight = 24
+
+        // Line spacing must equal band height or the printer leaves a blank stripe
+        // between each 24-dot raster slice (looks like a line cutting through text).
+        stream.write(byteArrayOf(0x1B, 0x33, sliceHeight.toByte()))
+
+        var y = 0
         while (y < height) {
             stream.write(byteArrayOf(0x1B, 0x2A, 33))
             stream.write(
@@ -378,9 +389,7 @@ class BluetoothThermalHandler(
                         val yPos = y + k * 8 + b
                         if (yPos < height) {
                             val pixel = bitmap.getPixel(x, yPos)
-                            val luminance =
-                                (Color.red(pixel) + Color.green(pixel) + Color.blue(pixel)) / 3
-                            if (luminance < 160) {
+                            if (Color.red(pixel) < 128) {
                                 slice = slice or (1 shl (7 - b))
                             }
                         }
@@ -391,6 +400,8 @@ class BluetoothThermalHandler(
             stream.write(byteArrayOf(0x0A))
             y += sliceHeight
         }
+
+        stream.write(byteArrayOf(0x1B, 0x32))
     }
 
     @SuppressLint("MissingPermission")

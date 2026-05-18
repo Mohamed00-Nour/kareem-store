@@ -11,6 +11,7 @@ import '../suppliers/SuppliersPage.dart';
 import '../reports/ReportsPage.dart';
 import 'AddProductPage.dart';
 import 'DecreaseProductPage.dart';
+import 'ReturnProductPage.dart';
 import 'Data/DataEntryScreen.dart';
 import 'PrinterSettingsPage.dart';
 
@@ -456,12 +457,24 @@ class HomePage extends StatelessWidget {
                                       const PrinterSettingsPage()));
                             },
                           ),
+                          
                         ],
-                      ),
+                     
+                     
+                     ),
                     ),
                   ],
                 ),
               ),
+              CardWidget(
+                            imagePath: 'assets/images/minus.png',
+                            text: 'فواتير المرتجع',
+                            onPressed: () {
+                              Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (context) =>
+                                      const ReturnProductPage()));
+                            },
+                          ),
             ],
           ),
         ),

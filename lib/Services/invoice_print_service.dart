@@ -222,6 +222,26 @@ class InvoicePrintService {
     return out;
   }
 
+  /// Plain-text preview of what the thermal printer will receive.
+  static Future<String> buildPrintPreviewText(
+    Map<String, dynamic> invoice, {
+    String? clientId,
+  }) async {
+    final settings = await PrinterSettingsService.load();
+    final prepared = await prepareForPrint(invoice, clientId: clientId);
+    final context = await _buildContext(prepared, settings);
+    var text = InvoicePrintFormatter.format(
+      invoice: prepared,
+      settings: settings,
+      context: context,
+    );
+    if (settings.salesInvoiceFooter.trim().isNotEmpty) {
+      text +=
+          '${'-' * settings.paperSize.charsPerLine}\n${settings.salesInvoiceFooter}\n';
+    }
+    return text;
+  }
+
   static Future<InvoicePrintContext> _buildContext(
     Map<String, dynamic> invoice,
     PrinterSettings settings,

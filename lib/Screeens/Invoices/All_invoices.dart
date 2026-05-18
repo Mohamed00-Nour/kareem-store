@@ -7,7 +7,14 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'InvoiceDetailPage.dart';
 
 class InvoiceListPage extends StatefulWidget {
-  const InvoiceListPage({super.key});
+  final String collection;
+  final String pageTitle;
+
+  const InvoiceListPage({
+    super.key,
+    this.collection = 'invoices',
+    this.pageTitle = 'فواتير المبيعات',
+  });
 
   @override
   _InvoiceListPageState createState() => _InvoiceListPageState();
@@ -52,7 +59,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   Future<void> _fetchInvoices() async {
     try {
       QuerySnapshot querySnapshot = await FirebaseFirestore.instance
-          .collection('invoices')
+          .collection(widget.collection)
           .orderBy('date', descending: true)
           .get();
       if (!mounted) return;
@@ -245,7 +252,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     try {
       // Delete the invoice from Firestore
       await FirebaseFirestore.instance
-          .collection('invoices')
+          .collection(widget.collection)
           .doc(invoiceId)
           .delete();
 
@@ -257,7 +264,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
             onPressed: () async {
               // Re-add the invoice to Firestore
               await FirebaseFirestore.instance
-                  .collection('invoices')
+                  .collection(widget.collection)
                   .doc(invoiceId)
                   .set(removedInvoice);
 

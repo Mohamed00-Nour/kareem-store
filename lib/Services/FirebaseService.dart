@@ -74,19 +74,48 @@ class FirebaseService {
     });
   }
 
+  static double _docNum(dynamic v) {
+    if (v is num) return v.toDouble();
+    return double.tryParse(v?.toString() ?? '') ?? 0.0;
+  }
+
+  static Map<String, double> _sumSalesInvoices(QuerySnapshot snapshot) {
+    var totalProfitMargin = 0.0;
+    var totalSum = 0.0;
+    for (final doc in snapshot.docs) {
+      totalProfitMargin += _docNum(doc['profitMargin']);
+      totalSum += _docNum(doc['totalSum']);
+    }
+    return {
+      'totalProfitMargin': totalProfitMargin,
+      'totalSum': totalSum,
+    };
+  }
+
+  static Map<String, double> _netWithReturns(
+    Map<String, double> sales,
+    QuerySnapshot returnsSnap,
+  ) {
+    var returnProfit = 0.0;
+    var returnSum = 0.0;
+    for (final doc in returnsSnap.docs) {
+      returnProfit += _docNum(doc['profitMargin']);
+      returnSum += _docNum(doc['totalSum']);
+    }
+    return {
+      'totalProfitMargin': sales['totalProfitMargin']! + returnProfit,
+      'totalSum': sales['totalSum']! - returnSum,
+    };
+  }
+
   Stream<Map<String, double>> getTotalProfitAndSumStream() {
-    return _firestore.collection('invoices').snapshots().map((snapshot) {
-      double totalProfitMargin = 0.0;
-      double totalSum = 0.0;
-      for (var doc in snapshot.docs) {
-        totalProfitMargin += doc['profitMargin'] ?? 0.0;
-        totalSum += doc['totalSum'] ?? 0.0;
-      }
-      return {
-        'totalProfitMargin': totalProfitMargin,
-        'totalSum': totalSum,
-      };
-    });
+    return _firestore.collection('invoices').snapshots().asyncMap(
+      (salesSnap) async {
+        final returnsSnap =
+            await _firestore.collection('returnInvoices').get();
+        return _netWithReturns(_sumSalesInvoices(salesSnap), returnsSnap);
+      },
+    );
   }
 
   Stream<double> getTotalBuyingInvoicesSumStream() {
@@ -104,22 +133,7 @@ class FirebaseService {
     DateTime startOfMonth = DateTime(now.year, now.month, 1);
     DateTime endOfMonth = DateTime(now.year, now.month + 1, 1).subtract(Duration(seconds: 1));
 
-    return _firestore.collection('invoices')
-        .where('date', isGreaterThanOrEqualTo: startOfMonth)
-        .where('date', isLessThanOrEqualTo: endOfMonth)
-        .snapshots()
-        .map((snapshot) {
-      double totalProfitMargin = 0.0;
-      double totalSum = 0.0;
-      for (var doc in snapshot.docs) {
-        totalProfitMargin += doc['profitMargin'] ?? 0.0;
-        totalSum += doc['totalSum'] ?? 0.0;
-      }
-      return {
-        'totalProfitMargin': totalProfitMargin,
-        'totalSum': totalSum,
-      };
-    });
+    return _monthlyNetProfitAndSumStream(startOfMonth, endOfMonth);
   }
 
   Stream<double> getMonthlyBuyingInvoicesSumStream() {
@@ -140,22 +154,27 @@ class FirebaseService {
     });
   }
 
-  Stream<Map<String, double>> getMonthlyProfitAndSumStreamForDateRange(DateTime start, DateTime end) {
-    return _firestore.collection('invoices')
+  Stream<Map<String, double>> getMonthlyProfitAndSumStreamForDateRange(
+      DateTime start, DateTime end) {
+    return _monthlyNetProfitAndSumStream(start, end);
+  }
+
+  Stream<Map<String, double>> _monthlyNetProfitAndSumStream(
+    DateTime start,
+    DateTime end,
+  ) {
+    return _firestore
+        .collection('invoices')
         .where('date', isGreaterThanOrEqualTo: start)
         .where('date', isLessThanOrEqualTo: end)
         .snapshots()
-        .map((snapshot) {
-      double totalProfitMargin = 0.0;
-      double totalSum = 0.0;
-      for (var doc in snapshot.docs) {
-        totalProfitMargin += doc['profitMargin'] ?? 0.0;
-        totalSum += doc['totalSum'] ?? 0.0;
-      }
-      return {
-        'totalProfitMargin': totalProfitMargin,
-        'totalSum': totalSum,
-      };
+        .asyncMap((salesSnap) async {
+      final returnsSnap = await _firestore
+          .collection('returnInvoices')
+          .where('date', isGreaterThanOrEqualTo: start)
+          .where('date', isLessThanOrEqualTo: end)
+          .get();
+      return _netWithReturns(_sumSalesInvoices(salesSnap), returnsSnap);
     });
   }
 

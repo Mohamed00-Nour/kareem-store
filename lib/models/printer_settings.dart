@@ -15,6 +15,10 @@ extension ThermalPaperSizeLayout on ThermalPaperSize {
 }
 
 class PrinterSettings {
+  /// Centered lines at top of thermal receipt (store name, address, phone).
+  final String receiptStoreName;
+  final String receiptStoreAddress;
+  final String receiptStorePhone;
   final String salesInvoiceFooter;
   final String a4ReportFooter;
   final int textHeightPosition;
@@ -43,6 +47,10 @@ class PrinterSettings {
   final InvoiceLabels labels;
 
   const PrinterSettings({
+    this.receiptStoreName =
+        'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
+    this.receiptStoreAddress = 'كفر الزيات - طنطا - الغربية',
+    this.receiptStorePhone = '01010573888',
     this.salesInvoiceFooter = '',
     this.a4ReportFooter = '',
     this.textHeightPosition = 10,
@@ -72,6 +80,9 @@ class PrinterSettings {
   });
 
   PrinterSettings copyWith({
+    String? receiptStoreName,
+    String? receiptStoreAddress,
+    String? receiptStorePhone,
     String? salesInvoiceFooter,
     String? a4ReportFooter,
     int? textHeightPosition,
@@ -100,6 +111,9 @@ class PrinterSettings {
     InvoiceLabels? labels,
   }) {
     return PrinterSettings(
+      receiptStoreName: receiptStoreName ?? this.receiptStoreName,
+      receiptStoreAddress: receiptStoreAddress ?? this.receiptStoreAddress,
+      receiptStorePhone: receiptStorePhone ?? this.receiptStorePhone,
       salesInvoiceFooter: salesInvoiceFooter ?? this.salesInvoiceFooter,
       a4ReportFooter: a4ReportFooter ?? this.a4ReportFooter,
       textHeightPosition: textHeightPosition ?? this.textHeightPosition,
@@ -138,6 +152,9 @@ class PrinterSettings {
   }
 
   Map<String, dynamic> toMap() => {
+        'receiptStoreName': receiptStoreName,
+        'receiptStoreAddress': receiptStoreAddress,
+        'receiptStorePhone': receiptStorePhone,
         'salesInvoiceFooter': salesInvoiceFooter,
         'a4ReportFooter': a4ReportFooter,
         'textHeightPosition': textHeightPosition,
@@ -168,6 +185,11 @@ class PrinterSettings {
 
   factory PrinterSettings.fromMap(Map<String, dynamic> map) {
     return PrinterSettings(
+      receiptStoreName: map['receiptStoreName'] as String? ??
+          'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
+      receiptStoreAddress: map['receiptStoreAddress'] as String? ??
+          'كفر الزيات - طنطا - الغربية',
+      receiptStorePhone: map['receiptStorePhone'] as String? ?? '01010573888',
       salesInvoiceFooter: map['salesInvoiceFooter'] as String? ?? '',
       a4ReportFooter: map['a4ReportFooter'] as String? ?? '',
       textHeightPosition: map['textHeightPosition'] as int? ?? 10,

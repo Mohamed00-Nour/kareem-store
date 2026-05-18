@@ -250,6 +250,30 @@ class InvoiceDetailPage extends StatelessWidget {
                     ),
                   ),
                 ),
+                SizedBox(width: 8.w),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8.0),
+                    ),
+                    backgroundColor: Colors.deepPurple.shade400,
+                  ),
+                  onPressed: () {
+                    InvoicePrintUi.previewInvoice(
+                      context,
+                      invoice,
+                      clientId: invoice['clientName']?.toString(),
+                    );
+                  },
+                  icon: Icon(Icons.receipt_long, color: Colors.white, size: 20.sp),
+                  label: Text(
+                    'معاينة (مؤقت)',
+                    style: TextStyle(
+                      fontSize: 14.sp,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
                 SizedBox(width: 12.w),
                 ElevatedButton.icon(
                   style: ElevatedButton.styleFrom(
