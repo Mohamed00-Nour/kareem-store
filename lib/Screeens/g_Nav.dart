@@ -1,6 +1,7 @@
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_nav_bar/google_nav_bar.dart';
@@ -20,24 +21,41 @@ class GNavPage extends StatefulWidget {
 class _GNavPageState extends State<GNavPage> {
   int _selectedIndex = 0;
 
-  static final _pages = <Widget>[
-    const HomePage(),
+  late final List<Widget> _pages = [
+    const HomePage(handleBackButton: false),
     InvoiceListPage(),
     BuyingInvoiceListPage(),
     ProductListPage(),
   ];
+
+  Future<void> _onBackPressed() async {
+    final navigator = Navigator.of(context);
+
+    if (navigator.canPop()) {
+      navigator.pop();
+      return;
+    }
+
+    if (_selectedIndex != 0) {
+      setState(() => _selectedIndex = 0);
+      return;
+    }
+
+    final exit = await HomePage.confirmExit(context);
+    if (exit && mounted) {
+      await SystemNavigator.pop();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
     return Directionality(
       textDirection: ui.TextDirection.rtl,
       child: PopScope(
-        canPop: _selectedIndex == 0,
+        canPop: false,
         onPopInvokedWithResult: (didPop, result) {
           if (didPop) return;
-          if (_selectedIndex != 0) {
-            setState(() => _selectedIndex = 0);
-          }
+          _onBackPressed();
         },
         child: Scaffold(
           backgroundColor: const Color(0xffeeeced),

@@ -15,10 +15,13 @@ import 'Data/DataEntryScreen.dart';
 import 'PrinterSettingsPage.dart';
 
 class HomePage extends StatelessWidget {
-  const HomePage({super.key});
+  /// When false, back is handled by [GNavPage] (return to home tab, then exit).
+  final bool handleBackButton;
 
-  Future<bool> _onWillPop(BuildContext context) async {
-    return await showDialog(
+  const HomePage({super.key, this.handleBackButton = true});
+
+  static Future<bool> confirmExit(BuildContext context) async {
+    return await showDialog<bool>(
           context: context,
           builder: (context) => AlertDialog(
             backgroundColor: const Color(0xffead1ac),
@@ -75,9 +78,7 @@ class HomePage extends StatelessWidget {
   Widget build(BuildContext context) {
     final FirebaseService firebaseService = FirebaseService();
 
-    return WillPopScope(
-      onWillPop: () => _onWillPop(context),
-      child: Scaffold(
+    final scaffold = Scaffold(
         appBar: AppBar(
           backgroundColor: Colors.black.withOpacity(0.7),
           title: Row(
@@ -464,7 +465,13 @@ class HomePage extends StatelessWidget {
             ],
           ),
         ),
-      ),
+    );
+
+    if (!handleBackButton) return scaffold;
+
+    return WillPopScope(
+      onWillPop: () => confirmExit(context),
+      child: scaffold,
     );
   }
 }
