@@ -3,15 +3,15 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Services/client_statement_pdf_service.dart';
-import '../Services/invoice_print_service.dart';
-import '../Services/printer_settings_service.dart';
-import '../models/printer_settings.dart';
+import '../Services/invoice_print_ui.dart';
+import '../Services/whatsapp_invoice_share_service.dart';
 
 void _selectAllField(TextEditingController controller) {
   final text = controller.text;
@@ -1643,62 +1643,20 @@ Future<void> _saveBalance() async {
   }
 
   Future<void> _printInvoice(Map<String, dynamic> invoiceData) async {
-    final settings = await PrinterSettingsService.load();
-    if (settings.connectionType != PrinterConnectionType.bluetooth) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى اختيار طابعة Bluetooth من إعدادات الطابعة'),
-        ),
-      );
-      return;
-    }
-    if (settings.bluetoothMacAddress.isEmpty) {
-      if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(
-          content: Text('يرجى ربط الطابعة من إعدادات الطابعة أولاً'),
-        ),
-      );
-      return;
-    }
-
-    final invoice = Map<String, dynamic>.from(invoiceData);
-    invoice['clientName'] = widget.clientId;
-
-    final totalSum =
-        double.tryParse(invoice['totalSum']?.toString() ?? '') ?? 0.0;
-    final paidAmount =
-        double.tryParse(invoice['paidAmount']?.toString() ?? '') ?? 0.0;
-    invoice['balance'] = totalSum - paidAmount;
-
-    final mainInvoiceId = invoice['invoiceId']?.toString();
-    if (mainInvoiceId != null && mainInvoiceId.isNotEmpty) {
-      try {
-        final mainDoc = await FirebaseFirestore.instance
-            .collection('invoices')
-            .doc(mainInvoiceId)
-            .get();
-        if (mainDoc.exists && mainDoc.data() != null) {
-          invoice.addAll(mainDoc.data()!);
-          invoice['clientName'] =
-              mainDoc.data()!['clientName'] ?? widget.clientId;
-        }
-      } catch (_) {}
-    }
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('جاري الطباعة...')),
+    await InvoicePrintUi.printInvoice(
+      context,
+      invoiceData,
+      clientId: widget.clientId,
     );
+  }
 
-    final ok = await InvoicePrintService.printSalesInvoice(invoice);
-
-    if (!mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(
-        content: Text(ok ? 'تمت طباعة الفاتورة' : 'فشلت طباعة الفاتورة'),
-      ),
+  Future<void> _shareInvoiceOnWhatsApp(
+      Map<String, dynamic> invoiceData) async {
+    final data = Map<String, dynamic>.from(invoiceData);
+    data['clientName'] ??= widget.clientId;
+    await WhatsappInvoiceShareService.showShareOptions(
+      context,
+      invoice: data,
     );
   }
 
@@ -2005,6 +1963,17 @@ Future<void> _saveBalance() async {
                                               tooltip: 'طباعة',
                                               onPressed: () =>
                                                   _printInvoice(invoiceData),
+                                            ),
+                                            IconButton(
+                                              icon: FaIcon(
+                                                FontAwesomeIcons.whatsapp,
+                                                color: Colors.green.shade700,
+                                                size: 22,
+                                              ),
+                                              tooltip: 'مشاركة في واتساب',
+                                              onPressed: () =>
+                                                  _shareInvoiceOnWhatsApp(
+                                                      invoiceData),
                                             ),
                                             IconButton(
                                               icon: const Icon(Icons.edit,

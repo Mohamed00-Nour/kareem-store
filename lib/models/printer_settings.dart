@@ -4,6 +4,16 @@ enum PrinterConnectionType { pdf, bluetooth, wifi, usb }
 
 enum ThermalPaperSize { mm58, mm80 }
 
+extension ThermalPaperSizeLayout on ThermalPaperSize {
+  /// Typical character count per line on thermal printers.
+  int get charsPerLine => this == ThermalPaperSize.mm58 ? 32 : 48;
+
+  /// Print head width in dots at 203 DPI.
+  int get printWidthDots => this == ThermalPaperSize.mm58 ? 384 : 576;
+
+  int get widthMm => this == ThermalPaperSize.mm58 ? 58 : 80;
+}
+
 class PrinterSettings {
   final String salesInvoiceFooter;
   final String a4ReportFooter;

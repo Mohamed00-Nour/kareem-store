@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
 import '../models/paired_bluetooth_device.dart';
+import '../models/printer_settings.dart';
 
 /// Dart bridge to native Bluetooth thermal printing (custom Android handler
 /// with RFCOMM fallback; falls back to [print_bluetooth_thermal] on other platforms).
@@ -104,16 +105,35 @@ class ThermalPrintChannel {
     }
   }
 
-  static Future<bool> writeString({required int size, required String text}) async {
+  static Future<bool> writeString({
+    required int size,
+    required String text,
+    ThermalPaperSize paperSize = ThermalPaperSize.mm80,
+  }) async {
     final clampedSize = size.clamp(1, 5);
+    final paperMm = paperSize.widthMm;
     try {
       return await _channel.invokeMethod<bool>(
             'printstring',
-            '$clampedSize///$text',
+            '$clampedSize///$paperMm///$text',
           ) ??
           false;
     } on PlatformException catch (e) {
       if (kDebugMode) debugPrint('Write string failed: $e');
+      return false;
+    }
+  }
+
+  /// Resets printer layout for the selected paper width (call once per receipt).
+  static Future<bool> initPaperLayout(ThermalPaperSize paperSize) async {
+    try {
+      return await _channel.invokeMethod<bool>(
+            'initpaper',
+            paperSize.widthMm,
+          ) ??
+          false;
+    } on PlatformException catch (e) {
+      if (kDebugMode) debugPrint('Init paper layout failed: $e');
       return false;
     }
   }

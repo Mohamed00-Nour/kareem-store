@@ -33,6 +33,7 @@ dependencies:
   firebase_storage:
   hive: ^2.2.3
   print_bluetooth_thermal: ^1.2.1
+  url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:

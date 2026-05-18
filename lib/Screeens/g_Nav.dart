@@ -1,117 +1,99 @@
+import 'dart:ui' as ui;
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:google_nav_bar/google_nav_bar.dart';
+
 import '../Buing Invoices/BuyingInvoiceListPage.dart';
-import 'All_Borrow.dart';
-import 'Materials/MaterialTrackingPage.dart';
-import 'ProductAndPipePage.dart';
+import 'Invoices/All_invoices.dart';
 import 'ProductListPage.dart';
 import 'home_page.dart';
-import 'Invoices/All_invoices.dart';
 
 class GNavPage extends StatefulWidget {
+  const GNavPage({super.key});
+
   @override
   State<GNavPage> createState() => _GNavPageState();
 }
 
 class _GNavPageState extends State<GNavPage> {
   int _selectedIndex = 0;
-  static const TextStyle optionStyle = TextStyle(
-    color: Colors.white,
-    fontSize: 13,
-    fontWeight: FontWeight.bold,
-  );
+
+  static final _pages = <Widget>[
+    const HomePage(),
+    InvoiceListPage(),
+    BuyingInvoiceListPage(),
+    ProductListPage(),
+  ];
 
   @override
   Widget build(BuildContext context) {
-    final List<Widget> _widgetOptions = <Widget>[
-      HomePage(),
-      InvoiceListPage(),
-      BuyingInvoiceListPage(),
-      ProductListPage(),
-    ];
-
-    return WillPopScope(
-      onWillPop: () async {
-        if (_selectedIndex != 0) {
-          setState(() {
-            _selectedIndex = 0;
-          });
-          return false;
-        }
-        return true;
-      },
-      child: Scaffold(
-        backgroundColor: Color(0xffeeeced),
-        body: Center(
-          child: _widgetOptions.elementAt(_selectedIndex),
-        ),
-        bottomNavigationBar: Padding(
-          padding: EdgeInsets.symmetric(vertical: 15.h, horizontal: 10.w),
-          child: Container(
+    return Directionality(
+      textDirection: ui.TextDirection.rtl,
+      child: PopScope(
+        canPop: _selectedIndex == 0,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          if (_selectedIndex != 0) {
+            setState(() => _selectedIndex = 0);
+          }
+        },
+        child: Scaffold(
+          backgroundColor: const Color(0xffeeeced),
+          body: IndexedStack(
+            index: _selectedIndex,
+            children: _pages,
+          ),
+          bottomNavigationBar: Container(
+            margin: EdgeInsets.fromLTRB(12.w, 0, 12.w, 12.h),
             decoration: BoxDecoration(
               borderRadius: BorderRadius.circular(20.r),
-              color: Colors.black.withOpacity(0.7),
+              color: Colors.black.withOpacity(0.75),
+              boxShadow: [
+                BoxShadow(
+                  color: Colors.black.withOpacity(0.15),
+                  blurRadius: 12,
+                  offset: const Offset(0, 4),
+                ),
+              ],
             ),
             child: SafeArea(
+              top: false,
               child: Padding(
-                padding: EdgeInsets.all(8.0.w),
+                padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 10.h),
                 child: GNav(
-                  duration: const Duration(milliseconds: 200),
-                  textStyle: optionStyle.copyWith(fontSize: 10.sp),
-                  color: Colors.black.withOpacity(0.7),
+                  gap: 6.w,
                   haptic: false,
+                  tabBorderRadius: 12.r,
+                  curve: Curves.easeOutCubic,
+                  duration: const Duration(milliseconds: 250),
+                  color: Colors.white.withOpacity(0.55),
+                  activeColor: Colors.white,
+                  tabBackgroundColor: Colors.orange.withOpacity(0.85),
+                  padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 10.h),
                   selectedIndex: _selectedIndex,
-                  onTabChange: (index) {
-                    setState(() {
-                      _selectedIndex = index;
-                    });
-                  },
+                  onTabChange: (index) => setState(() => _selectedIndex = index),
                   tabs: [
                     GButton(
-                      borderRadius: BorderRadius.circular(10.r),
-                      iconActiveColor: Colors.white.withOpacity(0.7),
-                      textColor: Colors.black.withOpacity(0.7),
-                      backgroundColor: Colors.orange.withOpacity(0.8),
-                      gap: 6.w,
-                      iconColor: Colors.white.withOpacity(0.7),
-                      iconSize: 16.sp,
                       icon: FontAwesomeIcons.house,
                       text: 'الرئيسية',
+                      iconSize: 20.sp,
                     ),
                     GButton(
-                      borderRadius: BorderRadius.circular(10.r),
-                      iconActiveColor: Colors.white.withOpacity(0.7),
-                      textColor: Colors.black.withOpacity(0.7),
-                      backgroundColor: Colors.orange.withOpacity(0.7),
-                      gap: 6.w,
-                      iconColor: Colors.white.withOpacity(0.7),
-                      iconSize: 16.sp,
                       icon: FontAwesomeIcons.moneyCheckDollar,
                       text: 'المبيعات',
+                      iconSize: 20.sp,
                     ),
                     GButton(
-                      borderRadius: BorderRadius.circular(10.r),
-                      iconActiveColor: Colors.white.withOpacity(0.7),
-                      textColor: Colors.black.withOpacity(0.7),
-                      backgroundColor: Colors.orange.withOpacity(0.7),
-                      gap: 6.w,
-                      iconColor: Colors.white.withOpacity(0.7),
-                      iconSize: 16.sp,
                       icon: FontAwesomeIcons.boxesStacked,
                       text: 'المشتريات',
+                      iconSize: 20.sp,
                     ),
                     GButton(
-                      borderRadius: BorderRadius.circular(10.r),
-                      iconActiveColor: Colors.white.withOpacity(0.7),
-                      textColor: Colors.black.withOpacity(0.7),
-                      backgroundColor: Colors.orange.withOpacity(0.7),
-                      gap: 6.w,
-                      iconColor: Colors.white.withOpacity(0.7),
-                      iconSize: 16.sp,
                       icon: FontAwesomeIcons.boxOpen,
                       text: 'المنتجات',
+                      iconSize: 20.sp,
                     ),
                   ],
                 ),

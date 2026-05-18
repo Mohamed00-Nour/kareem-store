@@ -168,6 +168,7 @@ import 'package:pdf/pdf.dart' hide TextDirection;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../DeletedClientsPage.dart';
+import '../Widgets/egypt_phone_field.dart';
 import 'ClientInvoicesPage.dart';
 
 // ─── Main Menu Page ──────────────────────────────────────────────────────────
@@ -178,30 +179,38 @@ class ClientsPage extends StatelessWidget {
   void _addNewClient(BuildContext context) {
     final nameCtrl = TextEditingController();
     final balanceCtrl = TextEditingController();
+    final phoneCtrl = TextEditingController();
     showDialog(
       context: context,
       builder: (ctx) => Directionality(
         textDirection: ui.TextDirection.rtl,
         child: AlertDialog(
           title: const Text('إضافة عميل جديد'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextField(
-                controller: nameCtrl,
-                decoration: const InputDecoration(labelText: 'اسم العميل'),
-                textAlign: TextAlign.right,
-              ),
-              const SizedBox(height: 8),
-              TextField(
-                controller: balanceCtrl,
-                decoration:
-                    const InputDecoration(labelText: 'الرصيد الافتتاحي'),
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                textAlign: TextAlign.right,
-              ),
-            ],
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextField(
+                  controller: nameCtrl,
+                  decoration: const InputDecoration(labelText: 'اسم العميل'),
+                  textAlign: TextAlign.right,
+                ),
+                const SizedBox(height: 8),
+                TextField(
+                  controller: balanceCtrl,
+                  decoration:
+                      const InputDecoration(labelText: 'الرصيد الافتتاحي'),
+                  keyboardType:
+                      const TextInputType.numberWithOptions(decimal: true),
+                  textAlign: TextAlign.right,
+                ),
+                const SizedBox(height: 8),
+                EgyptPhoneField(
+                  controller: phoneCtrl,
+                  labelText: 'رقم الهاتف (واتساب)',
+                ),
+              ],
+            ),
           ),
           actions: [
             TextButton(
@@ -214,15 +223,26 @@ class ClientsPage extends StatelessWidget {
               onPressed: () async {
                 final name = nameCtrl.text.trim();
                 if (name.isEmpty) return;
+                if (!EgyptPhoneField.isValidLocalPart(phoneCtrl.text)) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(
+                        content: Text('يرجى إدخال رقم هاتف صحيح بعد +20')),
+                  );
+                  return;
+                }
                 final balance =
                     double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
-                final ref = await FirebaseFirestore.instance
+                final phone =
+                    EgyptPhoneField.toWhatsappDigits(phoneCtrl.text);
+                await FirebaseFirestore.instance
                     .collection('clients')
-                    .add({
+                    .doc(name)
+                    .set({
                   'clientName': name,
                   'balance': balance,
-                });
-                await ref.update({'id': ref.id});
+                  'phone': phone,
+                  'id': name,
+                }, SetOptions(merge: true));
                 if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('حفظ',

@@ -1,3 +1,5 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
+
 import '../models/printer_settings.dart';
 
 class InvoicePrintContext {
@@ -20,24 +22,17 @@ class InvoicePrintFormatter {
   }) {
     final labels = settings.labels;
     final pad = settings.rightMargin > 0 ? ' ' * settings.rightMargin : '';
+    final separator = '-' * settings.paperSize.charsPerLine;
     final buffer = StringBuffer();
 
     void line(String text) => buffer.writeln('$pad$text');
 
     line('Kareem Store');
     line(labels.invoiceTitle);
-    line('------------------------------');
+    line(separator);
     line('${labels.invoiceNumber}: #${invoice['invoiceNumber']}');
 
-    final date = invoice['date'];
-    String dateStr = '';
-    if (date != null) {
-      try {
-        dateStr = date.toDate().toLocal().toString().split(' ')[0];
-      } catch (_) {
-        dateStr = date.toString();
-      }
-    }
+    final dateStr = _formatInvoiceDate(invoice['date']);
     if (dateStr.isNotEmpty) {
       line('${labels.date}: $dateStr');
     }
@@ -63,7 +58,7 @@ class InvoicePrintFormatter {
       }
     }
 
-    line('------------------------------');
+    line(separator);
 
     final products = invoice['products'] as List<dynamic>? ?? [];
     for (final item in products) {
@@ -124,7 +119,7 @@ class InvoicePrintFormatter {
       }
     }
 
-    line('------------------------------');
+    line(separator);
     line('${labels.total}: ${_num(invoice['totalSum']).toStringAsFixed(2)}');
     line('${labels.paid}: ${_num(invoice['paidAmount']).toStringAsFixed(2)}');
     line('${labels.balance}: ${_num(invoice['balance']).toStringAsFixed(2)}');
@@ -153,7 +148,7 @@ class InvoicePrintFormatter {
       buffer.writeln(deviceLabel);
     }
     if (settings.salesInvoiceFooter.isNotEmpty) {
-      buffer.writeln('------------------------------');
+      buffer.writeln('-' * settings.paperSize.charsPerLine);
       buffer.writeln(settings.salesInvoiceFooter);
     }
     return buffer.toString().trimRight();
@@ -201,7 +196,7 @@ class InvoicePrintFormatter {
       ),
     );
     if (settings.salesInvoiceFooter.isEmpty) return body;
-    return '$body------------------------------\n${settings.salesInvoiceFooter}\n';
+    return '$body${'-' * settings.paperSize.charsPerLine}\n${settings.salesInvoiceFooter}\n';
   }
 
   /// Full on-screen preview: test slip + sample invoice.
@@ -227,5 +222,20 @@ class InvoicePrintFormatter {
   static double _num(dynamic value) {
     if (value is num) return value.toDouble();
     return double.tryParse(value?.toString() ?? '') ?? 0.0;
+  }
+
+  static String _formatInvoiceDate(dynamic date) {
+    if (date == null) return '';
+    try {
+      if (date is Timestamp) {
+        return date.toDate().toLocal().toString().split(' ')[0];
+      }
+      if (date is DateTime) {
+        return date.toLocal().toString().split(' ')[0];
+      }
+    } catch (_) {}
+    final text = date.toString();
+    if (text.length >= 10) return text.substring(0, 10);
+    return text;
   }
 }

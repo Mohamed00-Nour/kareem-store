@@ -8,7 +8,16 @@ import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothSocket
 import android.content.Context
 import android.content.pm.PackageManager
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.Color
+import android.graphics.Paint
+import android.graphics.Typeface
 import android.os.Build
+import android.text.Layout
+import android.text.StaticLayout
+import android.text.TextDirectionHeuristics
+import android.text.TextPaint
 import android.util.Log
 import androidx.core.content.ContextCompat
 import io.flutter.plugin.common.BinaryMessenger
@@ -27,6 +36,7 @@ import java.util.concurrent.atomic.AtomicBoolean
 
 /**
  * Bluetooth thermal printer bridge with permission checks and RFCOMM fallbacks.
+ * Supports 58mm / 80mm paper width and Arabic text via raster bitmap (Amiri font).
  */
 class BluetoothThermalHandler(
     private val context: Context,
@@ -46,6 +56,8 @@ class BluetoothThermalHandler(
     private var outputStream: OutputStream? = null
     private var activeSocket: BluetoothSocket? = null
     private val isConnecting = AtomicBoolean(false)
+    private var configuredPaperMm: Int? = null
+    private var arabicTypeface: Typeface? = null
 
     init {
         channel.setMethodCallHandler(this)
@@ -119,6 +131,22 @@ class BluetoothThermalHandler(
                     }
                 }
 
+                "initpaper" -> {
+                    val paperMm = (call.arguments as? Number)?.toInt() ?: 80
+                    if (outputStream == null) {
+                        result.success(false)
+                        return
+                    }
+                    try {
+                        applyPaperLayout(outputStream!!, paperMm, force = true)
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "initpaper: ${e.message}")
+                        closeConnection()
+                        result.success(false)
+                    }
+                }
+
                 "writebytes" -> {
                     @Suppress("UNCHECKED_CAST")
                     val bytes =
@@ -145,19 +173,14 @@ class BluetoothThermalHandler(
                         return
                     }
                     try {
-                        val parts = payload.split("///", limit = 2)
-                        var size = 2
-                        var text = payload
-                        if (parts.size == 2) {
-                            size = parts[0].toIntOrNull()?.coerceIn(1, 5) ?: 2
-                            text = parts[1]
-                        }
+                        val (size, paperMm, text) = parsePrintPayload(payload)
                         val stream = outputStream!!
-                        stream.write(byteArrayOf(0x1d, 0x21, 0x00))
-                        stream.write(byteArrayOf(0x1C, 0x2E))
-                        stream.write(byteArrayOf(0x1B, 0x74, 0x10))
-                        stream.write(escPosSizeBytes(size))
-                        stream.write(text.toByteArray(charset("ISO-8859-1")))
+                        applyPaperLayout(stream, paperMm)
+                        if (needsBitmapRendering(text)) {
+                            printTextAsBitmap(stream, text, paperMm, size)
+                        } else {
+                            printAsciiText(stream, text, size)
+                        }
                         stream.flush()
                         result.success(true)
                     } catch (e: Exception) {
@@ -172,6 +195,25 @@ class BluetoothThermalHandler(
         } catch (e: Throwable) {
             Log.e(TAG, "onMethodCall crash: ${e.message}", e)
             safeSuccess(result, false)
+        }
+    }
+
+    private data class PrintPayload(val size: Int, val paperMm: Int, val text: String)
+
+    private fun parsePrintPayload(payload: String): PrintPayload {
+        val parts = payload.split("///", limit = 3)
+        return when (parts.size) {
+            3 -> PrintPayload(
+                size = parts[0].toIntOrNull()?.coerceIn(1, 5) ?: 2,
+                paperMm = parts[1].toIntOrNull()?.let { if (it <= 58) 58 else 80 } ?: 80,
+                text = parts[2],
+            )
+            2 -> PrintPayload(
+                size = parts[0].toIntOrNull()?.coerceIn(1, 5) ?: 2,
+                paperMm = 80,
+                text = parts[1],
+            )
+            else -> PrintPayload(size = 2, paperMm = 80, text = payload)
         }
     }
 
@@ -201,6 +243,154 @@ class BluetoothThermalHandler(
 
     private fun normalizeMac(raw: String): String {
         return raw.trim().uppercase()
+    }
+
+    private fun printWidthDots(paperMm: Int): Int = if (paperMm <= 58) 384 else 576
+
+    private fun applyPaperLayout(stream: OutputStream, paperMm: Int, force: Boolean = false) {
+        if (!force && configuredPaperMm == paperMm) return
+        stream.write(byteArrayOf(0x1B, 0x40))
+        val dots = printWidthDots(paperMm)
+        stream.write(
+            byteArrayOf(
+                0x1D,
+                0x57,
+                (dots and 0xFF).toByte(),
+                ((dots shr 8) and 0xFF).toByte(),
+            ),
+        )
+        stream.write(byteArrayOf(0x1D, 0x4C, 0x00, 0x00))
+        configuredPaperMm = paperMm
+    }
+
+    private fun getArabicTypeface(): Typeface {
+        arabicTypeface?.let { return it }
+        val assetPaths = listOf(
+            "flutter_assets/fonts/Amiri-Regular.ttf",
+            "flutter_assets/fonts/Cairo-Medium.ttf",
+        )
+        for (path in assetPaths) {
+            try {
+                val tf = Typeface.createFromAsset(context.assets, path)
+                arabicTypeface = tf
+                return tf
+            } catch (e: Exception) {
+                Log.w(TAG, "Font not found at $path: ${e.message}")
+            }
+        }
+        Log.w(TAG, "Using default typeface for Arabic — bundle Amiri in pubspec.yaml")
+        return Typeface.DEFAULT
+    }
+
+    private fun needsBitmapRendering(text: String): Boolean {
+        return text.any { ch ->
+            ch.code > 0x7E || Character.UnicodeBlock.of(ch) == Character.UnicodeBlock.ARABIC
+        }
+    }
+
+    private fun textSizePx(escSize: Int, paperMm: Int): Float {
+        val base = if (paperMm <= 58) 22f else 26f
+        return when (escSize) {
+            1 -> base
+            2 -> base + 4f
+            3 -> base + 10f
+            4 -> base + 16f
+            5 -> base + 22f
+            else -> base + 4f
+        }
+    }
+
+    private fun printAsciiText(stream: OutputStream, text: String, size: Int) {
+        stream.write(byteArrayOf(0x1d, 0x21, 0x00))
+        stream.write(byteArrayOf(0x1B, 0x74, 0x00))
+        stream.write(escPosSizeBytes(size))
+        stream.write(text.toByteArray(Charsets.ISO_8859_1))
+    }
+
+    private fun printTextAsBitmap(
+        stream: OutputStream,
+        text: String,
+        paperMm: Int,
+        size: Int,
+    ) {
+        val bitmap = renderTextBitmap(text, paperMm, textSizePx(size, paperMm))
+        printBitmapEscPos(stream, bitmap)
+        if (!bitmap.isRecycled) {
+            bitmap.recycle()
+        }
+    }
+
+    private fun renderTextBitmap(text: String, paperMm: Int, textSizePx: Float): Bitmap {
+        val widthDots = printWidthDots(paperMm)
+        val paint = TextPaint(Paint.ANTI_ALIAS_FLAG).apply {
+            typeface = getArabicTypeface()
+            this.textSize = textSizePx
+            color = Color.BLACK
+        }
+
+        val layout = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            StaticLayout.Builder.obtain(text, 0, text.length, paint, widthDots)
+                .setAlignment(Layout.Alignment.ALIGN_OPPOSITE)
+                .setTextDirection(TextDirectionHeuristics.FIRSTSTRONG_LTR)
+                .setIncludePad(false)
+                .build()
+        } else {
+            @Suppress("DEPRECATION")
+            StaticLayout(
+                text,
+                paint,
+                widthDots,
+                Layout.Alignment.ALIGN_OPPOSITE,
+                1f,
+                0f,
+                false,
+            )
+        }
+
+        val height = layout.height.coerceAtLeast(1)
+        val bitmap = Bitmap.createBitmap(widthDots, height, Bitmap.Config.ARGB_8888)
+        val canvas = Canvas(bitmap)
+        canvas.drawColor(Color.WHITE)
+        canvas.save()
+        canvas.translate(0f, 0f)
+        layout.draw(canvas)
+        canvas.restore()
+        return bitmap
+    }
+
+    private fun printBitmapEscPos(stream: OutputStream, bitmap: Bitmap) {
+        val width = bitmap.width
+        val height = bitmap.height
+        var y = 0
+        val sliceHeight = 24
+        while (y < height) {
+            stream.write(byteArrayOf(0x1B, 0x2A, 33))
+            stream.write(
+                byteArrayOf(
+                    (width and 0xFF).toByte(),
+                    ((width shr 8) and 0xFF).toByte(),
+                ),
+            )
+            for (x in 0 until width) {
+                for (k in 0 until 3) {
+                    var slice = 0
+                    for (b in 0 until 8) {
+                        val yPos = y + k * 8 + b
+                        if (yPos < height) {
+                            val pixel = bitmap.getPixel(x, yPos)
+                            val luminance =
+                                (Color.red(pixel) + Color.green(pixel) + Color.blue(pixel)) / 3
+                            if (luminance < 160) {
+                                slice = slice or (1 shl (7 - b))
+                            }
+                        }
+                    }
+                    stream.write(slice)
+                }
+            }
+            stream.write(byteArrayOf(0x0A))
+            y += sliceHeight
+        }
     }
 
     @SuppressLint("MissingPermission")
@@ -250,6 +440,7 @@ class BluetoothThermalHandler(
         }
         outputStream = null
         activeSocket = null
+        configuredPaperMm = null
     }
 
     @SuppressLint("MissingPermission")

@@ -85,8 +85,16 @@ class BluetoothPrinterService {
     return 1;
   }
 
-  static Future<bool> _writeLine(String text, {int size = 2}) async {
-    return ThermalPrintChannel.writeString(size: size, text: text);
+  static Future<bool> _writeLine(
+    String text, {
+    int size = 2,
+    required ThermalPaperSize paperSize,
+  }) async {
+    return ThermalPrintChannel.writeString(
+      size: size,
+      text: text,
+      paperSize: paperSize,
+    );
   }
 
   static Future<bool> _writeRaw(List<int> bytes) async {
@@ -97,17 +105,18 @@ class BluetoothPrinterService {
     final trailingLines =
         settings.textHeightPosition + settings.bottomMargin;
     for (var i = 0; i < trailingLines; i++) {
-      final ok = await _writeLine('\n', size: 1);
+      final ok = await _writeLine('\n', size: 1, paperSize: settings.paperSize);
       if (!ok) return false;
     }
     if (settings.salesInvoiceFooter.isNotEmpty) {
       final ok = await _writeLine(
         settings.salesInvoiceFooter,
         size: _textSizeFromFont(settings.fontSize),
+        paperSize: settings.paperSize,
       );
       if (!ok) return false;
     }
-    await _writeLine('\n\n', size: 1);
+    await _writeLine('\n\n', size: 1, paperSize: settings.paperSize);
     if (settings.paperCutCommand > 0) {
       final ok = await _writeRaw(_escCut);
       if (!ok) return false;
@@ -123,13 +132,25 @@ class BluetoothPrinterService {
 
     final size = _textSizeFromFont(settings.fontSize);
     for (var copy = 0; copy < settings.invoiceCopies; copy++) {
-      if (!await _writeLine('Kareem Store\n', size: size)) return false;
-      if (!await _writeLine('اختبار الطابعة\n', size: size)) return false;
+      if (!await ThermalPrintChannel.initPaperLayout(settings.paperSize)) {
+        return false;
+      }
+      if (!await _writeLine('Kareem Store\n',
+          size: size, paperSize: settings.paperSize)) {
+        return false;
+      }
+      if (!await _writeLine('اختبار الطابعة\n',
+          size: size, paperSize: settings.paperSize)) {
+        return false;
+      }
       final deviceLabel = settings.bluetoothDeviceName.isNotEmpty
           ? settings.bluetoothDeviceName
           : settings.bluetoothMacAddress;
       if (deviceLabel.isNotEmpty) {
-        if (!await _writeLine('$deviceLabel\n', size: 1)) return false;
+        if (!await _writeLine('$deviceLabel\n',
+            size: 1, paperSize: settings.paperSize)) {
+          return false;
+        }
       }
       if (!await _finishReceipt(settings)) return false;
     }
@@ -160,9 +181,15 @@ class BluetoothPrinterService {
 
     final size = _textSizeFromFont(settings.fontSize);
     for (var copy = 0; copy < settings.invoiceCopies; copy++) {
+      if (!await ThermalPrintChannel.initPaperLayout(settings.paperSize)) {
+        return false;
+      }
       for (final line in text.split('\n')) {
         final content = line.isEmpty ? '\n' : '$line\n';
-        if (!await _writeLine(content, size: size)) return false;
+        if (!await _writeLine(content,
+            size: size, paperSize: settings.paperSize)) {
+          return false;
+        }
       }
       if (!await _finishReceipt(settings)) return false;
     }

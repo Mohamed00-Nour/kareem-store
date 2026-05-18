@@ -6,10 +6,9 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'Invoices/All_invoices.dart';
 import 'Invoices/InvoiceDetailPage.dart';
 import 'Data/DataEntryScreen.dart';
-import 'package:share_plus/share_plus.dart';
-
-import '../Services/invoice_print_service.dart';
-import '../Services/sales_invoice_pdf_service.dart';
+import '../Services/invoice_print_ui.dart';
+import '../Services/whatsapp_invoice_share_service.dart';
+import '../Widgets/egypt_phone_field.dart';
 import 'home_page.dart';
 
 class DecreaseProductPage extends StatefulWidget {
@@ -54,6 +53,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     String? duplicateWarning;
     final TextEditingController searchCtrl = TextEditingController();
     final TextEditingController newClientCtrl = TextEditingController();
+    final TextEditingController newClientBalanceCtrl = TextEditingController();
+    final TextEditingController newClientPhoneCtrl = TextEditingController();
     final TextEditingController localPaidCtrl =
         TextEditingController(text: _paidAmountController.text);
     String selectedClient = _clientNameController.text;
@@ -179,71 +180,111 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                   // ── Add new client inline field ──
                   if (showAddField) ...[
                     SizedBox(height: 10.h),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: newClientCtrl,
-                            textDirection: TextDirection.rtl,
-                            autofocus: true,
-                            decoration: InputDecoration(
-                              hintText: 'اسم العميل الجديد',
-                              hintTextDirection: TextDirection.rtl,
-                              contentPadding: EdgeInsets.symmetric(
-                                  horizontal: 12.w, vertical: 10.h),
-                              border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10.r),
-                                borderSide: const BorderSide(
-                                    color: Colors.black87),
-                              ),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(10.r),
-                                borderSide: const BorderSide(
-                                    color: Colors.black87, width: 2),
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey.shade50,
-                            ),
-                          ),
+                    TextField(
+                      controller: newClientCtrl,
+                      textDirection: TextDirection.rtl,
+                      autofocus: true,
+                      decoration: InputDecoration(
+                        hintText: 'اسم العميل الجديد',
+                        hintTextDirection: TextDirection.rtl,
+                        contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12.w, vertical: 10.h),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10.r),
                         ),
-                        SizedBox(width: 8.w),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.black87,
-                            foregroundColor: Colors.white,
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(10.r)),
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 14.w, vertical: 12.h),
-                          ),
-                          onPressed: () {
-                            final newName = newClientCtrl.text.trim();
-                            if (newName.isEmpty) return;
-                            final alreadyExists = _clients
-                                .map((c) => c.toLowerCase())
-                                .contains(newName.toLowerCase());
-                            setSheet(() {
-                              if (!alreadyExists) {
-                                _clients.add(newName);
-                                duplicateWarning = null;
-                              } else {
-                                duplicateWarning = 'هذا العميل موجود بالفعل';
-                              }
-                              selectedClient = alreadyExists
-                                  ? _clients.firstWhere((c) =>
-                                      c.toLowerCase() ==
-                                      newName.toLowerCase())
-                                  : newName;
-                              if (!alreadyExists) {
-                                showAddField = false;
-                                newClientCtrl.clear();
-                              }
-                            });
-                          },
-                          child: Text('إضافة',
-                              style: TextStyle(fontSize: 13.sp)),
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                      ),
+                    ),
+                    SizedBox(height: 8.h),
+                    TextField(
+                      controller: newClientBalanceCtrl,
+                      textDirection: TextDirection.rtl,
+                      keyboardType: const TextInputType.numberWithOptions(
+                          decimal: true),
+                      decoration: InputDecoration(
+                        hintText: 'الرصيد الافتتاحي',
+                        hintTextDirection: TextDirection.rtl,
+                        contentPadding: EdgeInsets.symmetric(
+                            horizontal: 12.w, vertical: 10.h),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(10.r),
                         ),
-                      ],
+                        filled: true,
+                        fillColor: Colors.grey.shade50,
+                      ),
+                    ),
+                    SizedBox(height: 8.h),
+                    EgyptPhoneField(
+                      controller: newClientPhoneCtrl,
+                      hintText: '1xxxxxxxxx',
+                    ),
+                    SizedBox(height: 8.h),
+                    SizedBox(
+                      width: double.infinity,
+                      child: ElevatedButton(
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.black87,
+                          foregroundColor: Colors.white,
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10.r)),
+                          padding: EdgeInsets.symmetric(vertical: 12.h),
+                        ),
+                        onPressed: () async {
+                          final newName = newClientCtrl.text.trim();
+                          if (newName.isEmpty) return;
+                          if (!EgyptPhoneField.isValidLocalPart(
+                              newClientPhoneCtrl.text)) {
+                            ScaffoldMessenger.of(ctx).showSnackBar(
+                              const SnackBar(
+                                content: Text(
+                                    'يرجى إدخال رقم هاتف صحيح بعد +20'),
+                              ),
+                            );
+                            return;
+                          }
+                          final alreadyExists = _clients
+                              .map((c) => c.toLowerCase())
+                              .contains(newName.toLowerCase());
+                          if (!alreadyExists) {
+                            final balance = double.tryParse(
+                                    newClientBalanceCtrl.text.trim()) ??
+                                0.0;
+                            final phone = EgyptPhoneField.toWhatsappDigits(
+                                newClientPhoneCtrl.text);
+                            await FirebaseFirestore.instance
+                                .collection('clients')
+                                .doc(newName)
+                                .set({
+                              'clientName': newName,
+                              'balance': balance,
+                              'phone': phone,
+                              'id': newName,
+                            }, SetOptions(merge: true));
+                          }
+                          if (!ctx.mounted) return;
+                          setSheet(() {
+                            if (!alreadyExists) {
+                              _clients.add(newName);
+                              duplicateWarning = null;
+                            } else {
+                              duplicateWarning = 'هذا العميل موجود بالفعل';
+                            }
+                            selectedClient = alreadyExists
+                                ? _clients.firstWhere((c) =>
+                                    c.toLowerCase() == newName.toLowerCase())
+                                : newName;
+                            if (!alreadyExists) {
+                              showAddField = false;
+                              newClientCtrl.clear();
+                              newClientBalanceCtrl.clear();
+                              newClientPhoneCtrl.clear();
+                            }
+                          });
+                        },
+                        child: Text('إضافة العميل',
+                            style: TextStyle(fontSize: 13.sp)),
+                      ),
                     ),
                   ],
                   // ── Duplicate warning ──
@@ -764,16 +805,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () async {
-                      final ok =
-                          await InvoicePrintService.printSalesInvoice(invoice);
-                      if (!mounted) return;
-                      ScaffoldMessenger.of(context).showSnackBar(
-                        SnackBar(
-                          content: Text(
-                            ok ? 'تم إرسال الفاتورة للطابعة' : 'تعذر الطباعة',
-                          ),
-                        ),
+                    onPressed: () {
+                      final clientName =
+                          invoice['clientName']?.toString() ?? '';
+                      InvoicePrintUi.printInvoice(
+                        ctx,
+                        invoice,
+                        clientId: clientName.isNotEmpty
+                            ? clientName
+                            : null,
                       );
                     },
                     icon: const Icon(Icons.print, color: Colors.white),
@@ -789,24 +829,22 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                 SizedBox(
                   width: double.infinity,
                   child: ElevatedButton.icon(
-                    onPressed: () async {
-                      try {
-                        final file =
-                            await SalesInvoicePdfService.generate(invoice);
-                        await Share.shareXFiles(
-                          [XFile(file.path)],
-                          text:
-                              'فاتورة مبيعات #${invoice['invoiceNumber']}',
-                        );
-                      } catch (e) {
-                        if (!mounted) return;
-                        ScaffoldMessenger.of(context).showSnackBar(
-                          SnackBar(content: Text('خطأ في مشاركة PDF: $e')),
-                        );
-                      }
+                    onPressed: () {
+                      WhatsappInvoiceShareService.showShareOptions(
+                        ctx,
+                        invoice: invoice,
+                        onShareSuccess: () {
+                          if (!ctx.mounted) return;
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(
+                              content: Text('تم فتح واتساب'),
+                            ),
+                          );
+                        },
+                      );
                     },
-                    icon: const Icon(Icons.picture_as_pdf, color: Colors.white),
-                    label: const Text('مشاركة الفاتورة PDF'),
+                    icon: const Icon(Icons.chat, color: Colors.white),
+                    label: const Text('مشاركة في واتساب'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.green.shade700,
                       foregroundColor: Colors.white,

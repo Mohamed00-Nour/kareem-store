@@ -1,37 +1,20 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
-import 'package:path_provider/path_provider.dart';
-import 'dart:io';
-import 'dart:ui' as ui;
-import 'package:share_plus/share_plus.dart';
 
-
+import '../../Services/invoice_print_ui.dart';
+import '../../Services/whatsapp_invoice_share_service.dart';
 
 class InvoiceDetailPage extends StatelessWidget {
   final Map<String, dynamic> invoice;
-  final GlobalKey _globalKey = GlobalKey();
 
   InvoiceDetailPage({super.key, required this.invoice});
 
-  Future<void> _captureAndShareScreenshot() async {
-    try {
-      RenderRepaintBoundary boundary = _globalKey.currentContext!.findRenderObject() as RenderRepaintBoundary;
-      ui.Image image = await boundary.toImage(pixelRatio: 3.0);
-      ByteData? byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      Uint8List pngBytes = byteData!.buffer.asUint8List();
-
-      final directory = await getTemporaryDirectory();
-      final imagePath = '${directory.path}/invoice.png';
-      final file = File(imagePath);
-      await file.writeAsBytes(pngBytes);
-
-      await Share.shareFiles([file.path], text: 'إليك فاتورتك من معرض كريم حماد للحدايد والبويات');
-    } catch (e) {
-      print(e);
-    }
+  void _sendInvoiceToClient(BuildContext context) {
+    WhatsappInvoiceShareService.showShareOptions(
+      context,
+      invoice: invoice,
+    );
   }
 
   @override
@@ -50,9 +33,7 @@ class InvoiceDetailPage extends StatelessWidget {
       body: SingleChildScrollView(
         child: Column(
           children: [
-            RepaintBoundary(
-              key: _globalKey,
-              child: Container(
+            Container(
                 color: Colors.white,
                 padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 15.h),
                 child: Column(
@@ -243,24 +224,51 @@ class InvoiceDetailPage extends StatelessWidget {
                   ],
                 ),
               ),
-            ),
-            Center(
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8.0),
+            Row(
+              mainAxisAlignment: MainAxisAlignment.center,
+              children: [
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8.0),
+                    ),
+                    backgroundColor: Colors.blue.shade700,
                   ),
-                  backgroundColor: Colors.black.withOpacity(0.7),
-                ),
-                onPressed: _captureAndShareScreenshot,
-                child: Text(
-                  'إرسال الفاتورة',
-                  style: TextStyle(
-                    fontSize: 20.sp,
-                    color: Colors.white.withOpacity(1),
+                  onPressed: () {
+                    InvoicePrintUi.printInvoice(
+                      context,
+                      invoice,
+                      clientId: invoice['clientName']?.toString(),
+                    );
+                  },
+                  icon: Icon(Icons.print, color: Colors.white, size: 20.sp),
+                  label: Text(
+                    'طباعة',
+                    style: TextStyle(
+                      fontSize: 18.sp,
+                      color: Colors.white,
+                    ),
                   ),
                 ),
-              ),
+                SizedBox(width: 12.w),
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8.0),
+                    ),
+                    backgroundColor: Colors.green.shade700,
+                  ),
+                  onPressed: () => _sendInvoiceToClient(context),
+                  icon: Icon(Icons.chat, color: Colors.white, size: 20.sp),
+                  label: Text(
+                    'إرسال الفاتورة',
+                    style: TextStyle(
+                      fontSize: 18.sp,
+                      color: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
         ),
