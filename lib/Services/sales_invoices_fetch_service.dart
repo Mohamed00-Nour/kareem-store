@@ -26,6 +26,36 @@ class SalesInvoicesFetchService {
     return invoices;
   }
 
+  /// Newest invoice first (by date, then invoice number).
+  static void sortNewestFirst(List<Map<String, dynamic>> invoices) {
+    invoices.sort(_compareByDateNewestFirst);
+  }
+
+  static int _compareByDateNewestFirst(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b,
+  ) {
+    final da = invoiceDate(a);
+    final db = invoiceDate(b);
+    if (da == null && db == null) {
+      return _compareInvoiceNumberDesc(a, b);
+    }
+    if (da == null) return 1;
+    if (db == null) return -1;
+    final byDate = db.compareTo(da);
+    if (byDate != 0) return byDate;
+    return _compareInvoiceNumberDesc(a, b);
+  }
+
+  static int _compareInvoiceNumberDesc(
+    Map<String, dynamic> a,
+    Map<String, dynamic> b,
+  ) {
+    final na = int.tryParse(a['invoiceNumber']?.toString() ?? '') ?? 0;
+    final nb = int.tryParse(b['invoiceNumber']?.toString() ?? '') ?? 0;
+    return nb.compareTo(na);
+  }
+
   static String clientName(Map<String, dynamic> invoice) =>
       invoice['clientName']?.toString().trim() ?? '';
 

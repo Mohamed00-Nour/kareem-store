@@ -135,7 +135,7 @@ class BluetoothPrinterService {
       if (!await ThermalPrintChannel.initPaperLayout(settings.paperSize)) {
         return false;
       }
-      if (!await _writeLine('Kareem Store\n',
+      if (!await _writeLine('أبو مجدي للحدايد والعدد\n',
           size: size, paperSize: settings.paperSize)) {
         return false;
       }

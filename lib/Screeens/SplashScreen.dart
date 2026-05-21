@@ -82,7 +82,7 @@ class _SplashScreenState extends State<SplashScreen>
                   child: ScaleTransition(
                     scale: _animation,
                     child: Text(
-                      'Kareem Store',
+                      'أبو مجدي للحدايد والعدد',
                       style: TextStyle(
                         fontSize: 24,
                       ),

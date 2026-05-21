@@ -32,6 +32,7 @@ class _DataEntryScreenState extends State<DataEntryScreen> {
   final List<String> _suppliers = [];
   List<String> _departments = [];
   String? _selectedDepartment;
+  bool _onDemand = false;
 
   bool _isLoading = false;
   File? _selectedImage;
@@ -127,6 +128,7 @@ void _addProduct() async {
       costPrice: double.parse(_costPriceController.text),
       quantity: int.parse(_quantityController.text),
       alertAmount: int.parse(_alertAmountController.text),
+      onDemand: _onDemand,
       image: _selectedImage?.path,
     );
 
@@ -142,6 +144,7 @@ void _addProduct() async {
       _imageController.clear();
       _selectedImage = null;
       _selectedDepartment = null;
+      _onDemand = false;
     });
   }
 }
@@ -170,8 +173,8 @@ Future<void> _saveData() async {
     }
 
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('Data saved successfully')),
-    );
+      const SnackBar(content: Text('تم حفظ البيانات بنجاح')),
+    );  
   } catch (e) {
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(content: Text('Error saving data: $e')),
@@ -389,6 +392,24 @@ Future<void> _saveData() async {
             ],
           ),
           _buildDepartmentDropdown(),
+          CheckboxListTile(
+            title: Text(
+              'حسب الطلب',
+              style: TextStyle(
+                fontSize: 16.sp,
+                fontWeight: FontWeight.bold,
+                color: Colors.black.withOpacity(0.7),
+              ),
+            ),
+            value: _onDemand,
+            activeColor: Colors.black.withOpacity(0.7),
+            onChanged: (value) {
+              setState(() {
+                _onDemand = value ?? false;
+              });
+            },
+            controlAffinity: ListTileControlAffinity.leading,
+          ),
           Row(
             children: [
               ElevatedButton(
@@ -484,6 +505,7 @@ class Product {
   double costPrice;
   int quantity;
   int alertAmount;
+  bool onDemand;
   String? image;
 
   Product({
@@ -497,6 +519,7 @@ class Product {
     required this.costPrice,
     required this.quantity,
     required this.alertAmount,
+    this.onDemand = false,
     this.image,
   });
 
@@ -512,6 +535,7 @@ class Product {
       'costPrice': costPrice,
       'quantity': quantity,
       'alertAmount': alertAmount,
+      'onDemand': onDemand,
       'image': image,
     };
   }

@@ -1,9 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:intl/intl.dart' as intl; 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../Widgets/invoice_display_widgets.dart';
 import 'SupplierBalanceHistoryPage.dart';
 
 void _selectAllField(TextEditingController controller) {
@@ -1245,187 +1245,25 @@ Future<void> _editProduct(String invoiceId, int productIndex, Map<String, dynami
                     final invoice = invoices[index];
                     final invoiceId = invoice.id;
                     final totalCost = (invoice['totalSum'] as num).toDouble();
-                    DateTime invoiceDate = invoice['date'].toDate().toLocal();
-                    String formattedDate = invoiceDate.toString().split(' ')[0];
-                    String formattedTime =
-                      intl.DateFormat('hh:mm a').format(invoiceDate);
+                    final invoiceData =
+                        invoice.data() as Map<String, dynamic>;
 
-                    final invoiceData = invoice.data() as Map<String, dynamic>;
-
-                    final previousBalance = invoiceData.containsKey('previousBalance')
-                        ? (double.tryParse(invoiceData['previousBalance'].toString()) ?? 0.0)
-                        : 0.0;
-
-
-                    return Card(
-                      margin: const EdgeInsets.all(10.0),
-                      child: Padding(
-                        padding: const EdgeInsets.all(10.0),
-                        child: Column(
-                          crossAxisAlignment: CrossAxisAlignment.start,
-                          children: [
-                            Row(
-                              mainAxisAlignment:
-                                  MainAxisAlignment.spaceBetween,
-                              children: [
-                                Text(
-                                  'رقم الفاتورة: #${invoice['invoiceNumber']}',
-                                  style: const TextStyle(
-                                      fontSize: 14,
-                                      fontWeight: FontWeight.bold),
-                                ),
-                                Row(
-                                  mainAxisSize: MainAxisSize.min,
-                                  children: [
-                                    IconButton(
-                                      icon: const Icon(Icons.edit,
-                                          color: Colors.blue),
-                                      onPressed: () =>
-                                          _handleEditInvoice(invoice),
-                                    ),
-                                    IconButton(
-                                      icon: const Icon(Icons.delete,
-                                          color: Colors.red),
-                                      onPressed: () =>
-                                          _handleDeleteInvoice(
-                                              invoiceId, totalCost),
-                                    ),
-                                  ],
-                                ),
-                              ],
-                            ),
-                            const SizedBox(height: 5),
-                            Text('التاريخ: $formattedDate',
-                                style: const TextStyle(fontSize: 14)),
-                            Text('الوقت: $formattedTime',
-                                style: const TextStyle(fontSize: 14)),
-                            const SizedBox(height: 10),
-                            Row(
-                              mainAxisAlignment: MainAxisAlignment.spaceAround,
-                              children: const [
-                                Text('المنتج',
-                                    style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold)),
-                                Text('الكمية',
-                                    style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold)),
-                                Text('السعر',
-                                    style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold)),
-                                Text('الإجمالي',
-                                    style: TextStyle(
-                                        fontSize: 14,
-                                        fontWeight: FontWeight.bold)),
-                              ],
-                            ),
-                            ListView.builder(
-                              shrinkWrap: true,
-                              physics: const NeverScrollableScrollPhysics(),
-                              itemCount: invoice['products'].length,
-                              itemBuilder: (context, productIndex) {
-                                final product =
-                                    invoice['products'][productIndex];
-                                final total = double.tryParse(
-                                        product['totalCost'].toString()) ??
-                                    0.0;
-
-                                return Card(
-                                  margin:
-                                      const EdgeInsets.symmetric(vertical: 3.0),
-                                  elevation: 2,
-                                  color: Colors.orange.withOpacity(0.8),
-                                  child: Padding(
-                                    padding: const EdgeInsets.symmetric(
-                                        vertical: 8.0),
-                                    child: Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceAround,
-                                      children: [
-                                        Text(
-                                          product['product']?.toString() ?? '',
-                                          style: const TextStyle(fontSize: 12),
-                                        ),
-                                        Text(
-                                          (double.tryParse(product['amount'].toString()) ?? 0.0).toStringAsFixed(2),
-                                          style: const TextStyle(fontSize: 12),
-                                        ),
-                                        Text(
-                                          (double.tryParse(product['cost']
-                                                      .toString()) ??
-                                                  0.0)
-                                              .toStringAsFixed(2),
-                                          style: const TextStyle(fontSize: 12),
-                                        ),
-                                        Text(total.toStringAsFixed(2),
-                                            style:
-                                                const TextStyle(fontSize: 12)),
-                                        /*IconButton(
-                                          icon: const Icon(Icons.edit,
-                                              color: Colors.black),
-                                          onPressed: () => _editProduct(
-                                              invoice.id,
-                                              productIndex,
-                                              product),
-                                        ),*/
-                                      ],
-                                    ),
-                                  ),
-                                );
-                              },
-                            ),
-                            Padding(
-                              padding:
-                                  const EdgeInsets.symmetric(vertical: 10.0),
-                              child: Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  Column(
-                                    crossAxisAlignment: CrossAxisAlignment.end,
-                                    children: [
-                                      Row(
-                                        children: [
-                                          Text(
-                                            'الرصيد السابق: ${previousBalance.toStringAsFixed(2)}',
-                                            style: const TextStyle(
-                                              fontSize: 14,
-                                              fontWeight: FontWeight.bold,
-                                            ),
-                                          ),
-                                          SizedBox(width: 30.w),
-                                          Text(
-                                            'إجمالي الفاتورة: ${(double.tryParse(invoice['totalSum'].toString()) ?? 0.0).toStringAsFixed(2)}',
-                                            style: const TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.bold),
-                                          ),
-                                        ],
-                                      ),
-                                      Text(
-                                        'المدفوع: ${(double.tryParse(invoice['paidAmount'].toString()) ?? 0.0).toStringAsFixed(2)}',
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.green,
-                                        ),
-                                      ),
-                                      Text(
-                                        'المتبقي: ${((double.tryParse(invoice['totalSum'].toString()) ?? 0.0) - (double.tryParse(invoice['paidAmount'].toString()) ?? 0.0)).toStringAsFixed(2)}',
-                                        style: const TextStyle(
-                                          fontSize: 14,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.redAccent,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ],
-                        ),
+                    return InvoiceDisplayCard(
+                      invoice: invoiceData,
+                      kind: InvoiceDisplayKind.purchase,
+                      actions: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          IconButton(
+                            icon: const Icon(Icons.edit, color: Colors.blue),
+                            onPressed: () => _handleEditInvoice(invoice),
+                          ),
+                          IconButton(
+                            icon: const Icon(Icons.delete, color: Colors.red),
+                            onPressed: () =>
+                                _handleDeleteInvoice(invoiceId, totalCost),
+                          ),
+                        ],
                       ),
                     );
                   },

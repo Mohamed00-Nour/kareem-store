@@ -207,7 +207,7 @@ class ClientsPage extends StatelessWidget {
                 const SizedBox(height: 8),
                 EgyptPhoneField(
                   controller: phoneCtrl,
-                  labelText: 'رقم الهاتف (واتساب)',
+                  labelText: 'رقم الهاتف (واتساب) - اختياري',
                 ),
               ],
             ),
@@ -222,27 +222,37 @@ class ClientsPage extends StatelessWidget {
                   backgroundColor: Colors.black.withOpacity(0.7)),
               onPressed: () async {
                 final name = nameCtrl.text.trim();
-                if (name.isEmpty) return;
-                if (!EgyptPhoneField.isValidLocalPart(phoneCtrl.text)) {
+                if (name.isEmpty) {
+                  ScaffoldMessenger.of(ctx).showSnackBar(
+                    const SnackBar(content: Text('يرجى إدخال اسم العميل')),
+                  );
+                  return;
+                }
+                final phoneLocal = phoneCtrl.text.trim();
+                if (phoneLocal.isNotEmpty &&
+                    !EgyptPhoneField.isValidLocalPart(phoneCtrl.text)) {
                   ScaffoldMessenger.of(ctx).showSnackBar(
                     const SnackBar(
-                        content: Text('يرجى إدخال رقم هاتف صحيح بعد +20')),
+                      content: Text('رقم الهاتف غير صحيح. اتركه فارغاً أو أدخل رقماً صالحاً'),
+                    ),
                   );
                   return;
                 }
                 final balance =
                     double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
-                final phone =
-                    EgyptPhoneField.toWhatsappDigits(phoneCtrl.text);
+                final data = <String, dynamic>{
+                  'clientName': name,
+                  'balance': balance,
+                  'id': name,
+                };
+                if (phoneLocal.isNotEmpty) {
+                  data['phone'] =
+                      EgyptPhoneField.toWhatsappDigits(phoneCtrl.text);
+                }
                 await FirebaseFirestore.instance
                     .collection('clients')
                     .doc(name)
-                    .set({
-                  'clientName': name,
-                  'balance': balance,
-                  'phone': phone,
-                  'id': name,
-                }, SetOptions(merge: true));
+                    .set(data, SetOptions(merge: true));
                 if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('حفظ',
@@ -438,6 +448,24 @@ class _ClientOpeningBalancesPageState
                 onTap: () {
                   Navigator.pop(ctx);
                   _generateVoucherPdf('له', 'تقرير سند القبض');
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.picture_as_pdf, color: Colors.orange),
+                title: const Text('عملاء عليهم أموال'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _generatePdf(onlyWithBalanceOwed: true);
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.picture_as_pdf, color: Colors.teal),
+                title: const Text('عملاء لهم أموال'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _generatePdf(onlyWithBalanceCredit: true);
                 },
               ),
             ],
@@ -703,7 +731,11 @@ class _ClientOpeningBalancesPageState
     }
   }
 
-  Future<void> _generatePdf() async {
+  Future<void> _generatePdf({
+    bool onlyWithBalanceOwed = false,
+    bool onlyWithBalanceCredit = false,
+  }) async {
+    assert(!(onlyWithBalanceOwed && onlyWithBalanceCredit));
     setState(() => _generating = true);
     try {
       final amiriRegularData =
@@ -719,22 +751,57 @@ class _ClientOpeningBalancesPageState
 
       final snap = await FirebaseFirestore.instance
           .collection('clients')
-          .orderBy('clientName')
           .get();
+
+      final reportTitle = onlyWithBalanceOwed
+          ? 'عملاء عليهم أموال'
+          : onlyWithBalanceCredit
+              ? 'عملاء لهم أموال'
+              : 'الأرصدة الافتتاحية والمبالغ النقدية للعملاء';
 
       final rows = <Map<String, dynamic>>[];
       for (final doc in snap.docs) {
-        final name = (doc['clientName'] ?? '').toString();
+        final name = (doc['clientName'] ?? doc.id).toString().trim();
+        if (name.isEmpty) continue;
         final balance = (doc['balance'] ?? 0.0).toDouble();
         final lahu = balance < 0 ? balance.abs() : 0.0;
         final alayhi = balance > 0 ? balance : 0.0;
-        rows.add({'name': name, 'lahu': lahu, 'alayhi': alayhi});
+        if (onlyWithBalanceOwed) {
+          if (balance <= 0) continue;
+          rows.add({'name': name, 'amount': alayhi});
+        } else if (onlyWithBalanceCredit) {
+          if (balance >= 0) continue;
+          rows.add({'name': name, 'amount': lahu});
+        } else {
+          rows.add({'name': name, 'lahu': lahu, 'alayhi': alayhi});
+        }
       }
 
-      final grandLahu =
-          rows.fold<double>(0.0, (s, r) => s + (r['lahu'] as double));
-      final grandAlayhi =
-          rows.fold<double>(0.0, (s, r) => s + (r['alayhi'] as double));
+      rows.sort((a, b) =>
+          (a['name'] as String).compareTo(b['name'] as String));
+
+      if (rows.isEmpty) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('لا يوجد عملاء في $reportTitle')),
+          );
+        }
+        return;
+      }
+
+      final filteredReport = onlyWithBalanceOwed || onlyWithBalanceCredit;
+      final amountHeader =
+          onlyWithBalanceOwed ? 'عليه' : (onlyWithBalanceCredit ? 'له' : '');
+      final grandFiltered = filteredReport
+          ? rows.fold<double>(
+              0.0, (s, r) => s + (r['amount'] as double))
+          : 0.0;
+      final grandLahu = filteredReport
+          ? 0.0
+          : rows.fold<double>(0.0, (s, r) => s + (r['lahu'] as double));
+      final grandAlayhi = filteredReport
+          ? 0.0
+          : rows.fold<double>(0.0, (s, r) => s + (r['alayhi'] as double));
 
       pw.TextStyle cell(
               {bool bold = false,
@@ -793,64 +860,125 @@ class _ClientOpeningBalancesPageState
                 pw.SizedBox(height: 16),
                 pw.Center(
                   child: pw.Text(
-                    'الأرصدة الافتتاحية والمبالغ النقدية للعملاء',
+                    reportTitle,
                     textDirection: pw.TextDirection.rtl,
                     style: cell(bold: true, fontSize: 14),
                   ),
                 ),
                 pw.SizedBox(height: 12),
-                pw.Table(
-                  border: pw.TableBorder.all(
-                      color: PdfColors.grey400, width: 0.5),
-                  columnWidths: {
-                    0: const pw.FlexColumnWidth(1),
-                    1: const pw.FlexColumnWidth(3),
-                    2: const pw.FlexColumnWidth(2),
-                    3: const pw.FlexColumnWidth(2),
-                  },
-                  children: [
-                    pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey200),
-                      children: [
-                        headerCell('#'),
-                        headerCell('اسم العميل'),
-                        headerCell('له'),
-                        headerCell('عليه'),
-                      ],
-                    ),
-                    for (int i = 0; i < rows.length; i++)
+                if (filteredReport)
+                  pw.Table(
+                    border: pw.TableBorder.all(
+                        color: PdfColors.grey400, width: 0.5),
+                    columnWidths: {
+                      0: const pw.FlexColumnWidth(1),
+                      1: const pw.FlexColumnWidth(4),
+                      2: const pw.FlexColumnWidth(2),
+                    },
+                    children: [
                       pw.TableRow(
-                        decoration: pw.BoxDecoration(
-                          color: i.isEven
-                              ? PdfColors.white
-                              : PdfColors.grey50,
-                        ),
+                        decoration: const pw.BoxDecoration(
+                            color: PdfColors.grey200),
                         children: [
-                          dataCell('${i + 1}'),
-                          dataCell(rows[i]['name'] as String),
-                          dataCell(
-                              (rows[i]['lahu'] as double)
-                                  .toStringAsFixed(2),
-                              red: (rows[i]['lahu'] as double) > 0),
-                          dataCell((rows[i]['alayhi'] as double)
-                              .toStringAsFixed(2)),
+                          headerCell('#'),
+                          headerCell('اسم العميل'),
+                          headerCell(amountHeader),
                         ],
                       ),
-                    pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey100),
-                      children: [
-                        dataCell(''),
-                        dataCell('الإجمالي', bold: true, red: true),
-                        dataCell(grandLahu.toStringAsFixed(2),
-                            bold: true, red: true),
-                        dataCell(grandAlayhi.toStringAsFixed(2),
-                            bold: true),
-                      ],
-                    ),
-                  ],
-                ),
+                      for (int i = 0; i < rows.length; i++)
+                        pw.TableRow(
+                          decoration: pw.BoxDecoration(
+                            color: i.isEven
+                                ? PdfColors.white
+                                : PdfColors.grey50,
+                          ),
+                          children: [
+                            dataCell('${i + 1}'),
+                            dataCell(rows[i]['name'] as String),
+                            dataCell(
+                              (rows[i]['amount'] as double)
+                                  .toStringAsFixed(2),
+                              bold: true,
+                              red: onlyWithBalanceCredit,
+                            ),
+                          ],
+                        ),
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(
+                            color: PdfColors.grey100),
+                        children: [
+                          dataCell(''),
+                          dataCell('الإجمالي', bold: true, red: true),
+                          dataCell(
+                            grandFiltered.toStringAsFixed(2),
+                            bold: true,
+                            red: onlyWithBalanceCredit,
+                          ),
+                        ],
+                      ),
+                    ],
+                  )
+                else
+                  pw.Table(
+                    border: pw.TableBorder.all(
+                        color: PdfColors.grey400, width: 0.5),
+                    columnWidths: {
+                      0: const pw.FlexColumnWidth(1),
+                      1: const pw.FlexColumnWidth(3),
+                      2: const pw.FlexColumnWidth(2),
+                      3: const pw.FlexColumnWidth(2),
+                    },
+                    children: [
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(
+                            color: PdfColors.grey200),
+                        children: [
+                          headerCell('#'),
+                          headerCell('اسم العميل'),
+                          headerCell('له'),
+                          headerCell('عليه'),
+                        ],
+                      ),
+                      for (int i = 0; i < rows.length; i++)
+                        pw.TableRow(
+                          decoration: pw.BoxDecoration(
+                            color: i.isEven
+                                ? PdfColors.white
+                                : PdfColors.grey50,
+                          ),
+                          children: [
+                            dataCell('${i + 1}'),
+                            dataCell(rows[i]['name'] as String),
+                            dataCell(
+                              (rows[i]['lahu'] as double)
+                                  .toStringAsFixed(2),
+                              red: (rows[i]['lahu'] as double) > 0,
+                            ),
+                            dataCell(
+                              (rows[i]['alayhi'] as double)
+                                  .toStringAsFixed(2),
+                            ),
+                          ],
+                        ),
+                      pw.TableRow(
+                        decoration: const pw.BoxDecoration(
+                            color: PdfColors.grey100),
+                        children: [
+                          dataCell(''),
+                          dataCell('الإجمالي', bold: true, red: true),
+                          dataCell(
+                            grandLahu.toStringAsFixed(2),
+                            bold: true,
+                            red: true,
+                          ),
+                          dataCell(
+                            grandAlayhi.toStringAsFixed(2),
+                            bold: true,
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
               ],
             );
           },
@@ -858,8 +986,13 @@ class _ClientOpeningBalancesPageState
       );
 
       final dir = await getTemporaryDirectory();
+      final fileSuffix = onlyWithBalanceOwed
+          ? 'owes'
+          : onlyWithBalanceCredit
+              ? 'credit'
+              : 'all';
       final file = File(
-          '${dir.path}/client_opening_balances_${dateStr.replaceAll('/', '-')}.pdf');
+          '${dir.path}/client_balances_${fileSuffix}_${dateStr.replaceAll('/', '-')}.pdf');
       await file.writeAsBytes(await pdf.save());
 
       if (mounted) {
@@ -868,7 +1001,7 @@ class _ClientOpeningBalancesPageState
           builder: (ctx) => Directionality(
             textDirection: ui.TextDirection.rtl,
             child: AlertDialog(
-              title: const Text('تقرير الأرصدة الافتتاحية'),
+              title: Text(reportTitle),
               content: const Text('تم إنشاء التقرير. ماذا تريد أن تفعل؟'),
               actions: [
                 TextButton.icon(
@@ -877,7 +1010,7 @@ class _ClientOpeningBalancesPageState
                   onPressed: () async {
                     Navigator.pop(ctx);
                     await Share.shareXFiles([XFile(file.path)],
-                        text: 'الأرصدة الافتتاحية والمبالغ النقدية للعملاء');
+                        text: reportTitle);
                   },
                 ),
                 ElevatedButton.icon(

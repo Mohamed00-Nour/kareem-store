@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 
-import '../Services/invoice_print_ui.dart';
+import '../Services/invoice_number_utils.dart';
 import '../Services/sales_invoices_fetch_service.dart';
 
 /// Compact invoice card for grid lists (sales report / today invoices).
@@ -28,7 +28,7 @@ class SalesInvoiceCard extends StatelessWidget {
         : '';
     final client = invoice['clientName']?.toString() ?? '';
     final number = invoice['invoiceNumber']?.toString() ?? '';
-    final total = (invoice['totalSum'] as num?)?.toDouble() ?? 0.0;
+    final total = invoiceNum(invoice['totalSum']);
 
     return Card(
       elevation: 2,
@@ -93,11 +93,6 @@ class SalesInvoiceCard extends StatelessWidget {
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints(minWidth: 28, minHeight: 32),
                     onPressed: onPrint,
-                  ),
-                  InvoicePrintUi.temporaryPreviewIconButton(
-                    context,
-                    invoice,
-                    clientId: client.isNotEmpty ? client : null,
                   ),
                   IconButton(
                     icon: Icon(Icons.visibility_outlined,

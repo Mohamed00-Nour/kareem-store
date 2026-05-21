@@ -53,7 +53,7 @@ class PrinterSettings {
     this.receiptStorePhone = '01010573888',
     this.salesInvoiceFooter = '',
     this.a4ReportFooter = '',
-    this.textHeightPosition = 10,
+    this.textHeightPosition = 1,
     this.connectionType = PrinterConnectionType.bluetooth,
     this.bluetoothMacAddress = '',
     this.bluetoothDeviceName = '',
@@ -192,7 +192,7 @@ class PrinterSettings {
       receiptStorePhone: map['receiptStorePhone'] as String? ?? '01010573888',
       salesInvoiceFooter: map['salesInvoiceFooter'] as String? ?? '',
       a4ReportFooter: map['a4ReportFooter'] as String? ?? '',
-      textHeightPosition: map['textHeightPosition'] as int? ?? 10,
+      textHeightPosition: map['textHeightPosition'] as int? ?? 1,
       connectionType: PrinterConnectionType.values[
           (map['connectionType'] as int?)?.clamp(0, 3) ?? 1],
       bluetoothMacAddress: map['bluetoothMacAddress'] as String? ?? '',

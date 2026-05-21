@@ -289,14 +289,14 @@ class BluetoothThermalHandler(
     }
 
     private fun textSizePx(escSize: Int, paperMm: Int): Float {
-        val base = if (paperMm <= 58) 22f else 26f
+        val base = if (paperMm <= 58) 20f else 24f
         return when (escSize) {
             1 -> base
-            2 -> base + 4f
-            3 -> base + 10f
-            4 -> base + 16f
-            5 -> base + 22f
-            else -> base + 4f
+            2 -> base + 2f
+            3 -> base + 6f
+            4 -> base + 10f
+            5 -> base + 14f
+            else -> base + 2f
         }
     }
 
@@ -335,8 +335,8 @@ class BluetoothThermalHandler(
             StaticLayout.Builder.obtain(text, 0, text.length, paint, widthDots)
                 .setAlignment(Layout.Alignment.ALIGN_OPPOSITE)
                 .setTextDirection(TextDirectionHeuristics.RTL)
-                .setIncludePad(true)
-                .setLineSpacing(0f, 1f)
+                .setIncludePad(false)
+                .setLineSpacing(0f, 0.92f)
                 .build()
         } else {
             @Suppress("DEPRECATION")

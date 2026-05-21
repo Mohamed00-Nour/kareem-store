@@ -65,18 +65,22 @@ class WhatsappInvoiceShareService {
     );
   }
 
+  /// Opens WhatsApp. With [phoneDigits] opens that chat; otherwise the user picks a contact.
   static Future<bool> openWhatsappChat({
-    required String phoneDigits,
+    String? phoneDigits,
     required String message,
   }) async {
-    final phone = phoneDigits.replaceAll(RegExp(r'\D'), '');
-    if (phone.isEmpty) return false;
-
+    final phone = phoneDigits?.replaceAll(RegExp(r'\D'), '') ?? '';
     final encoded = Uri.encodeComponent(message);
-    final uris = [
-      Uri.parse('https://wa.me/$phone?text=$encoded'),
-      Uri.parse('whatsapp://send?phone=$phone&text=$encoded'),
-    ];
+    final uris = phone.isNotEmpty
+        ? [
+            Uri.parse('https://wa.me/$phone?text=$encoded'),
+            Uri.parse('whatsapp://send?phone=$phone&text=$encoded'),
+          ]
+        : [
+            Uri.parse('https://wa.me/?text=$encoded'),
+            Uri.parse('whatsapp://send?text=$encoded'),
+          ];
 
     for (final uri in uris) {
       try {
@@ -181,13 +185,15 @@ class WhatsappInvoiceShareService {
     final clientName = invoice['clientName']?.toString().trim() ?? '';
     if (clientName.isEmpty) return;
 
-    final phone = await _resolveClientPhone(context, clientName);
-    if (phone == null || phone.isEmpty) return;
+    final phone = await fetchClientPhone(clientName);
 
     final prepared =
         await InvoicePrintService.prepareForPrint(invoice, clientId: clientName);
     final message = buildInvoiceMessage(prepared);
-    final ok = await openWhatsappChat(phoneDigits: phone, message: message);
+    final ok = await openWhatsappChat(
+      phoneDigits: phone,
+      message: message,
+    );
 
     if (ok) {
       onShareSuccess?.call();
@@ -197,8 +203,7 @@ class WhatsappInvoiceShareService {
     if (!context.mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(
-        content: Text(
-            'تعذر فتح واتساب. تأكد من تثبيت التطبيق ورقم الهاتف'),
+        content: Text('تعذر فتح واتساب. تأكد من تثبيت التطبيق'),
       ),
     );
   }
@@ -211,8 +216,7 @@ class WhatsappInvoiceShareService {
     final clientName = invoice['clientName']?.toString().trim() ?? '';
     if (clientName.isEmpty) return;
 
-    final phone = await _resolveClientPhone(context, clientName);
-    if (phone == null || phone.isEmpty) return;
+    final phone = await fetchClientPhone(clientName);
 
     if (!context.mounted) return;
     BuildContext? loadingDialogContext;
@@ -249,7 +253,7 @@ class WhatsappInvoiceShareService {
       final imageFile = await SalesInvoiceImageService.generatePng(prepared);
       final caption = buildInvoiceMessage(prepared);
       ok = await WhatsappShareChannel.shareImage(
-        phoneDigits: phone,
+        phoneDigits: phone ?? '',
         imagePath: imageFile.path,
         caption: caption,
       );
@@ -278,66 +282,6 @@ class WhatsappInvoiceShareService {
         content: Text('تعذر فتح واتساب. تأكد من تثبيت التطبيق'),
       ),
     );
-  }
-
-  static Future<String?> _resolveClientPhone(
-    BuildContext context,
-    String clientName,
-  ) async {
-    var phone = await fetchClientPhone(clientName);
-    if (phone == null || phone.isEmpty) {
-      if (!context.mounted) return null;
-      phone = await _promptForPhone(context, clientName);
-    }
-    return phone;
-  }
-
-  static Future<String?> _promptForPhone(
-    BuildContext context,
-    String clientName,
-  ) async {
-    final localCtrl = TextEditingController();
-    final result = await showDialog<bool>(
-      context: context,
-      builder: (ctx) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: AlertDialog(
-          title: const Text('رقم واتساب العميل'),
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              Text('أدخل رقم $clientName لمشاركة الفاتورة'),
-              const SizedBox(height: 12),
-              EgyptPhoneField(controller: localCtrl, autofocus: true),
-            ],
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx, false),
-              child: const Text('إلغاء'),
-            ),
-            ElevatedButton(
-              onPressed: () {
-                if (!EgyptPhoneField.isValidLocalPart(localCtrl.text)) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
-                    const SnackBar(content: Text('رقم غير صحيح')),
-                  );
-                  return;
-                }
-                Navigator.pop(ctx, true);
-              },
-              child: const Text('متابعة'),
-            ),
-          ],
-        ),
-      ),
-    );
-
-    if (result != true) return null;
-    final digits = EgyptPhoneField.toWhatsappDigits(localCtrl.text);
-    await saveClientPhone(clientName, localCtrl.text);
-    return digits;
   }
 
   static String? _readPhone(Map<String, dynamic>? data) {

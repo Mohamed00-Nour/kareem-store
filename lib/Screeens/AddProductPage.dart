@@ -2,6 +2,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'Data/DataEntryScreen.dart';
+import 'home_page.dart';
 import '../Buing Invoices/BuyingInvoiceListPage.dart';
 import '../Buing Invoices/BuyingInvoiceDetailPage.dart';
 
@@ -1423,13 +1424,15 @@ class _AddProductPageState extends State<AddProductPage> {
     double totalQty = _addedProducts.fold(
         0.0, (s, p) => s + (p['amount'] as num).toDouble());
 
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        key: _scaffoldKey,
-        backgroundColor: const Color(0xffeeeced),
-        endDrawer: _buildDrawer(),
-        appBar: AppBar(
+    return WillPopScope(
+      onWillPop: () => HomePage.confirmNavigateBack(context),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          key: _scaffoldKey,
+          backgroundColor: const Color(0xffeeeced),
+          endDrawer: _buildDrawer(),
+          appBar: AppBar(
           backgroundColor: Colors.black.withOpacity(0.7),
           title: Text('المشتريات',
               style: TextStyle(
@@ -1800,6 +1803,7 @@ class _AddProductPageState extends State<AddProductPage> {
               ),
           ],
         ),
+      ),
       ),
     );
   }

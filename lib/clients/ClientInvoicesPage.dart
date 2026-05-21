@@ -1,3 +1,5 @@
+﻿library client_invoices_page;
+
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -9,9 +11,12 @@ import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../Screeens/DecreaseProductPage.dart';
 import '../Services/client_statement_pdf_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
+
+part 'invoice_edit_sheet.dart';
 
 void _selectAllField(TextEditingController controller) {
   final text = controller.text;
@@ -24,9 +29,14 @@ void _selectAllField(TextEditingController controller) {
 
 class ClientInvoicesPage extends StatefulWidget {
   final String clientId;
+  /// Opens edit sheet for the client sub-invoice linked to this root [invoices] id.
+  final String? autoEditRootInvoiceId;
 
-  const ClientInvoicesPage({Key? key, required this.clientId})
-      : super(key: key);
+  const ClientInvoicesPage({
+    Key? key,
+    required this.clientId,
+    this.autoEditRootInvoiceId,
+  }) : super(key: key);
 
   @override
   _ClientInvoicesPageState createState() => _ClientInvoicesPageState();
@@ -39,6 +49,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   int _selectedMonth = DateTime.now().month;
   bool _isSaving = false; // Add loading state
   bool _generatingStatement = false;
+  bool _autoEditTriggered = false;
   List<_ProdInfo> _allProds = [];
 
   Future<void> _fetchAllProds() async {
@@ -56,6 +67,85 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         });
       }
     } catch (_) {}
+  }
+
+  double _numField(dynamic value) {
+    if (value is String) return double.tryParse(value) ?? 0.0;
+    if (value is num) return value.toDouble();
+    return 0.0;
+  }
+
+  Future<double> _productCostTotal(List<Map<String, dynamic>> products) async {
+    double cost = 0;
+    for (final p in products) {
+      final name = p['product']?.toString() ?? '';
+      if (name.isEmpty) continue;
+      final amount = double.tryParse(p['amount']?.toString() ?? '') ?? 0;
+      final q = await FirebaseFirestore.instance
+          .collection('products')
+          .where('name', isEqualTo: name)
+          .limit(1)
+          .get();
+      if (q.docs.isEmpty) continue;
+      final unitCost = (q.docs.first['costPrice'] as num?)?.toDouble() ?? 0;
+      cost += amount * unitCost;
+    }
+    return cost;
+  }
+
+  Future<void> _syncRootSalesInvoice(
+    String clientInvoiceDocId,
+    Map<String, dynamic> fields,
+  ) async {
+    final clientRef = FirebaseFirestore.instance
+        .collection('clients')
+        .doc(widget.clientId)
+        .collection('invoices')
+        .doc(clientInvoiceDocId);
+    final snap = await clientRef.get();
+    if (!snap.exists) return;
+
+    final data = snap.data();
+    if (data == null) return;
+    final rootId = data['invoiceId']?.toString();
+    if (rootId == null || rootId.isEmpty) return;
+
+    final rootRef =
+        FirebaseFirestore.instance.collection('invoices').doc(rootId);
+    final rootSnap = await rootRef.get();
+    if (!rootSnap.exists) return;
+
+    final rootUpdate = <String, dynamic>{};
+    if (fields.containsKey('products')) {
+      final products =
+          List<Map<String, dynamic>>.from(fields['products'] as List);
+      rootUpdate['products'] = products;
+      final totalSum = fields.containsKey('totalSum')
+          ? _numField(fields['totalSum'])
+          : _numField(data['totalSum']);
+      rootUpdate['totalSum'] = totalSum;
+      rootUpdate['profitMargin'] = totalSum - await _productCostTotal(products);
+    } else if (fields.containsKey('totalSum')) {
+      final totalSum = _numField(fields['totalSum']);
+      rootUpdate['totalSum'] = totalSum;
+      final products = List<Map<String, dynamic>>.from(
+        (data['products'] as List?) ?? [],
+      );
+      if (products.isNotEmpty) {
+        rootUpdate['profitMargin'] =
+            totalSum - await _productCostTotal(products);
+      }
+    }
+    if (fields.containsKey('paidAmount')) {
+      rootUpdate['paidAmount'] = _numField(fields['paidAmount']);
+    }
+    if (fields.containsKey('balance')) {
+      rootUpdate['balance'] = _numField(fields['balance']);
+    }
+
+    if (rootUpdate.isNotEmpty) {
+      await rootRef.update(rootUpdate);
+    }
   }
 
   final List<String> _arabicMonths = [
@@ -733,608 +823,50 @@ Future<void> _saveBalance() async {
     );
   }
 
-  Future<void> _showEditInvoiceDialog(DocumentSnapshot invoice) async {
+  Future<Map<String, dynamic>> _invoicePayloadForEdit(
+      DocumentSnapshot invoice) async {
     final invoiceData = invoice.data() as Map<String, dynamic>;
-    final List<Map<String, dynamic>> originalProducts =
-        List<Map<String, dynamic>>.from(
-            (invoiceData['products'] as List)
-                .map((p) => Map<String, dynamic>.from(p)));
+    final rootId = invoiceData['invoiceId']?.toString();
+    var payload = Map<String, dynamic>.from(invoiceData);
+    payload['_clientSubDocId'] = invoice.id;
 
-    // Build editable rows from existing products
-    final List<_EditRow> rows = originalProducts.map((p) {
-      final storedPrice =
-          double.tryParse(p['selectedPrice'].toString()) ?? 0.0;
-      _ProdInfo? info = _allProds.cast<_ProdInfo?>().firstWhere(
-            (pi) => pi!.name == p['product'].toString(),
-            orElse: () => null,
-          );
-      info ??= _ProdInfo(
-        name: p['product'].toString(),
-        sellingPrice1: storedPrice,
-        sellingPrice2: storedPrice,
-        sellingPrice3: storedPrice,
-        quantity: 0.0,
-      );
-      int tier = 1;
-      if (storedPrice == info.sellingPrice2) tier = 2;
-      else if (storedPrice == info.sellingPrice3) tier = 3;
-      else if (storedPrice != info.sellingPrice1) tier = 0;
-      return _EditRow(
-        prodInfo: info,
-        amount: double.tryParse(p['amount'].toString()) ?? 1.0,
-        priceTier: tier,
-        customPrice: storedPrice,
-      );
-    }).toList();
-
-    bool isSaving = false;
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) {
-        if (rows.isNotEmpty) {
-          WidgetsBinding.instance.addPostFrameCallback((_) {
-            _selectAllField(rows.first.qtyCtrl);
-          });
-        }
-        return StatefulBuilder(builder: (ctx, setSheet) {
-          double invoiceTotal = rows.fold(0.0, (s, r) => s + r.total);
-          return Directionality(
-            textDirection: TextDirection.rtl,
-            child: DraggableScrollableSheet(
-              initialChildSize: 0.92,
-              minChildSize: 0.5,
-              maxChildSize: 0.96,
-              expand: false,
-              builder: (_, scrollCtrl) {
-                return Column(children: [
-                  // Drag handle
-                  Container(
-                    width: 40,
-                    height: 4,
-                    margin: const EdgeInsets.symmetric(vertical: 12),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade300,
-                      borderRadius: BorderRadius.circular(2),
-                    ),
-                  ),
-                  // Header
-                  Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 16),
-                    child: Row(children: [
-                      Text(
-                        'الإجمالي: ${invoiceTotal.toStringAsFixed(2)}',
-                        style: TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.orange.shade800),
-                      ),
-                      const Spacer(),
-                      Text(
-                        'فاتورة #${invoiceData['invoiceNumber']}',
-                        style: const TextStyle(
-                            fontSize: 16, fontWeight: FontWeight.bold),
-                      ),
-                    ]),
-                  ),
-                  const Divider(height: 16),
-                  // Products list + add button
-                  Expanded(
-                    child: ListView.builder(
-                      controller: scrollCtrl,
-                      padding: const EdgeInsets.fromLTRB(12, 0, 12, 4),
-                      itemCount: rows.length + 1,
-                      itemBuilder: (_, i) {
-                        if (i == rows.length) {
-                          return Padding(
-                            padding:
-                                const EdgeInsets.symmetric(vertical: 8),
-                            child: OutlinedButton.icon(
-                              onPressed: () => setSheet(() => rows.add(
-                                  _EditRow(
-                                    prodInfo: null,
-                                    amount: 1.0,
-                                    priceTier: 1,
-                                    customPrice: 0.0,
-                                  ))),
-                              icon: const Icon(Icons.add,
-                                  color: Colors.orange),
-                              label: const Text('إضافة منتج',
-                                  style:
-                                      TextStyle(color: Colors.orange)),
-                              style: OutlinedButton.styleFrom(
-                                side: const BorderSide(
-                                    color: Colors.orange),
-                                shape: RoundedRectangleBorder(
-                                    borderRadius:
-                                        BorderRadius.circular(8)),
-                              ),
-                            ),
-                          );
-                        }
-                        return _buildEditRowCard(
-                            rows[i], i, rows, setSheet);
-                      },
-                    ),
-                  ),
-                  // Action buttons
-                  Padding(
-                    padding: EdgeInsets.only(
-                      left: 16,
-                      right: 16,
-                      bottom:
-                          MediaQuery.of(ctx).viewInsets.bottom + 16,
-                      top: 8,
-                    ),
-                    child: Row(children: [
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('تراجع',
-                              style: TextStyle(
-                                  color: Colors.orange,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Colors.orange.withOpacity(0.85),
-                            shape: RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius.circular(8)),
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 13),
-                          ),
-                          onPressed: isSaving
-                              ? null
-                              : () async {
-                                  setSheet(() => isSaving = true);
-                                  try {
-                                    final updatedProducts = rows
-                                        .where((r) =>
-                                            r.prodInfo != null &&
-                                            r.prodInfo!.name
-                                                .isNotEmpty)
-                                        .map((r) => {
-                                              'product':
-                                                  r.prodInfo!.name,
-                                              'amount':
-                                                  r.amount.toString(),
-                                              'selectedPrice':
-                                                  r.price.toString(),
-                                              'total':
-                                                  r.total.toString(),
-                                            })
-                                        .toList();
-
-                                    // Restore original stock
-                                    for (var op in originalProducts) {
-                                      final oa = double.tryParse(
-                                              op['amount'].toString()) ??
-                                          0.0;
-                                      if (oa <= 0) continue;
-                                      final q = await FirebaseFirestore
-                                          .instance
-                                          .collection('products')
-                                          .where('name',
-                                              isEqualTo: op['product'])
-                                          .get();
-                                      for (var doc in q.docs) {
-                                        final qty =
-                                            (doc['quantity'] as num)
-                                                .toDouble();
-                                        await FirebaseFirestore.instance
-                                            .collection('products')
-                                            .doc(doc.id)
-                                            .update(
-                                                {'quantity': qty + oa});
-                                        await FirebaseFirestore.instance
-                                            .collection('products')
-                                            .doc(doc.id)
-                                            .collection('changes')
-                                            .add({
-                                          'date': DateTime.now(),
-                                          'amount': oa,
-                                          'type': 'increase',
-                                        });
-                                      }
-                                    }
-                                    // Apply updated stock
-                                    for (var np in updatedProducts) {
-                                      final na = double.tryParse(
-                                              np['amount'].toString()) ??
-                                          0.0;
-                                      if (na <= 0) continue;
-                                      final q = await FirebaseFirestore
-                                          .instance
-                                          .collection('products')
-                                          .where('name',
-                                              isEqualTo: np['product'])
-                                          .get();
-                                      for (var doc in q.docs) {
-                                        final qty =
-                                            (doc['quantity'] as num)
-                                                .toDouble();
-                                        await FirebaseFirestore.instance
-                                            .collection('products')
-                                            .doc(doc.id)
-                                            .update(
-                                                {'quantity': qty - na});
-                                        await FirebaseFirestore.instance
-                                            .collection('products')
-                                            .doc(doc.id)
-                                            .collection('changes')
-                                            .add({
-                                          'date': DateTime.now(),
-                                          'amount': na,
-                                          'type': 'decrease',
-                                        });
-                                      }
-                                    }
-                                    // Update invoice
-                                    final double newTotalSum =
-                                        updatedProducts.fold(
-                                            0.0,
-                                            (s, p) =>
-                                                s +
-                                                (double.tryParse(p['total']
-                                                        .toString()) ??
-                                                    0.0));
-                                    await FirebaseFirestore.instance
-                                        .collection('clients')
-                                        .doc(widget.clientId)
-                                        .collection('invoices')
-                                        .doc(invoice.id)
-                                        .update({
-                                      'products': updatedProducts,
-                                      'totalSum': newTotalSum,
-                                    });
-                                    // Recalculate client balance
-                                    final allInv =
-                                        await FirebaseFirestore.instance
-                                            .collection('clients')
-                                            .doc(widget.clientId)
-                                            .collection('invoices')
-                                            .get();
-                                    double totalInv = allInv.docs.fold(
-                                        0.0,
-                                        (s, d) =>
-                                            s +
-                                            ((d['totalSum'] is String)
-                                                ? double.tryParse(
-                                                        d['totalSum']) ??
-                                                    0.0
-                                                : (d['totalSum'] as num)
-                                                    .toDouble()));
-                                    final balHist =
-                                        await FirebaseFirestore.instance
-                                            .collection('clients')
-                                            .doc(widget.clientId)
-                                            .collection('balanceHistory')
-                                            .get();
-                                    double totalPaid = balHist.docs.fold(
-                                        0.0,
-                                        (s, d) =>
-                                            s +
-                                            ((d['enteredBalance']
-                                                    is String)
-                                                ? double.tryParse(d[
-                                                        'enteredBalance']) ??
-                                                    0.0
-                                                : (d['enteredBalance']
-                                                        as num)
-                                                    .toDouble()));
-                                    await FirebaseFirestore.instance
-                                        .collection('clients')
-                                        .doc(widget.clientId)
-                                        .update({
-                                      'balance': totalInv - totalPaid
-                                    });
-
-                                    ScaffoldMessenger.of(context)
-                                        .showSnackBar(const SnackBar(
-                                            content: Text(
-                                                'تم تعديل الفاتورة بنجاح')));
-                                    setState(() {});
-                                    Navigator.pop(ctx);
-                                  } catch (e) {
-                                    ScaffoldMessenger.of(context)
-                                        .showSnackBar(SnackBar(
-                                            content:
-                                                Text('حدث خطأ: $e')));
-                                    if (ctx.mounted) {
-                                      setSheet(() => isSaving = false);
-                                    }
-                                  }
-                                },
-                          child: isSaving
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white))
-                              : const Text('حفظ التعديلات',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                    ]),
-                  ),
-                ]);
-              },
-            ),
-          );
-        });
-      },
-    );
+    if (rootId != null && rootId.isNotEmpty) {
+      final rootSnap = await FirebaseFirestore.instance
+          .collection('invoices')
+          .doc(rootId)
+          .get();
+      if (rootSnap.exists) {
+        payload = {
+          ...rootSnap.data()!,
+          'id': rootId,
+          '_clientSubDocId': invoice.id,
+        };
+      } else {
+        payload['id'] = rootId;
+      }
+    }
+    return payload;
   }
 
-  Widget _buildEditRowCard(
-      _EditRow row, int index, List<_EditRow> rows, StateSetter setSheet) {
-    return Card(
-      key: ValueKey(row.key),
-      margin: const EdgeInsets.symmetric(vertical: 4),
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(10)),
-      elevation: 2,
-      child: Padding(
-        padding: const EdgeInsets.all(10),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            // ── Product search + delete ──
-            Row(children: [
-              Expanded(
-                child: RawAutocomplete<_ProdInfo>(
-                  textEditingController: row.nameCtrl,
-                  focusNode: row.nameFocus,
-                  optionsBuilder: (val) {
-                    if (val.text.isEmpty)
-                      return const Iterable<_ProdInfo>.empty();
-                    return _allProds.where((p) => p.name
-                        .toLowerCase()
-                        .contains(val.text.toLowerCase()));
-                  },
-                  displayStringForOption: (p) => p.name,
-                  optionsViewBuilder: (ctx, onSel, opts) {
-                    return Align(
-                      alignment: Alignment.topLeft,
-                      child: Material(
-                        elevation: 4,
-                        borderRadius: BorderRadius.circular(8),
-                        child: ConstrainedBox(
-                          constraints:
-                              const BoxConstraints(maxHeight: 200),
-                          child: ListView.builder(
-                            padding: EdgeInsets.zero,
-                            shrinkWrap: true,
-                            itemCount: opts.length,
-                            itemBuilder: (_, j) {
-                              final p = opts.elementAt(j);
-                              return ListTile(
-                                dense: true,
-                                title: Text(p.name,
-                                    textAlign: TextAlign.right),
-                                subtitle: Text(
-                                    'س1: ${p.sellingPrice1.toStringAsFixed(2)}',
-                                    textAlign: TextAlign.right,
-                                    style: const TextStyle(
-                                        fontSize: 11,
-                                        color: Colors.grey)),
-                                onTap: () => onSel(p),
-                              );
-                            },
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                  fieldViewBuilder: (ctx, ctrl, focus, _) {
-                    return TextField(
-                      controller: ctrl,
-                      focusNode: focus,
-                      textAlign: TextAlign.right,
-                      decoration: InputDecoration(
-                        hintText: 'ابحث عن منتج',
-                        hintStyle: const TextStyle(fontSize: 13),
-                        prefixIcon: const Icon(Icons.search,
-                            size: 18, color: Colors.orange),
-                        isDense: true,
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8)),
-                        focusedBorder: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8),
-                            borderSide: const BorderSide(
-                                color: Colors.orange, width: 2)),
-                        contentPadding: const EdgeInsets.symmetric(
-                            vertical: 10, horizontal: 10),
-                      ),
-                      onTap: () => _selectAllField(ctrl),
-                    );
-                  },
-                  onSelected: (p) {
-                    setSheet(() {
-                      row.prodInfo = p;
-                      row.customPrice =
-                          p.priceForTier(row.priceTier, row.customPrice);
-                      row.customPriceCtrl.text =
-                          row.customPrice.toStringAsFixed(2);
-                    });
-                  },
-                ),
-              ),
-              IconButton(
-                icon: const Icon(Icons.delete_outline, color: Colors.red),
-                onPressed: () => setSheet(() => rows.removeAt(index)),
-              ),
-            ]),
-            const SizedBox(height: 8),
+  Future<void> _showEditInvoiceDialog(DocumentSnapshot invoice) async {
+    final payload = await _invoicePayloadForEdit(invoice);
 
-            // ── Price tier + price display ──
-            Row(children: [
-              Expanded(
-                flex: 3,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 8, horizontal: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.grey.shade100,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.grey.shade300),
-                  ),
-                  child: Text(
-                    row.price.toStringAsFixed(2),
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(
-                        fontSize: 15, fontWeight: FontWeight.bold),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              _PriceTierBtn(
-                label: '3',
-                selected: row.priceTier == 3,
-                onTap: () => setSheet(() => row.priceTier = 3),
-              ),
-              const SizedBox(width: 3),
-              _PriceTierBtn(
-                label: '2',
-                selected: row.priceTier == 2,
-                onTap: () => setSheet(() => row.priceTier = 2),
-              ),
-              const SizedBox(width: 3),
-              _PriceTierBtn(
-                label: '1',
-                selected: row.priceTier == 1,
-                onTap: () => setSheet(() => row.priceTier = 1),
-              ),
-              const SizedBox(width: 3),
-              _PriceTierBtn(
-                label: 'خ',
-                selected: row.priceTier == 0,
-                onTap: () => setSheet(() => row.priceTier = 0),
-              ),
-              const SizedBox(width: 6),
-              const Text('السعر', style: TextStyle(fontSize: 12)),
-            ]),
-
-            // ── Custom price input ──
-            if (row.priceTier == 0) ...[
-              const SizedBox(height: 6),
-              TextField(
-                controller: row.customPriceCtrl,
-                textAlign: TextAlign.center,
-                keyboardType:
-                    const TextInputType.numberWithOptions(decimal: true),
-                decoration: InputDecoration(
-                  labelText: 'سعر خاص',
-                  isDense: true,
-                  prefixIcon: const Icon(Icons.edit,
-                      color: Colors.orange, size: 18),
-                  border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8)),
-                  focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(8),
-                      borderSide: const BorderSide(
-                          color: Colors.orange, width: 2)),
-                ),
-                onTap: () => _selectAllField(row.customPriceCtrl),
-                onChanged: (v) => setSheet(
-                    () => row.customPrice = double.tryParse(v) ?? 0.0),
-              ),
-            ],
-            const SizedBox(height: 8),
-
-            // ── Qty + total ──
-            Row(children: [
-              Expanded(
-                flex: 3,
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                      vertical: 8, horizontal: 10),
-                  decoration: BoxDecoration(
-                    color: Colors.orange.shade50,
-                    borderRadius: BorderRadius.circular(8),
-                    border: Border.all(color: Colors.orange.shade200),
-                  ),
-                  child: Text(
-                    row.total.toStringAsFixed(2),
-                    textAlign: TextAlign.center,
-                    style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange.shade800),
-                  ),
-                ),
-              ),
-              const SizedBox(width: 6),
-              _CircleBtn(
-                icon: Icons.remove,
-                onTap: () {
-                  if (row.amount > 1) {
-                    setSheet(() {
-                      row.amount -= 1;
-                      row.qtyCtrl.text = row.amount.toStringAsFixed(1);
-                    });
-                  }
-                },
-              ),
-              const SizedBox(width: 4),
-              SizedBox(
-                width: 60,
-                child: TextField(
-                  controller: row.qtyCtrl,
-                  textAlign: TextAlign.center,
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.teal.shade700),
-                  decoration: InputDecoration(
-                    isDense: true,
-                    border: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide:
-                            const BorderSide(color: Colors.orange)),
-                    focusedBorder: OutlineInputBorder(
-                        borderRadius: BorderRadius.circular(8),
-                        borderSide: const BorderSide(
-                            color: Colors.orange, width: 2)),
-                    contentPadding:
-                        const EdgeInsets.symmetric(vertical: 8),
-                  ),
-                  onTap: () => _selectAllField(row.qtyCtrl),
-                  onChanged: (v) => setSheet(
-                      () => row.amount = double.tryParse(v) ?? row.amount),
-                ),
-              ),
-              const SizedBox(width: 4),
-              _CircleBtn(
-                icon: Icons.add,
-                onTap: () => setSheet(() {
-                  row.amount += 1;
-                  row.qtyCtrl.text = row.amount.toStringAsFixed(1);
-                }),
-              ),
-              const SizedBox(width: 6),
-              const Text('الكمية', style: TextStyle(fontSize: 12)),
-            ]),
-          ],
-        ),
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DecreaseProductPage(invoiceToEdit: payload),
       ),
     );
+    if (!mounted) return;
+    if (saved == true) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تم تعديل الفاتورة بنجاح'),
+      ));
+      setState(() {});
+      if (widget.autoEditRootInvoiceId != null) {
+        Navigator.pop(context, true);
+      }
+    }
   }
 
   Future<void> _deleteInvoice(String invoiceId, double totalCost) async {
@@ -2012,6 +1544,22 @@ Future<void> _saveBalance() async {
                         date.month == _selectedMonth;
                     }).toList();
 
+                    if (!_autoEditTriggered &&
+                        widget.autoEditRootInvoiceId != null &&
+                        invoices.isNotEmpty) {
+                      _autoEditTriggered = true;
+                      WidgetsBinding.instance.addPostFrameCallback((_) {
+                        for (final doc in invoices) {
+                          final data = doc.data() as Map<String, dynamic>;
+                          if (data['invoiceId']?.toString() ==
+                              widget.autoEditRootInvoiceId) {
+                            _handleEditInvoice(doc);
+                            break;
+                          }
+                        }
+                      });
+                    }
+
                     return ListView.builder(
                       itemCount: invoices.length,
                       itemBuilder: (context, index) {
@@ -2069,12 +1617,6 @@ Future<void> _saveBalance() async {
                                               tooltip: 'طباعة',
                                               onPressed: () =>
                                                   _printInvoice(invoiceData),
-                                            ),
-                                            InvoicePrintUi
-                                                .temporaryPreviewIconButton(
-                                              context,
-                                              invoiceData,
-                                              clientId: widget.clientId,
                                             ),
                                             IconButton(
                                               icon: FaIcon(
@@ -2312,6 +1854,13 @@ class _EditRow {
   double get price =>
       prodInfo?.priceForTier(priceTier, customPrice) ?? customPrice;
   double get total => amount * price;
+
+  void dispose() {
+    nameCtrl.dispose();
+    qtyCtrl.dispose();
+    customPriceCtrl.dispose();
+    nameFocus.dispose();
+  }
 }
 
 // ──────────────────────────────────────────────────────────────

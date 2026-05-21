@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../EditProductPage.dart';
+import '../Services/invoice_number_utils.dart';
 
 class DepartmentProductsPage extends StatefulWidget {
   final String departmentName;
@@ -97,13 +98,30 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
                 String newName = _editController.text.trim();
                 if (newName.isNotEmpty && newName != _currentDepartmentName) {
                   try {
-                    QuerySnapshot query = await FirebaseFirestore.instance
+                    final oldName = _currentDepartmentName;
+                    final firestore = FirebaseFirestore.instance;
+
+                    final deptQuery = await firestore
                         .collection('departments')
-                        .where('name', isEqualTo: _currentDepartmentName)
+                        .where('name', isEqualTo: oldName)
                         .get();
 
-                    if (query.docs.isNotEmpty) {
-                      await query.docs.first.reference.update({'name': newName});
+                    if (deptQuery.docs.isNotEmpty) {
+                      await deptQuery.docs.first.reference
+                          .update({'name': newName});
+                    }
+
+                    final productsQuery = await firestore
+                        .collection('products')
+                        .where('department', isEqualTo: oldName)
+                        .get();
+
+                    if (productsQuery.docs.isNotEmpty) {
+                      final batch = firestore.batch();
+                      for (final doc in productsQuery.docs) {
+                        batch.update(doc.reference, {'department': newName});
+                      }
+                      await batch.commit();
                     }
 
                     setState(() {
@@ -403,14 +421,14 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
                             ),
                             Expanded(
                               child: Text(
-                                product['sellingPrice1']?.toStringAsFixed(2) ?? '0.00',
+                                invoiceAmount(product['sellingPrice1']),
                                 style: TextStyle(fontSize: 14.sp),
                                 textAlign: TextAlign.center,
                               ),
                             ),
                             Expanded(
                               child: Text(
-                                product['costPrice']?.toStringAsFixed(2) ?? '0.00',
+                                invoiceAmount(product['costPrice']),
                                 style: TextStyle(fontSize: 14.sp),
                                 textAlign: TextAlign.center,
                               ),

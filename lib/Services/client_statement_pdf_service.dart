@@ -183,7 +183,7 @@ class ClientStatementPdfService {
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
               pw.Center(
-                child: rtl('Kareem Store', bold: true, fontSize: 14),
+                child: rtl('أبو مجدي للحدايد والعدد', bold: true, fontSize: 14),
               ),
               pw.SizedBox(height: 8),
               pw.Center(
@@ -343,7 +343,7 @@ class ClientStatementPdfService {
               crossAxisAlignment: pw.CrossAxisAlignment.stretch,
               children: [
                 pw.Center(
-                    child: rtl('Kareem Store', bold: true, fontSize: 12)),
+                    child: rtl('أبو مجدي للحدايد والعدد', bold: true, fontSize: 12)),
                 pw.SizedBox(height: 6),
                 pw.Center(
                     child: rtl(statementHeader, bold: true, fontSize: 14)),

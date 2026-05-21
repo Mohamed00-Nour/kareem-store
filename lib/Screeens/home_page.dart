@@ -75,6 +75,61 @@ class HomePage extends StatelessWidget {
         false;
   }
 
+  /// Confirms leaving a pushed screen (sales, purchases, etc.).
+  static Future<bool> confirmNavigateBack(BuildContext context) async {
+    return await showDialog<bool>(
+          context: context,
+          builder: (context) => AlertDialog(
+            backgroundColor: const Color(0xffead1ac),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(15.0.r),
+            ),
+            title: Text(
+              'الرجوع',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: Colors.black.withOpacity(0.7),
+                fontWeight: FontWeight.bold,
+                fontSize: 20.sp,
+              ),
+            ),
+            content: Text(
+              'هل تريد حقا الرجوع؟ قد تفقد التغييرات غير المحفوظة.',
+              textAlign: TextAlign.right,
+              style: TextStyle(
+                color: Colors.black.withOpacity(0.7),
+                fontSize: 18.sp,
+              ),
+            ),
+            actions: <Widget>[
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: Text(
+                  'لا',
+                  style: TextStyle(
+                    fontSize: 15.sp,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black.withOpacity(0.7),
+                  ),
+                ),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: Text(
+                  'نعم',
+                  style: TextStyle(
+                    fontSize: 15.sp,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black.withOpacity(0.7),
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ) ??
+        false;
+  }
+
   @override
   Widget build(BuildContext context) {
     final FirebaseService firebaseService = FirebaseService();
@@ -84,7 +139,7 @@ class HomePage extends StatelessWidget {
           backgroundColor: Colors.black.withOpacity(0.7),
           title: Row(
             children: [
-              Text('Kareem Store',
+              Text('أبو مجدي للحدايد والعدد',
                   style: TextStyle(
                     color: Colors.white,
                     fontSize: 20.sp,

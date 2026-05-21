@@ -7,16 +7,26 @@ import 'Invoices/All_invoices.dart';
 import 'Invoices/InvoiceDetailPage.dart';
 import 'Data/DataEntryScreen.dart';
 import '../Services/invoice_print_ui.dart';
+import '../Services/invoice_number_utils.dart';
 import '../Services/return_invoice_save_service.dart';
+import '../Services/sales_invoice_update_service.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../Widgets/egypt_phone_field.dart';
+import 'g_Nav.dart';
 import 'home_page.dart';
 
 class DecreaseProductPage extends StatefulWidget {
   /// When true, saves as [returnInvoices] (stock in, reversed profit/sales/box).
   final bool isReturnInvoice;
 
-  const DecreaseProductPage({super.key, this.isReturnInvoice = false});
+  /// Pre-filled invoice for edit mode (sales only). Use [id] or [invoiceId] as root doc id.
+  final Map<String, dynamic>? invoiceToEdit;
+
+  const DecreaseProductPage({
+    super.key,
+    this.isReturnInvoice = false,
+    this.invoiceToEdit,
+  });
 
   @override
   _DecreaseProductPageState createState() => _DecreaseProductPageState();
@@ -32,8 +42,17 @@ void _selectAllField(TextEditingController controller) {
 }
 
 class _DecreaseProductPageState extends State<DecreaseProductPage> {
-  String get _pageTitle =>
-      widget.isReturnInvoice ? 'فواتير المرتجع' : 'المبيعات';
+  String get _pageTitle {
+    if (_isEditing && _editingInvoiceNumber != null) {
+      return 'تعديل فاتورة #$_editingInvoiceNumber';
+    }
+    return widget.isReturnInvoice ? 'فواتير المرتجع' : 'المبيعات';
+  }
+
+  bool get _isEditing =>
+      !widget.isReturnInvoice &&
+      _editingRootInvoiceId != null &&
+      _editingRootInvoiceId!.isNotEmpty;
 
   String get _mainCollection =>
       widget.isReturnInvoice ? 'returnInvoices' : 'invoices';
@@ -58,6 +77,13 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   int _defaultPriceTier = 1;
   bool _barcodeExternal = false;
   Map<String, dynamic>? _lastInvoice;
+  String? _editingRootInvoiceId;
+  String? _editingClientSubDocId;
+  Map<String, dynamic>? _originalInvoice;
+  dynamic _editingInvoiceNumber;
+  String _editingPaymentMethod = 'نقداً';
+  String _editingNotes = '';
+  double _editingInvoiceDiscountAmount = 0.0;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
   void _showClientNameDialog() {
@@ -497,13 +523,51 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     }
   }
 
+  void _applyInvoiceToEdit(Map<String, dynamic> inv) {
+    _editingRootInvoiceId =
+        inv['id']?.toString() ?? inv['invoiceId']?.toString();
+    _editingClientSubDocId = inv['_clientSubDocId']?.toString();
+    _originalInvoice = Map<String, dynamic>.from(inv);
+    _editingInvoiceNumber = inv['invoiceNumber'];
+
+    _clientNameController.text = inv['clientName']?.toString() ?? '';
+    _paidAmountController.text =
+        invoiceNum(inv['paidAmount']).toStringAsFixed(2);
+    _clientBalance = invoiceNum(inv['previousBalance']);
+
+    final date = inv['date'];
+    if (date is Timestamp) {
+      _selectedDate = date.toDate();
+    } else if (date is DateTime) {
+      _selectedDate = date;
+    } else {
+      _selectedDate = DateTime.now();
+    }
+    _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
+
+    _addedProducts.clear();
+    final products = inv['products'] as List<dynamic>? ?? [];
+    for (final p in products) {
+      _addedProducts.add(Map<String, dynamic>.from(p as Map));
+    }
+
+    _editingPaymentMethod = inv['paymentMethod']?.toString() ?? 'نقداً';
+    _editingNotes = inv['notes']?.toString() ?? '';
+    _editingInvoiceDiscountAmount = invoiceNum(inv['invoiceDiscount']);
+    _dataModified = true;
+  }
+
   @override
   void initState() {
     super.initState();
     _fetchProducts();
     _fetchClients();
-    _selectedDate = DateTime.now();
-    _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
+    if (widget.invoiceToEdit != null && !widget.isReturnInvoice) {
+      _applyInvoiceToEdit(widget.invoiceToEdit!);
+    } else {
+      _selectedDate = DateTime.now();
+      _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
+    }
   }
 
   Future<double> _calculateTotalCost() async {
@@ -620,7 +684,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       return;
     }
 
-    if (!_dataModified) {
+    if (!_dataModified && !_isEditing) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم حفظ البيانات بالفعل')),
       );
@@ -632,7 +696,45 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     });
 
     try {
-      if (widget.isReturnInvoice) {
+      if (_isEditing && _originalInvoice != null && _editingRootInvoiceId != null) {
+        final totalSumBeforeDiscount = _calculateTotalSum();
+        await SalesInvoiceUpdateService.updateSalesInvoice(
+          rootInvoiceId: _editingRootInvoiceId!,
+          clientSubInvoiceDocId: _editingClientSubDocId,
+          originalInvoice: _originalInvoice!,
+          newProducts: List<Map<String, dynamic>>.from(_addedProducts),
+          clientName: effectiveClient,
+          selectedDate: _selectedDate,
+          paidAmount: effectivePaid,
+          paymentMethod: paymentMethod,
+          notes: notes,
+          invoiceDiscount: invoiceDiscount,
+          discountIsPercent: discountIsPercent,
+          totalSumBeforeDiscount: totalSumBeforeDiscount,
+        );
+
+        final effectiveDiscountAmt = discountIsPercent
+            ? totalSumBeforeDiscount * invoiceDiscount / 100
+            : invoiceDiscount;
+        final totalSumFinal = totalSumBeforeDiscount - effectiveDiscountAmt;
+        final totalCost = await _calculateTotalCost();
+        final balance = totalSumFinal - effectivePaid;
+
+        _lastInvoice = {
+          ..._originalInvoice!,
+          'id': _editingRootInvoiceId,
+          'clientName': effectiveClient,
+          'date': _selectedDate,
+          'totalSum': totalSumFinal,
+          'profitMargin': totalSumFinal - totalCost,
+          'paidAmount': effectivePaid,
+          'balance': balance,
+          'paymentMethod': paymentMethod,
+          'notes': notes,
+          'invoiceDiscount': effectiveDiscountAmt,
+          'products': List<Map<String, dynamic>>.from(_addedProducts),
+        };
+      } else if (widget.isReturnInvoice) {
         _lastInvoice = await ReturnInvoiceSaveService.save(
           clientName: effectiveClient,
           selectedDate: _selectedDate,
@@ -797,7 +899,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
   void _navigateHome() {
     Navigator.of(context).pushAndRemoveUntil(
-      MaterialPageRoute(builder: (_) => const HomePage()),
+      MaterialPageRoute(builder: (_) => const GNavPage()),
       (route) => false,
     );
   }
@@ -813,7 +915,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             borderRadius: BorderRadius.circular(14.r),
           ),
           title: Text(
-            'تم الحفظ بنجاح',
+            _isEditing ? 'تم تعديل الفاتورة بنجاح' : 'تم الحفظ بنجاح',
             style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
           ),
           content: SingleChildScrollView(
@@ -842,30 +944,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue.shade700,
                       foregroundColor: Colors.white,
-                      padding: EdgeInsets.symmetric(vertical: 10.h),
-                    ),
-                  ),
-                ),
-                SizedBox(height: 8.h),
-                SizedBox(
-                  width: double.infinity,
-                  child: OutlinedButton.icon(
-                    onPressed: () {
-                      final clientName =
-                          invoice['clientName']?.toString() ?? '';
-                      InvoicePrintUi.previewInvoice(
-                        ctx,
-                        invoice,
-                        clientId: clientName.isNotEmpty
-                            ? clientName
-                            : null,
-                      );
-                    },
-                    icon: Icon(Icons.receipt_long,
-                        color: Colors.deepPurple.shade700),
-                    label: const Text('معاينة الطباعة (مؤقت)'),
-                    style: OutlinedButton.styleFrom(
-                      foregroundColor: Colors.deepPurple.shade700,
                       padding: EdgeInsets.symmetric(vertical: 10.h),
                     ),
                   ),
@@ -903,7 +981,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                   child: ElevatedButton.icon(
                     onPressed: () {
                       Navigator.of(ctx).pop();
-                      _navigateHome();
+                      if (_isEditing && context.mounted) {
+                        Navigator.of(context).pop(true);
+                      } else {
+                        _navigateHome();
+                      }
                     },
                     icon: const Icon(Icons.check, color: Colors.white),
                     label: const Text('إنهاء'),
@@ -1469,7 +1551,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             final entry = {
                               'product': product.name,
                               'date': _selectedDate,
-                              'amount': amount.toStringAsFixed(2),
+                              'amount': amount,
                               'sellingPrice1': product.sellingPrice1,
                               'sellingPrice2': product.sellingPrice2,
                               'sellingPrice3': product.sellingPrice3,
@@ -1525,17 +1607,26 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       return;
     }
 
-    String paymentMethod = 'نقداً';
-    double invoiceDiscount = 0.0;
-    bool discountIsPercent = true;
+    String paymentMethod =
+        _isEditing ? _editingPaymentMethod : 'نقداً';
+    double invoiceDiscount =
+        _isEditing ? _editingInvoiceDiscountAmount : 0.0;
+    bool discountIsPercent = !_isEditing;
     String checkoutClient = _clientNameController.text;
-    String notes = '';
+    String notes = _isEditing ? _editingNotes : '';
 
     final TextEditingController paidCtrl = TextEditingController(
-      text: _calculateTotalSum().toStringAsFixed(2),
+      text: _isEditing
+          ? invoiceNum(_originalInvoice?['paidAmount']).toStringAsFixed(2)
+          : _calculateTotalSum().toStringAsFixed(2),
     );
-    final TextEditingController discountCtrl = TextEditingController();
-    final TextEditingController notesCtrl = TextEditingController();
+    final TextEditingController discountCtrl = TextEditingController(
+      text: _isEditing && _editingInvoiceDiscountAmount > 0
+          ? _editingInvoiceDiscountAmount.toStringAsFixed(2)
+          : '',
+    );
+    final TextEditingController notesCtrl =
+        TextEditingController(text: notes);
 
     showModalBottomSheet(
       context: context,
@@ -2478,6 +2569,74 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     );
   }
 
+  Widget _invoiceHeaderCell(
+    String label, {
+    required int flex,
+    TextAlign align = TextAlign.center,
+    bool compact = false,
+  }) {
+    return Expanded(
+      flex: flex,
+      child: Container(
+        margin: EdgeInsets.symmetric(
+          horizontal: compact ? 1.w : 2.w,
+          vertical: compact ? 1.h : 2.h,
+        ),
+        padding: EdgeInsets.symmetric(
+          horizontal: compact ? 2.w : 4.w,
+          vertical: compact ? 4.h : 8.h,
+        ),
+        decoration: BoxDecoration(
+          color: Colors.grey.shade100,
+        ),
+        alignment: align == TextAlign.right ? Alignment.centerRight : Alignment.center,
+        child: Text(
+          label,
+          textAlign: align,
+          style: TextStyle(
+            fontSize: compact ? 11.sp : 12.sp,
+            fontWeight: FontWeight.bold,
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _invoiceValueCell({
+    required int flex,
+    required Widget child,
+    Color? backgroundColor,
+    Alignment alignment = Alignment.center,
+    VoidCallback? onTap,
+    bool compact = false,
+  }) {
+    Widget box = Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: compact ? 1.w : 2.w,
+        vertical: compact ? 1.h : 2.h,
+      ),
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 2.w : 6.w,
+        vertical: compact ? 4.h : 10.h,
+      ),
+      decoration: BoxDecoration(
+        color: backgroundColor ?? Colors.white,
+        border: Border.all(color: Colors.grey.shade400, width: 1),
+        borderRadius: BorderRadius.circular(6.r),
+      ),
+      alignment: alignment,
+      child: child,
+    );
+    if (onTap != null) {
+      box = GestureDetector(
+        onTap: onTap,
+        behavior: HitTestBehavior.opaque,
+        child: box,
+      );
+    }
+    return Expanded(flex: flex, child: box);
+  }
+
   // ─────────────────────────────────────────────
   // build
   // ─────────────────────────────────────────────
@@ -2487,13 +2646,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     double totalQty = _addedProducts.fold(
         0.0, (s, p) => s + (double.tryParse(p['amount'].toString()) ?? 0.0));
 
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: Scaffold(
-        key: _scaffoldKey,
-        backgroundColor: const Color(0xffeeeced),
-        drawer: _buildDrawer(),
-        appBar: AppBar(
+    return WillPopScope(
+      onWillPop: () => HomePage.confirmNavigateBack(context),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Scaffold(
+          key: _scaffoldKey,
+          backgroundColor: const Color(0xffeeeced),
+          drawer: _buildDrawer(),
+          appBar: AppBar(
           backgroundColor: Colors.black.withOpacity(0.7),
           title: Text(_pageTitle,
               style: TextStyle(
@@ -2630,42 +2791,21 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     ]),
                   ),
 
-                // ── Table headers ──
+                // ── Table headers (RTL: تعداد | المنتج | السعر | الكمية | الإجمالي) ──
                 Container(
                   color: Colors.grey.shade200,
                   padding: EdgeInsets.symmetric(
-                      horizontal: 10.w, vertical: 7.h),
-                  child: Row(children: [
-                    SizedBox(width: 28.w),
-                    Expanded(
-                        flex: 3,
-                        child: Text('الإجمالي',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.bold))),
-                    Expanded(
-                        flex: 2,
-                        child: Text('الكمية',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.bold))),
-                    Expanded(
-                        flex: 2,
-                        child: Text('السعر',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.bold))),
-                    Expanded(
-                        flex: 3,
-                        child: Text('المنتج',
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.bold))),
-                  ]),
+                      horizontal: 6.w, vertical: 6.h),
+                  child: Row(
+                    children: [
+                      _invoiceHeaderCell('م', flex: 1),
+                      _invoiceHeaderCell('المنتج', flex: 5, align: TextAlign.right),
+                      _invoiceHeaderCell('السعر', flex: 1, compact: true),
+                      _invoiceHeaderCell('الكمية', flex: 1, compact: true),
+                      _invoiceHeaderCell('الإجمالي', flex: 2, compact: true),
+                      SizedBox(width: 18.w),
+                    ],
+                  ),
                 ),
 
                 // ── Products list ──
@@ -2722,105 +2862,119 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                   ),
                                 );
                               },
-                              child: Container(
-                                margin: EdgeInsets.symmetric(
-                                    horizontal: 8.w, vertical: 3.h),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius:
-                                      BorderRadius.circular(10.r),
-                                  boxShadow: [
-                                    BoxShadow(
-                                        color: Colors.black
-                                            .withOpacity(0.05),
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 2))
-                                  ],
-                                ),
-                                child: Row(children: [
-                                  Container(
-                                    width: 28.w,
-                                    alignment: Alignment.center,
-                                    child: Icon(Icons.drag_handle,
-                                        color: Colors.grey.shade400,
-                                        size: 20.sp),
-                                  ),
-                                  Expanded(
-                                      flex: 3,
-                                      child: Column(children: [
-                                        Text(total.toStringAsFixed(1),
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(
-                                                fontSize: 13.sp,
-                                                fontWeight: FontWeight.bold,
-                                                color: hasDiscount
-                                                    ? Colors
-                                                        .orange.shade700
-                                                    : Colors.black87)),
-                                        if (hasDiscount)
-                                          Text(
-                                            '- ${p['discount']}${p['discountIsPercent'] == true ? '%' : ' ج.م'}',
-                                            style: TextStyle(
-                                                fontSize: 10.sp,
-                                                color: Colors
-                                                    .orange.shade600),
-                                          ),
-                                      ])),
-                                  Expanded(
-                                    flex: 2,
-                                    child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: () =>
-                                          _incrementInvoiceLineQuantity(index),
-                                      child: Container(
-                                        alignment: Alignment.center,
-                                        padding: EdgeInsets.symmetric(
-                                            vertical: 12.h),
-                                        color: Colors.teal.withOpacity(0.08),
-                                        child: Text(
-                                          amount.toStringAsFixed(1),
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                            fontSize: 14.sp,
-                                            fontWeight: FontWeight.bold,
-                                            color: Colors.teal.shade700,
-                                          ),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                    horizontal: 6.w, vertical: 2.h),
+                                child: Row(
+                                  children: [
+                                    _invoiceValueCell(
+                                      flex: 1,
+                                      child: Text(
+                                        '${index + 1}',
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 13.sp,
+                                          fontWeight: FontWeight.bold,
                                         ),
                                       ),
                                     ),
-                                  ),
-                                  Expanded(
-                                      flex: 2,
-                                      child: Text(
-                                          price.toStringAsFixed(1),
-                                          textAlign: TextAlign.center,
-                                          style:
-                                              TextStyle(fontSize: 13.sp))),
-                                  Expanded(
-                                    flex: 3,
-                                    child: Padding(
-                                      padding: EdgeInsets.symmetric(
-                                          vertical: 12.h, horizontal: 6.w),
+                                    _invoiceValueCell(
+                                      flex: 5,
+                                      alignment: Alignment.centerRight,
                                       child: Column(
-                                          crossAxisAlignment:
-                                              CrossAxisAlignment.end,
-                                          children: [
-                                            Text(p['product'],
-                                                textAlign: TextAlign.right,
-                                                style: TextStyle(
-                                                    fontSize: 13.sp,
-                                                    fontWeight:
-                                                        FontWeight.w600)),
-                                            if (barcode.isNotEmpty)
-                                              Text(barcode,
-                                                  textAlign: TextAlign.right,
-                                                  style: TextStyle(
-                                                      fontSize: 10.sp,
-                                                      color: Colors.grey)),
-                                          ]),
+                                        mainAxisSize: MainAxisSize.min,
+                                        crossAxisAlignment:
+                                            CrossAxisAlignment.end,
+                                        children: [
+                                          Text(
+                                            p['product']?.toString() ?? '',
+                                            textAlign: TextAlign.right,
+                                            style: TextStyle(
+                                              fontSize: 10.sp,
+                                              height: 1.2,
+                                              fontWeight: FontWeight.w600,
+                                            ),
+                                            maxLines: 2,
+                                            overflow: TextOverflow.ellipsis,
+                                          ),
+                                          if (barcode.isNotEmpty)
+                                            Text(
+                                              barcode,
+                                              textAlign: TextAlign.right,
+                                              style: TextStyle(
+                                                fontSize: 10.sp,
+                                                color: Colors.grey,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
                                     ),
-                                  ),
-                                ]),
+                                    _invoiceValueCell(
+                                      flex: 1,
+                                      compact: true,
+                                      child: Text(
+                                        price.toStringAsFixed(1),
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(fontSize: 11.sp),
+                                      ),
+                                    ),
+                                    _invoiceValueCell(
+                                      flex: 1,
+                                      compact: true,
+                                      backgroundColor:
+                                          Colors.teal.withOpacity(0.08),
+                                      onTap: () =>
+                                          _incrementInvoiceLineQuantity(
+                                              index),
+                                      child: Text(
+                                        amount.toStringAsFixed(1),
+                                        textAlign: TextAlign.center,
+                                        style: TextStyle(
+                                          fontSize: 11.sp,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.teal.shade700,
+                                        ),
+                                      ),
+                                    ),
+                                    _invoiceValueCell(
+                                      flex: 2,
+                                      compact: true,
+                                      child: Column(
+                                        mainAxisSize: MainAxisSize.min,
+                                        children: [
+                                          Text(
+                                            total.toStringAsFixed(1),
+                                            textAlign: TextAlign.center,
+                                            style: TextStyle(
+                                              fontSize: 11.sp,
+                                              fontWeight: FontWeight.bold,
+                                              color: hasDiscount
+                                                  ? Colors.orange.shade700
+                                                  : Colors.black87,
+                                            ),
+                                          ),
+                                          if (hasDiscount)
+                                            Text(
+                                              '- ${p['discount']}${p['discountIsPercent'] == true ? '%' : ' ج.م'}',
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                fontSize: 9.sp,
+                                                color: Colors.orange.shade600,
+                                              ),
+                                            ),
+                                        ],
+                                      ),
+                                    ),
+                                    SizedBox(
+                                      width: 18.w,
+                                      child: Icon(
+                                        Icons.drag_handle,
+                                        color: Colors.grey.shade400,
+                                        size: 18.sp,
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             );
                           },
@@ -2908,6 +3062,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
               ),
           ],
         ),
+      ),
       ),
     );
   }

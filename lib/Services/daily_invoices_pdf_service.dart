@@ -120,7 +120,7 @@ class DailyInvoicesPdfService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              pw.Center(child: rtl('Kareem Store', bold: true, fontSize: 14)),
+              pw.Center(child: rtl('أبو مجدي للحدايد والعدد', bold: true, fontSize: 14)),
               pw.SizedBox(height: 6),
               pw.Center(child: rtl('فاتورة مبيعات', bold: true, fontSize: 16)),
               pw.SizedBox(height: 4),

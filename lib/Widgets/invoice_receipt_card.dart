@@ -13,7 +13,7 @@ class InvoiceReceiptCard extends StatelessWidget {
   const InvoiceReceiptCard({
     super.key,
     required this.invoice,
-    this.width = 400,
+    this.width = 360,
     this.storeName = 'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
     this.storeAddress = 'كفر الزيات - طنطا - الغربية',
     this.storePhone = '01010573888',
@@ -37,7 +37,7 @@ class InvoiceReceiptCard extends StatelessWidget {
     return Container(
       width: width,
       color: Colors.white,
-      padding: const EdgeInsets.all(16),
+      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -80,74 +80,28 @@ class InvoiceReceiptCard extends StatelessWidget {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ),
-          const Divider(height: 20),
+          const Divider(height: 12),
           _metaRow('النوع : $typeLabel', 'الرقم : ${invoice['invoiceNumber']}'),
           _metaRow('التاريخ : ${when.date}', 'الوقت : ${when.time}'),
-          const Divider(height: 20),
-          const Center(
-            child: Text(
-              'اسم العميل',
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 13),
-            ),
-          ),
-          const SizedBox(height: 4),
+          const Divider(height: 12),
           Center(
             child: Text(
-              invoice['clientName']?.toString() ?? '',
-              style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w600),
+              'اسم العميل : ${invoice['clientName']?.toString() ?? ''}',
+              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
             ),
           ),
-          const SizedBox(height: 10),
-          Row(
-            children: const [
-              Expanded(
-                flex: 3,
-                child: Text('اسم المنتج',
-                    textAlign: TextAlign.left,
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-              ),
-              Expanded(
-                child: Text('الكمية',
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-              ),
-              Expanded(
-                child: Text('السعر',
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-              ),
-              Expanded(
-                child: Text('الإجمالي',
-                    textAlign: TextAlign.center,
-                    style:
-                        TextStyle(fontWeight: FontWeight.bold, fontSize: 12)),
-              ),
-            ],
-          ),
-          const Divider(height: 12),
+          const SizedBox(height: 6),
+          _tableHeader(),
+          const Divider(height: 8),
           ...products.map((p) => _productRow(p)),
-          const Divider(height: 12),
-          Row(
-            children: [
-              const Expanded(flex: 3, child: SizedBox()),
-              Expanded(
-                child: Text(
-                  _formatQty(qtySum),
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(
-                    fontWeight: FontWeight.bold,
-                    fontSize: 12,
-                  ),
-                ),
-              ),
-              const Expanded(child: SizedBox()),
-              const Expanded(child: SizedBox()),
-            ],
+          const Divider(height: 8),
+          Center(
+            child: Text(
+              _formatQty(qtySum),
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
+            ),
           ),
-          const Divider(height: 16),
+          const Divider(height: 10),
           _totalRow('الرصيد السابق', _formatMoney(previousBalance)),
           _totalRow('إجمالي ف.', _formatMoney(totalSum), bold: true),
           _totalRow('المدفوع', _formatMoney(paid)),
@@ -182,102 +136,89 @@ class InvoiceReceiptCard extends StatelessWidget {
     );
   }
 
+  Widget _tableHeader() {
+    return const Row(
+      children: [
+        Expanded(
+          flex: 2,
+          child: Text('الإجمالي',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+        ),
+        Expanded(
+          flex: 2,
+          child: Text('السعر',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+        ),
+        Expanded(
+          child: Text('الكمية',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+        ),
+        Expanded(
+          flex: 4,
+          child: Text('المنتج',
+              textAlign: TextAlign.right,
+              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
+        ),
+      ],
+    );
+  }
+
   Widget _productRow(Map<String, dynamic> p) {
     final name = p['product']?.toString() ?? '';
-    final qty = p['amount']?.toString() ?? '0';
-    final price = _formatMoney(_num(p['selectedPrice']));
-    final total = _formatMoney(_num(p['total']));
-    final split = _hasMixedArabicAndLatin(name) || name.length > 28;
-
-    if (!split) {
-      return Padding(
-        padding: const EdgeInsets.only(bottom: 4),
-        child: Row(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: [
-            Expanded(
-              flex: 3,
-              child: Text(name,
-                  textAlign: TextAlign.left,
-                  style: const TextStyle(fontSize: 11)),
-            ),
-            Expanded(
-              child: Text(qty,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 11)),
-            ),
-            Expanded(
-              child: Text(price,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 11)),
-            ),
-            Expanded(
-              child: Text(total,
-                  textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 11)),
-            ),
-          ],
-        ),
-      );
-    }
+    final qty = _formatQty(_num(p['amount']));
+    final price = _formatMoneyCompact(_num(p['selectedPrice']));
+    final total = _formatMoneyCompact(_num(p['total']));
 
     return Padding(
-      padding: const EdgeInsets.only(bottom: 6),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
+      padding: const EdgeInsets.only(bottom: 2),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
         children: [
-          Text(
-            name,
-            textAlign: TextAlign.right,
-            style: const TextStyle(fontSize: 11, fontWeight: FontWeight.w500),
+          Expanded(
+            flex: 2,
+            child: Text(total,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 10)),
           ),
-          const SizedBox(height: 2),
-          Row(
-            children: [
-              const Expanded(flex: 3, child: SizedBox()),
-              Expanded(
-                child: Text(qty,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 11)),
-              ),
-              Expanded(
-                child: Text(price,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 11)),
-              ),
-              Expanded(
-                child: Text(total,
-                    textAlign: TextAlign.center,
-                    style: const TextStyle(fontSize: 11)),
-              ),
-            ],
+          Expanded(
+            flex: 2,
+            child: Text(price,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 10)),
+          ),
+          Expanded(
+            child: Text(qty,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 10)),
+          ),
+          Expanded(
+            flex: 4,
+            child: Text(
+              name,
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              textAlign: TextAlign.right,
+              style: const TextStyle(fontSize: 10),
+            ),
           ),
         ],
       ),
     );
   }
 
-  static bool _hasMixedArabicAndLatin(String text) {
-    var hasArabic = false;
-    var hasLatin = false;
-    for (final code in text.runes) {
-      if ((code >= 0x0600 && code <= 0x06FF) ||
-          (code >= 0x0750 && code <= 0x077F) ||
-          (code >= 0xFB50 && code <= 0xFDFF)) {
-        hasArabic = true;
-      } else if ((code >= 0x0041 && code <= 0x005A) ||
-          (code >= 0x0061 && code <= 0x007A) ||
-          (code >= 0x0030 && code <= 0x0039)) {
-        hasLatin = true;
-      }
-      if (hasArabic && hasLatin) return true;
+  static String _formatMoneyCompact(double value) {
+    if (value == value.roundToDouble()) {
+      return NumberFormat('#,##0', 'en_US').format(value);
     }
-    return false;
+    return _money.format(value);
   }
 
   Widget _totalRow(String label, String value, {bool bold = false}) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 3),
+      padding: const EdgeInsets.symmetric(vertical: 2),
       child: Row(
         mainAxisAlignment: MainAxisAlignment.spaceBetween,
         children: [
@@ -304,7 +245,12 @@ class InvoiceReceiptCard extends StatelessWidget {
 
   static String _formatMoney(double value) => _money.format(value);
 
-  static String _formatQty(double value) => value.toStringAsFixed(1);
+  static String _formatQty(double value) {
+    if (value == value.roundToDouble()) {
+      return value.toStringAsFixed(0);
+    }
+    return value.toStringAsFixed(1);
+  }
 
   static double _num(dynamic value) {
     if (value is num) return value.toDouble();

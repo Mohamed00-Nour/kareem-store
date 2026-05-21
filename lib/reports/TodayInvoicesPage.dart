@@ -79,6 +79,7 @@ class _TodayInvoicesPageState extends State<TodayInvoicesPage> {
         start: _startDate!,
         end: _endDate!,
       );
+      SalesInvoicesFetchService.sortNewestFirst(invoices);
       if (!mounted) return;
       setState(() {
         _invoices = invoices;
@@ -116,13 +117,16 @@ class _TodayInvoicesPageState extends State<TodayInvoicesPage> {
         ' — ${_rangeEnd.day}/${_rangeEnd.month}/${_rangeEnd.year}';
   }
 
-  void _openInvoiceDetails(Map<String, dynamic> invoice) {
-    Navigator.push(
+  Future<void> _openInvoiceDetails(Map<String, dynamic> invoice) async {
+    final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (_) => InvoiceDetailPage(invoice: invoice),
       ),
     );
+    if (changed == true) {
+      _loadInvoices();
+    }
   }
 
   Future<void> _printSingle(Map<String, dynamic> invoice) async {

@@ -179,13 +179,16 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     );
   }
 
-  void _navigateToInvoiceDetail(Map<String, dynamic> invoice) {
-    Navigator.push(
+  Future<void> _navigateToInvoiceDetail(Map<String, dynamic> invoice) async {
+    final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => InvoiceDetailPage(invoice: invoice),
       ),
     );
+    if (changed == true) {
+      _fetchInvoices();
+    }
   }
 
   void _handleDeleteAction(int index) {

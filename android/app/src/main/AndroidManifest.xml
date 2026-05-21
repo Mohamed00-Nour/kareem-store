@@ -20,7 +20,7 @@
         <package android:name="com.whatsapp.w4b"/>
     </queries>
     <application
-        android:label="Kareem Store"
+        android:label="أبو مجدي للحدايد والعدد"
         android:name="${applicationName}"
         android:icon="@mipmap/ic_launcher">
         <activity

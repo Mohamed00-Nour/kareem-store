@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../EditProductPage.dart';
+import '../Services/invoice_number_utils.dart';
 import 'TotalInventoryValuePage.dart';
 
 class ProductListPage extends StatefulWidget {
@@ -16,7 +17,13 @@ class _ProductListPageState extends State<ProductListPage> {
   String _searchQuery = "";
   final TextEditingController _searchController = TextEditingController();
   bool _showLowStock = false;
+  bool _showOnDemand = false;
+  bool _showCostPrice = true;
   String _userRole = 'user';
+
+  bool _isOnDemand(Map<String, dynamic> product) {
+    return product['onDemand'] == true;
+  }
   Future<void> _loadUserRole() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -167,14 +174,34 @@ void initState() {
                 style: TextStyle(fontSize: 16.sp, color: Colors.white)),
           ),
           TextButton(
+            onPressed: () => setState(() => _showCostPrice = !_showCostPrice),
+            child: Text(
+              _showCostPrice ? 'إخفاء التكلفة' : 'إظهار التكلفة',
+              style: TextStyle(fontSize: 14.sp, color: Colors.white),
+            ),
+          ),
+          TextButton(
             onPressed: () {
               setState(() {
+                _showOnDemand = false;
                 _showLowStock = !_showLowStock;
               });
             },
             child: Text(
               _showLowStock ? 'عرض الكل' : 'عرض النواقص',
-              style: TextStyle(fontSize: 16.sp, color: Colors.white),
+              style: TextStyle(fontSize: 14.sp, color: Colors.white),
+            ),
+          ),
+          TextButton(
+            onPressed: () {
+              setState(() {
+                _showLowStock = false;
+                _showOnDemand = !_showOnDemand;
+              });
+            },
+            child: Text(
+              _showOnDemand ? 'عرض الكل' : 'حسب الطلب',
+              style: TextStyle(fontSize: 14.sp, color: Colors.white),
             ),
           ),
         ],
@@ -231,14 +258,15 @@ void initState() {
                     textAlign: TextAlign.center,
                   ),
                 ),
-                Expanded(
-                  child: Text(
-                    'التكلفة',
-                    style:
-                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
+                if (_showCostPrice)
+                  Expanded(
+                    child: Text(
+                      'التكلفة',
+                      style: TextStyle(
+                          fontSize: 16.sp, fontWeight: FontWeight.bold),
+                      textAlign: TextAlign.center,
+                    ),
                   ),
-                ),
                 Expanded(
                   child: Text(
                     'الإسم',
@@ -279,12 +307,23 @@ void initState() {
                         return productName.contains(_searchQuery.toLowerCase());
                       }).toList();
 
-                final displayedProducts = _showLowStock
+                final displayedProducts = _showOnDemand
                     ? filteredProducts.where((doc) {
                         final product = doc.data() as Map<String, dynamic>;
-                        return product['quantity'] <= product['alertAmount'];
+                        return _isOnDemand(product);
                       }).toList()
-                    : filteredProducts;
+                    : _showLowStock
+                        ? filteredProducts.where((doc) {
+                            final product =
+                                doc.data() as Map<String, dynamic>;
+                            return !_isOnDemand(product) &&
+                                product['quantity'] <= product['alertAmount'];
+                          }).toList()
+                        : filteredProducts.where((doc) {
+                            final product =
+                                doc.data() as Map<String, dynamic>;
+                            return !_isOnDemand(product);
+                          }).toList();
 
                 return ListView.builder(
                   itemCount: displayedProducts.length,
@@ -303,7 +342,7 @@ void initState() {
                           children: [
                             Expanded(
                               child: Text(
-                                product['quantity']?.toStringAsFixed(2) ?? '0',
+                                invoiceAmount(product['quantity']),
                                 style: TextStyle(
                                   fontSize: 14.sp,
                                   color: (product['quantity'] <=
@@ -316,20 +355,19 @@ void initState() {
                             ),
                             Expanded(
                               child: Text(
-                                product['sellingPrice1']?.toStringAsFixed(2) ??
-                                    '0.00',
+                                invoiceAmount(product['sellingPrice1']),
                                 style: TextStyle(fontSize: 14.sp),
                                 textAlign: TextAlign.center,
                               ),
                             ),
-                            Expanded(
-                              child: Text(
-                                product['costPrice']?.toStringAsFixed(2) ??
-                                    '0.00',
-                                style: TextStyle(fontSize: 14.sp),
-                                textAlign: TextAlign.center,
+                            if (_showCostPrice)
+                              Expanded(
+                                child: Text(
+                                  invoiceAmount(product['costPrice']),
+                                  style: TextStyle(fontSize: 14.sp),
+                                  textAlign: TextAlign.center,
+                                ),
                               ),
-                            ),
                             Expanded(
                               child: Text(
                                 product['name'] ?? 'No Name',

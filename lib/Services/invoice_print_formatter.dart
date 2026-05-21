@@ -43,18 +43,18 @@ class _ReceiptColumns {
     if (w <= 32) {
       return _ReceiptColumns(
         width: w,
-        product: 13,
-        qty: 5,
-        price: 6,
-        total: 8,
+        total: 7,
+        price: 5,
+        qty: 4,
+        product: w - 16,
       );
     }
     return _ReceiptColumns(
       width: w,
-      product: 20,
-      qty: 6,
-      price: 8,
-      total: w - 34,
+      total: 8,
+      price: 7,
+      qty: 5,
+      product: w - 20,
     );
   }
 }
@@ -102,9 +102,11 @@ class InvoicePrintFormatter {
     ));
     line(sep);
 
-    // ── Customer ──
-    line(_center('اسم العميل', cols.width));
-    line(_center(invoice['clientName']?.toString() ?? '', cols.width));
+    // ── Customer (one line) ──
+    final clientName = invoice['clientName']?.toString().trim() ?? '';
+    if (clientName.isNotEmpty) {
+      line(_center('اسم العميل : $clientName', cols.width));
+    }
 
     if (settings.showCustomerAddressAndPhone) {
       final address = context.clientAddress?.trim() ?? '';
@@ -119,13 +121,13 @@ class InvoicePrintFormatter {
 
     line(sep);
 
-    // ── Items table (left → right: اسم المنتج | الكمية | السعر | الإجمالي) ──
+    // ── Items (RTL: الإجمالي | السعر | الكمية | المنتج) — one line per item ──
     line(_tableRow(
       cols,
-      'اسم المنتج',
-      'الكمية',
-      'السعر',
-      'الإجمالي',
+      total: 'الإجمالي',
+      price: 'السعر',
+      qty: 'الكمية',
+      product: 'المنتج',
     ));
     line(sep);
 
@@ -135,10 +137,10 @@ class InvoicePrintFormatter {
       if (item is! Map) continue;
       final map = Map<String, dynamic>.from(item);
       final name = map['product']?.toString() ?? '';
-      final qtyStr = map['amount']?.toString() ?? '0';
-      qtySum += _num(qtyStr);
-      final price = _formatMoney(_num(map['selectedPrice']));
-      final total = _formatMoney(_num(map['total']));
+      final qtyStr = _formatQty(_num(map['amount']));
+      qtySum += _num(map['amount']);
+      final price = _formatMoneyCompact(_num(map['selectedPrice']));
+      final total = _formatMoneyCompact(_num(map['total']));
 
       _writeProductRow(
         line,
@@ -147,28 +149,28 @@ class InvoicePrintFormatter {
         qty: qtyStr,
         price: price,
         total: total,
+        separateNameLine: settings.printProductNameOnSeparateLine,
       );
 
-      final details = context.productDetailsByName[name] ?? {};
-      _appendProductExtras(
-        buffer,
-        pad: pad,
-        cols: cols,
-        map: map,
-        details: details,
-        settings: settings,
-        labels: labels,
-      );
+      if (settings.showProductDescription ||
+          settings.showProductNumberOnA4 ||
+          settings.showExpiryDateOnA4 ||
+          settings.showProductImageOnInvoice) {
+        final details = context.productDetailsByName[name] ?? {};
+        _appendProductExtras(
+          buffer,
+          pad: pad,
+          cols: cols,
+          map: map,
+          details: details,
+          settings: settings,
+          labels: labels,
+        );
+      }
     }
 
     line(sep);
-    line(_tableRow(
-      cols,
-      '',
-      _formatQty(qtySum),
-      '',
-      '',
-    ));
+    line(_center(_formatQty(qtySum), cols.width));
     line(sep);
 
     // ── Totals ──
@@ -280,7 +282,7 @@ class InvoicePrintFormatter {
     return _twoColumn(width, '$label :', value);
   }
 
-  /// Mixed Arabic/Latin in one row breaks thermal column alignment — use two lines.
+  /// One compact line per item (like narrow thermal receipt). Optional split only if enabled in settings.
   static void _writeProductRow(
     void Function(String text) line, {
     required _ReceiptColumns cols,
@@ -288,49 +290,39 @@ class InvoicePrintFormatter {
     required String qty,
     required String price,
     required String total,
+    required bool separateNameLine,
   }) {
-    if (_shouldSplitProductRow(name, cols.product)) {
-      for (final wrapLine in _wrapProductName(name, cols.width)) {
-        line(wrapLine);
+    if (separateNameLine && name.length > cols.product) {
+      for (final wrapLine in _wrapProductName(name, cols.product)) {
+        line(_fitLine(wrapLine, cols.width));
       }
-      line(_tableRow(cols, '', qty, price, total));
-    } else {
-      line(_tableRow(cols, name, qty, price, total));
+      line(_tableRow(
+        cols,
+        total: total,
+        price: price,
+        qty: qty,
+        product: '',
+      ));
+      return;
     }
+    line(_tableRow(
+      cols,
+      total: total,
+      price: price,
+      qty: qty,
+      product: _fitCell(name, cols.product),
+    ));
   }
 
-  static bool _shouldSplitProductRow(String name, int productColWidth) {
-    if (name.isEmpty) return false;
-    if (name.length > productColWidth) return true;
-    return _hasMixedArabicAndLatin(name);
+  static String _fitCell(String text, int width) {
+    if (text.length <= width) return text;
+    if (width <= 1) return text.substring(0, width);
+    return text.substring(0, width - 1);
   }
 
-  static bool _hasMixedArabicAndLatin(String text) {
-    var hasArabic = false;
-    var hasLatin = false;
-    for (final code in text.runes) {
-      if (_isArabicRune(code)) {
-        hasArabic = true;
-      } else if (_isLatinOrDigitRune(code)) {
-        hasLatin = true;
-      }
-      if (hasArabic && hasLatin) return true;
-    }
-    return false;
-  }
-
-  static bool _isArabicRune(int code) {
-    return (code >= 0x0600 && code <= 0x06FF) ||
-        (code >= 0x0750 && code <= 0x077F) ||
-        (code >= 0x08A0 && code <= 0x08FF) ||
-        (code >= 0xFB50 && code <= 0xFDFF) ||
-        (code >= 0xFE70 && code <= 0xFEFF);
-  }
-
-  static bool _isLatinOrDigitRune(int code) {
-    return (code >= 0x0041 && code <= 0x005A) ||
-        (code >= 0x0061 && code <= 0x007A) ||
-        (code >= 0x0030 && code <= 0x0039);
+  static String _fitLine(String text, int width) {
+    if (text.length <= width) return text;
+    return text.substring(0, width);
   }
 
   static List<String> _wrapProductName(String name, int maxWidth) {
@@ -351,16 +343,16 @@ class InvoicePrintFormatter {
   }
 
   static String _tableRow(
-    _ReceiptColumns cols,
-    String product,
-    String qty,
-    String price,
-    String total,
-  ) {
-    return _col(product, cols.product) +
-        _col(qty, cols.qty, right: true) +
+    _ReceiptColumns cols, {
+    required String product,
+    required String qty,
+    required String price,
+    required String total,
+  }) {
+    return _col(total, cols.total, right: true) +
         _col(price, cols.price, right: true) +
-        _col(total, cols.total, right: true);
+        _col(qty, cols.qty, right: true) +
+        _col(product, cols.product);
   }
 
   static String _col(String text, int width, {bool right = false}) {
@@ -371,9 +363,16 @@ class InvoicePrintFormatter {
 
   static String _formatMoney(double value) => _money.format(value);
 
+  static String _formatMoneyCompact(double value) {
+    if (value == value.roundToDouble()) {
+      return NumberFormat('#,##0', 'en_US').format(value);
+    }
+    return _money.format(value);
+  }
+
   static String _formatQty(double value) {
     if (value == value.roundToDouble()) {
-      return value.toStringAsFixed(1);
+      return value.toStringAsFixed(0);
     }
     return value.toStringAsFixed(1);
   }
