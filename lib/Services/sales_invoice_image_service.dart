@@ -16,11 +16,16 @@ class SalesInvoiceImageService {
         textDirection: TextDirection.rtl,
         child: Material(
           color: Colors.white,
-          child: InvoiceReceiptCard(
-            invoice: invoice,
-            storeName: settings.receiptStoreName,
-            storeAddress: settings.receiptStoreAddress,
-            storePhone: settings.receiptStorePhone,
+          child: OverflowBox(
+            alignment: Alignment.topCenter,
+            minHeight: 0,
+            maxHeight: double.infinity,
+            child: InvoiceReceiptCard(
+              invoice: invoice,
+              storeName: settings.receiptStoreName,
+              storeAddress: settings.receiptStoreAddress,
+              storePhone: settings.receiptStorePhone,
+            ),
           ),
         ),
       ),

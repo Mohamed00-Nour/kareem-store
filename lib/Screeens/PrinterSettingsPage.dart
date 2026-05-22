@@ -443,6 +443,252 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
     ));
   }
 
+  String _formatPreviewQty(dynamic value) {
+    final n = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '') ?? 0.0;
+    return n.toStringAsFixed(1);
+  }
+
+  String _previewMoney(dynamic value) {
+    final n = value is num
+        ? value.toDouble()
+        : double.tryParse(value?.toString() ?? '') ?? 0.0;
+    if (n == n.roundToDouble()) return n.toStringAsFixed(0);
+    return n.toStringAsFixed(2);
+  }
+
+  Widget _previewTableCell(
+    String text, {
+    bool header = false,
+    TextAlign align = TextAlign.center,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 6.h),
+      child: Text(
+        text,
+        textAlign: align,
+        style: TextStyle(
+          fontSize: header ? 12.sp : 11.sp,
+          fontWeight: header ? FontWeight.bold : FontWeight.normal,
+        ),
+      ),
+    );
+  }
+
+  Widget _buildProductsPreviewTable() {
+    final products =
+        InvoicePrintFormatter.sampleSalesInvoice()['products'] as List<dynamic>;
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: SingleChildScrollView(
+        scrollDirection: Axis.horizontal,
+        child: Table(
+          border: TableBorder.all(color: Colors.grey.shade400),
+          defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+          columnWidths: const {
+            0: FlexColumnWidth(3),
+            1: IntrinsicColumnWidth(),
+            2: IntrinsicColumnWidth(),
+            3: IntrinsicColumnWidth(),
+          },
+          children: [
+            TableRow(
+              decoration: const BoxDecoration(color: Color(0xFFF2F2F2)),
+              children: [
+                _previewTableCell('اسم المنتج', header: true, align: TextAlign.right),
+                _previewTableCell('الكمية', header: true),
+                _previewTableCell('السعر', header: true),
+                _previewTableCell('الإجمالي', header: true),
+              ],
+            ),
+            for (final raw in products)
+              if (raw is Map)
+                TableRow(
+                  decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+                  children: [
+                    _previewTableCell(
+                      raw['product']?.toString() ?? '',
+                      align: TextAlign.right,
+                    ),
+                    _previewTableCell(_formatPreviewQty(raw['amount'])),
+                    _previewTableCell(_previewMoney(raw['selectedPrice'])),
+                    _previewTableCell(_previewMoney(raw['total'])),
+                  ],
+                ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInlineReceiptPreview() {
+    final settings = _currentSettings();
+    final previewText =
+        InvoicePrintFormatter.buildSampleSalesInvoicePreview(settings);
+
+    return Container(
+      padding: EdgeInsets.all(12.w),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(8.r),
+        border: Border.all(color: Colors.orange.withOpacity(0.55), width: 1.2),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Icon(Icons.receipt_long, color: Colors.orange.shade800, size: 22.sp),
+              SizedBox(width: 8.w),
+              Expanded(
+                child: Text(
+                  'معاينة الإيصال',
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+              ),
+              IconButton(
+                tooltip: 'تحديث المعاينة',
+                onPressed: () => setState(() {}),
+                icon: const Icon(Icons.refresh),
+              ),
+              TextButton(
+                onPressed: _showReceiptPreview,
+                child: Text('نافذة كاملة', style: TextStyle(fontSize: 12.sp)),
+              ),
+            ],
+          ),
+          Text(
+            'معاينة الشاشة أدناه. على الطابعة تُطبع الأصناف كجدول بحدود مع صورة الشعار',
+            style: TextStyle(fontSize: 12.sp, color: Colors.black54),
+          ),
+          SizedBox(height: 10.h),
+          Center(
+            child: Image.asset(
+              'assets/Magdy store.png',
+              height: 60.h,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => Text(
+                '[شعار المحل]',
+                style: TextStyle(fontSize: 12.sp, color: Colors.grey),
+              ),
+            ),
+          ),
+          SizedBox(height: 6.h),
+          _buildMetaPreviewTable(),
+          SizedBox(height: 8.h),
+          _buildProductsPreviewTable(),
+          SizedBox(height: 8.h),
+          _buildSummaryPreviewTable(),
+          SizedBox(height: 12.h),
+          Text(
+            'نص تقريبي للمعاينة (الطباعة الفعلية = جدول بحدود)',
+            style: TextStyle(
+              fontSize: 12.sp,
+              fontWeight: FontWeight.w600,
+              color: Colors.black87,
+            ),
+          ),
+          SizedBox(height: 6.h),
+          Container(
+            constraints: BoxConstraints(maxHeight: 260.h),
+            padding: EdgeInsets.all(10.w),
+            decoration: BoxDecoration(
+              color: const Color(0xfffaf8f5),
+              border: Border.all(color: Colors.grey.shade300),
+              borderRadius: BorderRadius.circular(6.r),
+            ),
+            child: SingleChildScrollView(
+              child: SelectableText(
+                previewText,
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  fontFamily: 'monospace',
+                  fontSize: 11.sp,
+                  height: 1.32,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildMetaPreviewTable() {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Table(
+        border: TableBorder.all(color: Colors.grey.shade400),
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        children: [
+          TableRow(
+            decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+            children: [
+              _previewTableCell('النوع: نقد', align: TextAlign.center),
+              _previewTableCell('الرقم: 1234', align: TextAlign.center),
+            ],
+          ),
+          TableRow(
+            decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+            children: [
+              _previewTableCell('التاريخ: 21-05-2026', align: TextAlign.center),
+              _previewTableCell('الوقت: 14:30:00', align: TextAlign.center),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildSummaryPreviewTable() {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Table(
+        border: TableBorder.all(color: Colors.grey.shade400),
+        defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+        columnWidths: const {
+          0: FlexColumnWidth(3),
+          1: FlexColumnWidth(2),
+        },
+        children: [
+          TableRow(
+            decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+            children: [
+              _previewTableCell('الرصيد السابق', align: TextAlign.right),
+              _previewTableCell('500.00', align: TextAlign.center),
+            ],
+          ),
+          TableRow(
+            decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+            children: [
+              _previewTableCell('إجمالي ف.', align: TextAlign.right, header: true),
+              _previewTableCell('1,250.00', align: TextAlign.center, header: true),
+            ],
+          ),
+          TableRow(
+            decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+            children: [
+              _previewTableCell('المدفوع', align: TextAlign.right),
+              _previewTableCell('1,000.00', align: TextAlign.center),
+            ],
+          ),
+          TableRow(
+            decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+            children: [
+              _previewTableCell('الرصيد الحالي (عليكم)', align: TextAlign.right, header: true),
+              _previewTableCell('750.00', align: TextAlign.center, header: true),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
+
   void _showReceiptPreview() {
     final settings = _currentSettings();
     final previewText =
@@ -473,9 +719,11 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
                   style: TextStyle(fontSize: 12.sp, color: Colors.black54),
                 ),
                 SizedBox(height: 10.h),
+                _buildProductsPreviewTable(),
+                SizedBox(height: 10.h),
                 Container(
                   width: double.infinity,
-                  constraints: BoxConstraints(maxHeight: 420.h),
+                  constraints: BoxConstraints(maxHeight: 360.h),
                   padding:
                       EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
                   decoration: BoxDecoration(
@@ -496,8 +744,8 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
                       textAlign: TextAlign.right,
                       style: TextStyle(
                         fontFamily: 'monospace',
-                        fontSize: 13.sp,
-                        height: 1.35,
+                        fontSize: 12.sp,
+                        height: 1.32,
                         color: Colors.black87,
                       ),
                     ),
@@ -643,6 +891,8 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
                         ),
                       ),
                     ),
+                    SizedBox(height: 12.h),
+                    _buildInlineReceiptPreview(),
                     if (_connectionType == PrinterConnectionType.bluetooth) ...[
                       SizedBox(height: 10.h),
                       Row(

@@ -33,7 +33,10 @@ class _ExpensesDetailsState extends State<ExpensesDetails> {
         .orderBy('time', descending: true)
         .snapshots()
         .map((snapshot) => snapshot.docs
-            .map((doc) => Expenses.fromMap(doc.data() as Map<String, dynamic>))
+            .map((doc) => Expenses.fromMap(
+              doc.data() as Map<String, dynamic>,
+              id: doc.id,
+            ))
             .toList());
   }
 
@@ -197,7 +200,7 @@ class _ExpensesDetailsState extends State<ExpensesDetails> {
                                   .collection('expenses')
                                   .doc()
                                   .id,
-                              name: nameController.text,
+                              category: nameController.text.trim(),
                               date: selectedDate ?? '',
                               value: valueController.text,
                             );
@@ -214,7 +217,8 @@ class _ExpensesDetailsState extends State<ExpensesDetails> {
                                 .collection('expenses')
                                 .doc(expense.id)
                                 .update({
-                              'name': nameController.text,
+                              'category': nameController.text.trim(),
+                              'name': nameController.text.trim(),
                               'date': selectedDate ?? '',
                               'value': valueController.text,
                               'time': FieldValue.serverTimestamp(),

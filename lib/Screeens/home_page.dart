@@ -14,6 +14,7 @@ import 'DecreaseProductPage.dart';
 import 'ReturnProductPage.dart';
 import 'Data/DataEntryScreen.dart';
 import 'PrinterSettingsPage.dart';
+import '../expenses/ExpensesPage.dart';
 
 class HomePage extends StatelessWidget {
   /// When false, back is handled by [GNavPage] (return to home tab, then exit).
@@ -137,30 +138,36 @@ class HomePage extends StatelessWidget {
     final scaffold = Scaffold(
         appBar: AppBar(
           backgroundColor: Colors.black.withOpacity(0.7),
-          title: Row(
-            children: [
-              Text('أبو مجدي للحدايد والعدد',
-                  style: TextStyle(
-                    color: Colors.white,
-                    fontSize: 20.sp,
-                    fontWeight: FontWeight.bold,
-                  )),
-              // const Spacer(),
-              // GestureDetector(
-              //   onTap: () {
-              //     Navigator.push(
-              //       context,
-              //       MaterialPageRoute(builder: (context) => DataEntryScreen()),
-              //     );
-              //   },
-              //   child: Icon(
-              //     Icons.add,
-              //     color: Colors.white,
-              //   ),
-              // ),
-            ],
+          centerTitle: false,
+          title: Directionality(
+            textDirection: TextDirection.ltr,
+            child: Row(
+              children: [
+                Image.asset(
+                  'assets/Magdy store.png',
+                  height: 40.h,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+                Expanded(
+                  child: Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      'أبو مجدي للحدايد والعدد',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 18.sp,
+                        fontWeight: FontWeight.bold,
+                      ),
+                      overflow: TextOverflow.ellipsis,
+                      maxLines: 1,
+                    ),
+                  ),
+                ),
+              ],
+            ),
           ),
-          centerTitle: true,
         ),
         backgroundColor: const Color(0xffeeeced),
         body: SingleChildScrollView(
@@ -521,7 +528,11 @@ class HomePage extends StatelessWidget {
                   ],
                 ),
               ),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.spaceEvenly,
+                children: [
               CardWidget(
+    
                             imagePath: 'assets/images/minus.png',
                             text: 'فواتير المرتجع',
                             onPressed: () {
@@ -530,9 +541,20 @@ class HomePage extends StatelessWidget {
                                       const ReturnProductPage()));
                             },
                           ),
+                          CardWidget(
+                            imagePath: 'assets/images/expense.png',
+                            text: 'المصروفات',
+                            onPressed: () {
+                              Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (context) =>
+                                      const ExpensesPage()));
+                            },
+                          ),
             ],
           ),
+          ],
         ),
+      ),
     );
 
     if (!handleBackButton) return scaffold;

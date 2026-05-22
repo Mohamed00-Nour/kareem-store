@@ -1,6 +1,7 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 
+import '../models/invoice_receipt_print_data.dart';
 import '../models/paired_bluetooth_device.dart';
 import '../models/printer_settings.dart';
 
@@ -120,6 +121,20 @@ class ThermalPrintChannel {
           false;
     } on PlatformException catch (e) {
       if (kDebugMode) debugPrint('Write string failed: $e');
+      return false;
+    }
+  }
+
+  /// Prints a sales receipt with a drawn table (native Android renderer).
+  static Future<bool> printReceiptTable(InvoiceReceiptPrintData data) async {
+    try {
+      return await _channel.invokeMethod<bool>(
+            'printreceipt',
+            data.toMethodArgs(),
+          ) ??
+          false;
+    } on PlatformException catch (e) {
+      if (kDebugMode) debugPrint('Print receipt table failed: $e');
       return false;
     }
   }

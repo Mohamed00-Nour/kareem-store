@@ -14,7 +14,8 @@ class WhatsappInvoiceShareService {
     final dateStr = _formatDate(invoice['date']);
     final total = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final balance = _num(invoice['balance']);
+    final previousBalance = _num(invoice['previousBalance']);
+    final clientBalance = previousBalance + total - paid;
 
     final buffer = StringBuffer();
     if (clientName.isNotEmpty) {
@@ -25,7 +26,7 @@ class WhatsappInvoiceShareService {
     buffer.writeln('بإجمالي ${total.toStringAsFixed(2)} ج.م');
     buffer.writeln('المدفوع ${paid.toStringAsFixed(2)} ج.م');
     buffer.writeln(
-        'الرصيد الحالي عليكم ${balance.toStringAsFixed(2)} ج.م');
+        'الرصيد الحالي عليكم ${clientBalance.toStringAsFixed(2)} ج.م');
     return buffer.toString().trim();
   }
 

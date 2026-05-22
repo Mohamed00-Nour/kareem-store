@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
 import '../models/invoice_labels.dart';
+import '../models/invoice_receipt_print_data.dart';
 import '../models/printer_settings.dart';
 
 class InvoicePrintContext {
@@ -25,6 +26,7 @@ class _InvoiceWhen {
 
 class _ReceiptColumns {
   final int width;
+  final int rowNum;
   final int product;
   final int qty;
   final int price;
@@ -32,6 +34,7 @@ class _ReceiptColumns {
 
   const _ReceiptColumns({
     required this.width,
+    required this.rowNum,
     required this.product,
     required this.qty,
     required this.price,
@@ -43,17 +46,19 @@ class _ReceiptColumns {
     if (w <= 32) {
       return _ReceiptColumns(
         width: w,
-        total: 7,
+        rowNum: 3,
+        total: 6,
         price: 5,
-        qty: 4,
-        product: w - 16,
+        qty: 3,
+        product: w - 17,
       );
     }
     return _ReceiptColumns(
       width: w,
-      total: 8,
-      price: 7,
-      qty: 5,
+      rowNum: 3,
+      total: 7,
+      price: 6,
+      qty: 4,
       product: w - 20,
     );
   }
@@ -121,30 +126,34 @@ class InvoicePrintFormatter {
 
     line(sep);
 
-    // ── Items (RTL: الإجمالي | السعر | الكمية | المنتج) — one line per item ──
+    // ── Items (RTL: الإجمالي | السعر | الكمية | المنتج | م) — one line per item ──
     line(_tableRow(
       cols,
+      rowNum: 'م',
       total: 'الإجمالي',
       price: 'السعر',
       qty: 'الكمية',
       product: 'المنتج',
     ));
-    line(sep);
+    line(_tableRule(cols));
 
     final products = invoice['products'] as List<dynamic>? ?? [];
     var qtySum = 0.0;
+    var textRowIndex = 0;
     for (final item in products) {
       if (item is! Map) continue;
       final map = Map<String, dynamic>.from(item);
       final name = map['product']?.toString() ?? '';
       final qtyStr = _formatQty(_num(map['amount']));
       qtySum += _num(map['amount']);
+      textRowIndex++;
       final price = _formatMoneyCompact(_num(map['selectedPrice']));
       final total = _formatMoneyCompact(_num(map['total']));
 
       _writeProductRow(
         line,
         cols: cols,
+        rowNum: '$textRowIndex',
         name: name,
         qty: qtyStr,
         price: price,
@@ -200,6 +209,138 @@ class InvoicePrintFormatter {
     }
 
     return buffer.toString();
+  }
+
+  /// Payload for native bordered-table thermal print (Bluetooth).
+  static InvoiceReceiptPrintData buildReceiptPrintData({
+    required Map<String, dynamic> invoice,
+    required PrinterSettings settings,
+    InvoicePrintContext context = const InvoicePrintContext(),
+  }) {
+    final labels = settings.labels;
+    final cols = _ReceiptColumns.forPaper(settings.paperSize);
+    final when = _parseDateTime(invoice['date']);
+    final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
+    final invoiceNo = invoice['invoiceNumber']?.toString() ?? '';
+    final title = invoice['invoiceType']?.toString() == 'return'
+        ? 'فاتورة مرتجع'
+        : labels.invoiceTitle;
+
+    final centered = <String>[
+      'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
+      'كفر الزيات - طنطا - الغربية',
+      title,
+      'كريم حماد: 01068462105 - 01207968495',
+      'مجدي حماد: 01010573888 - 01201820045',
+    ];
+
+    final metaTable = <List<String>>[
+      ['الرقم', invoiceNo, 'النوع', typeLabel],
+      ['التاريخ', when.date, 'الوقت', when.time],
+    ];
+
+    final body = <String>[];
+    final clientName = invoice['clientName']?.toString().trim() ?? '';
+    if (clientName.isNotEmpty) {
+      body.add(_center('اسم العميل : $clientName', cols.width));
+    }
+    if (settings.showCustomerAddressAndPhone) {
+      final address = context.clientAddress?.trim() ?? '';
+      final phone = context.clientPhone?.trim() ?? '';
+      if (address.isNotEmpty) {
+        body.add(_center('${labels.address}: $address', cols.width));
+      }
+      if (phone.isNotEmpty) {
+        body.add(_center('${labels.phone}: $phone', cols.width));
+      }
+    }
+
+    final tableRows = <InvoiceReceiptTableRow>[];
+    final products = invoice['products'] as List<dynamic>? ?? [];
+    var qtySum = 0.0;
+    var rowIndex = 0;
+    for (final item in products) {
+      if (item is! Map) continue;
+      final map = Map<String, dynamic>.from(item);
+      final name = map['product']?.toString() ?? '';
+      qtySum += _num(map['amount']);
+      rowIndex++;
+      final extras = <String>[];
+      if (settings.showProductDescription ||
+          settings.showProductNumberOnA4 ||
+          settings.showExpiryDateOnA4 ||
+          settings.showProductImageOnInvoice) {
+        final details = context.productDetailsByName[name] ?? {};
+        final extraBuffer = StringBuffer();
+        _appendProductExtras(
+          extraBuffer,
+          pad: '',
+          cols: cols,
+          map: map,
+          details: details,
+          settings: settings,
+          labels: labels,
+        );
+        for (final line in extraBuffer.toString().split('\n')) {
+          final t = line.trim();
+          if (t.isNotEmpty) extras.add(t);
+        }
+      }
+      tableRows.add(
+        InvoiceReceiptTableRow(
+          rowNum: '$rowIndex',
+          product: name,
+          qty: _formatQty(_num(map['amount'])),
+          price: _formatMoney(_num(map['selectedPrice'])),
+          total: _formatMoney(_num(map['total'])),
+          extraLines: extras,
+        ),
+      );
+    }
+
+    final previous = _num(invoice['previousBalance']);
+    final totalSum = _num(invoice['totalSum']);
+    final paid = _num(invoice['paidAmount']);
+    final balance = _num(invoice['balance']);
+
+    final summaryTable = <List<String>>[
+      [_formatMoney(previous), labels.previousBalance],
+      [_formatMoney(totalSum), 'إجمالي ف.'],
+      [_formatMoney(paid), labels.paid],
+      [_formatMoney(balance), 'الرصيد الحالي (عليكم)'],
+    ];
+
+    final trailing = <String>[];
+    if (settings.showTaxQrOnInvoice) {
+      trailing.add(_center('QR الضريبة: #$invoiceNo', cols.width));
+    }
+    final notes = invoice['notes']?.toString() ?? '';
+    if (notes.isNotEmpty) {
+      trailing.add(_center('ملاحظات: $notes', cols.width));
+    }
+
+    return InvoiceReceiptPrintData(
+      paperMm: settings.paperSize.widthMm,
+      escFontSize: _escSizeFromFont(settings.fontSize),
+      logoAssetPath: 'assets/Magdy store.png',
+      centeredLines: centered,
+      metaTableRows: metaTable,
+      bodyLines: body,
+      tableHeaders: const ['م', 'اسم المنتج', 'الكمية', 'السعر', 'الإجمالي'],
+      tableRows: tableRows,
+      qtyTotalLine: _center(_formatQty(qtySum), cols.width),
+      summaryTableRows: summaryTable,
+      trailingLines: trailing,
+      salesFooter: settings.salesInvoiceFooter,
+    );
+  }
+
+  static int _escSizeFromFont(int fontSize) {
+    if (fontSize >= 40) return 5;
+    if (fontSize >= 35) return 4;
+    if (fontSize >= 30) return 3;
+    if (fontSize >= 25) return 2;
+    return 1;
   }
 
   static List<String> _headerLines(PrinterSettings settings) {
@@ -282,22 +423,26 @@ class InvoicePrintFormatter {
     return _twoColumn(width, '$label :', value);
   }
 
-  /// One compact line per item (like narrow thermal receipt). Optional split only if enabled in settings.
+  /// Table row: long names wrap on full-width lines, then qty/price/total in columns.
   static void _writeProductRow(
     void Function(String text) line, {
     required _ReceiptColumns cols,
+    required String rowNum,
     required String name,
     required String qty,
     required String price,
     required String total,
     required bool separateNameLine,
   }) {
-    if (separateNameLine && name.length > cols.product) {
-      for (final wrapLine in _wrapProductName(name, cols.product)) {
+    final needsWrap =
+        separateNameLine || name.length > cols.product;
+    if (needsWrap) {
+      for (final wrapLine in _wrapProductName(name, cols.width)) {
         line(_fitLine(wrapLine, cols.width));
       }
       line(_tableRow(
         cols,
+        rowNum: rowNum,
         total: total,
         price: price,
         qty: qty,
@@ -307,6 +452,7 @@ class InvoicePrintFormatter {
     }
     line(_tableRow(
       cols,
+      rowNum: rowNum,
       total: total,
       price: price,
       qty: qty,
@@ -344,15 +490,25 @@ class InvoicePrintFormatter {
 
   static String _tableRow(
     _ReceiptColumns cols, {
+    required String rowNum,
     required String product,
     required String qty,
     required String price,
     required String total,
   }) {
-    return _col(total, cols.total, right: true) +
-        _col(price, cols.price, right: true) +
-        _col(qty, cols.qty, right: true) +
-        _col(product, cols.product);
+    return '${_col(total, cols.total, right: true)}|'
+        '${_col(price, cols.price, right: true)}|'
+        '${_col(qty, cols.qty, right: true)}|'
+        '${_col(product, cols.product)}|'
+        '${_col(rowNum, cols.rowNum, right: true)}';
+  }
+
+  static String _tableRule(_ReceiptColumns cols) {
+    return '${'-' * cols.total}+'
+        '${'-' * cols.price}+'
+        '${'-' * cols.qty}+'
+        '${'-' * cols.product}+'
+        '${'-' * cols.rowNum}';
   }
 
   static String _col(String text, int width, {bool right = false}) {
@@ -361,7 +517,16 @@ class InvoicePrintFormatter {
     return right ? t.padLeft(width) : t.padRight(width);
   }
 
-  static String _formatMoney(double value) => _money.format(value);
+  static String _formatMoney(double value) {
+    if (value == value.roundToDouble()) {
+      return NumberFormat('#,##0', 'en_US').format(value);
+    }
+    final s = _money.format(value);
+    if (s.endsWith('0') && s.contains('.')) {
+      return s.substring(0, s.length - 1);
+    }
+    return s;
+  }
 
   static String _formatMoneyCompact(double value) {
     if (value == value.roundToDouble()) {
@@ -425,22 +590,60 @@ class InvoicePrintFormatter {
     return buffer.toString().trimRight();
   }
 
-  static Map<String, dynamic> _sampleSalesInvoice() {
+  /// Sample invoice for preview / test print (6 items with long names).
+  static Map<String, dynamic> sampleSalesInvoice() {
     return {
-      'invoiceNumber': 6,
+      'invoiceNumber': 1006,
       'date': DateTime(2024, 2, 26, 14, 49, 5),
-      'clientName': 'عيد مطروح',
+      'clientName': 'عيد مطروح للتجارة والتوريدات',
       'paymentMethod': 'آجل',
-      'previousBalance': 0.0,
-      'totalSum': 25760.0,
-      'paidAmount': 0.0,
-      'balance': 6470.80,
+      'previousBalance': 1250.0,
+      'totalSum': 28025.0,
+      'paidAmount': 5000.0,
+      'balance': 24275.0,
+      'notes': 'معاينة — أصناف بأسماء طويلة للاختبار',
       'products': [
         {
-          'product': 'كيلو شمبر كمبيوتر',
-          'amount': '300',
-          'selectedPrice': 50.0,
-          'total': 15000.0,
+          'product':
+              'ماسورة حديد مجلفن قطر 2 بوصة طول 6 متر مصنع حديد مصر درجة أولى',
+          'amount': '12',
+          'selectedPrice': 850.0,
+          'total': 10200.0,
+        },
+        {
+          'product':
+              'علبة مسامير ستانلس 304 مقاس 8 ملم 50 قطعة للاستخدام الصناعي والورش',
+          'amount': '5',
+          'selectedPrice': 320.0,
+          'total': 1600.0,
+        },
+        {
+          'product':
+              'صاج مجلفن أبيض سميك للأسقف والحوائط عرض 1.25 متر طول 3 متر',
+          'amount': '20',
+          'selectedPrice': 450.0,
+          'total': 9000.0,
+        },
+        {
+          'product':
+              'بلف سلكة لحام كهربائي ألماني أصلي للمعدات الثقيلة والمصانع',
+          'amount': '3',
+          'selectedPrice': 1200.0,
+          'total': 3600.0,
+        },
+        {
+          'product':
+              'عدد يدوي طرمبة مياه نحاس داخل وخارج للمنازل والمزارع ضمان سنة',
+          'amount': '8',
+          'selectedPrice': 275.0,
+          'total': 2200.0,
+        },
+        {
+          'product':
+              'كوع بلاستيك بلد-sokta مواسير صرف صحي 160 ملم 90 درجة ضغط عالي',
+          'amount': '15',
+          'selectedPrice': 95.0,
+          'total': 1425.0,
         },
       ],
     };
@@ -449,7 +652,7 @@ class InvoicePrintFormatter {
   /// Sample sales invoice using current label/footer/toggle settings.
   static String buildSampleSalesInvoicePreview(PrinterSettings settings) {
     final body = format(
-      invoice: _sampleSalesInvoice(),
+      invoice: sampleSalesInvoice(),
       settings: settings,
       context: const InvoicePrintContext(),
     );
@@ -470,7 +673,7 @@ class InvoicePrintFormatter {
     buffer.writeln('── اختبار الطابعة ──');
     buffer.writeln(buildPrinterTestPreview(settings));
     buffer.writeln();
-    buffer.writeln('── فاتورة مبيعات (نموذج) ──');
+    buffer.writeln('── فاتورة مبيعات (6 أصناف — أسماء طويلة) ──');
     buffer.write(buildSampleSalesInvoicePreview(settings));
     buffer.writeln();
     buffer.writeln('══════════════════════════════');

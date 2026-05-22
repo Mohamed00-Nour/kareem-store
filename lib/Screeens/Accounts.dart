@@ -4,7 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../Widgets/main-cards.dart';
 import 'AppartmentsDetails.dart';
 import 'Borrow.dart';
-import 'ExpensesDetails.dart';
+import '../expenses/ExpensesPage.dart';
 import 'RequestSpareParts.dart';
 import 'SparePartsDetails.dart';
 import 'medicines.dart';
@@ -45,11 +45,11 @@ class Accounts extends StatelessWidget {
                         },
                       ),
                       CardWidget(
-                        imagePath: 'assets/images/paper-pin.png',
-                        text: 'النثريات',
+                        imagePath: 'assets/images/expense.png',
+                        text: 'المصروفات',
                         onPressed: () {
                           Navigator.of(context).push(MaterialPageRoute(
-                              builder: (context) => ExpensesDetails()));
+                              builder: (context) => const ExpensesPage()));
                         },
                       ),
                       CardWidget(

@@ -26,7 +26,7 @@ class InvoiceReceiptCard extends StatelessWidget {
     final previousBalance = _num(invoice['previousBalance']);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final balance = _num(invoice['balance']);
+    final clientBalance = previousBalance + totalSum - paid;
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
     final qtySum = products.fold<double>(
@@ -42,37 +42,30 @@ class InvoiceReceiptCard extends StatelessWidget {
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          if (storeName.trim().isNotEmpty)
-            Center(
-              child: Text(
-                storeName.trim(),
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 15,
-                  fontWeight: FontWeight.bold,
-                ),
-              ),
+          Center(
+            child: Image.asset(
+              'assets/Magdy store.png',
+              width: width * 0.38,
+              fit: BoxFit.contain,
+              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
             ),
-          if (storeAddress.trim().isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Center(
-              child: Text(
-                storeAddress.trim(),
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 12),
-              ),
+          ),
+          const SizedBox(height: 4),
+          const Center(
+            child: Text(
+              'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
             ),
-          ],
-          if (storePhone.trim().isNotEmpty) ...[
-            const SizedBox(height: 2),
-            Center(
-              child: Text(
-                storePhone.trim(),
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 12),
-              ),
+          ),
+          const SizedBox(height: 2),
+          const Center(
+            child: Text(
+              'كفر الزيات - طنطا - الغربية',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11, color: Colors.black54),
             ),
-          ],
+          ),
           const SizedBox(height: 6),
           const Center(
             child: Text(
@@ -80,10 +73,24 @@ class InvoiceReceiptCard extends StatelessWidget {
               style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
             ),
           ),
-          const Divider(height: 12),
-          _metaRow('النوع : $typeLabel', 'الرقم : ${invoice['invoiceNumber']}'),
-          _metaRow('التاريخ : ${when.date}', 'الوقت : ${when.time}'),
-          const Divider(height: 12),
+          const SizedBox(height: 4),
+          const Center(
+            child: Text(
+              'كريم حماد: 01068462105 - 01207968495',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11),
+            ),
+          ),
+          const Center(
+            child: Text(
+              'مجدي حماد: 01010573888 - 01201820045',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 11),
+            ),
+          ),
+          const SizedBox(height: 8),
+          _metaTable(typeLabel, invoice['invoiceNumber']?.toString() ?? '', when),
+          const SizedBox(height: 6),
           Center(
             child: Text(
               'اسم العميل : ${invoice['clientName']?.toString() ?? ''}',
@@ -91,25 +98,9 @@ class InvoiceReceiptCard extends StatelessWidget {
             ),
           ),
           const SizedBox(height: 6),
-          _tableHeader(),
-          const Divider(height: 8),
-          ...products.map((p) => _productRow(p)),
-          const Divider(height: 8),
-          Center(
-            child: Text(
-              _formatQty(qtySum),
-              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
-            ),
-          ),
-          const Divider(height: 10),
-          _totalRow('الرصيد السابق', _formatMoney(previousBalance)),
-          _totalRow('إجمالي ف.', _formatMoney(totalSum), bold: true),
-          _totalRow('المدفوع', _formatMoney(paid)),
-          _totalRow(
-            'الرصيد الحالي (عليكم)',
-            _formatMoney(balance),
-            bold: true,
-          ),
+          _productsTable(products, qtySum),
+          const SizedBox(height: 8),
+          _summaryTable(previousBalance, totalSum, paid, clientBalance),
           if ((invoice['notes']?.toString() ?? '').trim().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
@@ -123,89 +114,84 @@ class InvoiceReceiptCard extends StatelessWidget {
     );
   }
 
-  Widget _metaRow(String right, String left) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 4),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(right, style: const TextStyle(fontSize: 12)),
-          Text(left, style: const TextStyle(fontSize: 12)),
-        ],
-      ),
-    );
-  }
-
-  Widget _tableHeader() {
-    return const Row(
-      children: [
-        Expanded(
-          flex: 2,
-          child: Text('الإجمالي',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
-        ),
-        Expanded(
-          flex: 2,
-          child: Text('السعر',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
-        ),
-        Expanded(
-          child: Text('الكمية',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
-        ),
-        Expanded(
-          flex: 4,
-          child: Text('المنتج',
-              textAlign: TextAlign.right,
-              style: TextStyle(fontWeight: FontWeight.bold, fontSize: 11)),
-        ),
-      ],
-    );
-  }
-
-  Widget _productRow(Map<String, dynamic> p) {
-    final name = p['product']?.toString() ?? '';
-    final qty = _formatQty(_num(p['amount']));
-    final price = _formatMoneyCompact(_num(p['selectedPrice']));
-    final total = _formatMoneyCompact(_num(p['total']));
-
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 2),
-      child: Row(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            flex: 2,
-            child: Text(total,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 10)),
-          ),
-          Expanded(
-            flex: 2,
-            child: Text(price,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 10)),
-          ),
-          Expanded(
-            child: Text(qty,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 10)),
-          ),
-          Expanded(
-            flex: 4,
+  Widget _productsTable(List<Map<String, dynamic>> products, double qtySum) {
+    final headers = ['الإجمالي', 'السعر', 'الكمية', 'اسم المنتج', 'م'];
+    final headerCells = headers
+        .map(
+          (h) => Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
             child: Text(
-              name,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              textAlign: TextAlign.right,
-              style: const TextStyle(fontSize: 10),
+              h,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontWeight: FontWeight.bold, fontSize: 11),
             ),
           ),
-        ],
-      ),
+        )
+        .toList();
+
+    final productRows = products.asMap().entries.map((entry) {
+      final index = entry.key + 1;
+      final p = entry.value;
+      final name = p['product']?.toString() ?? '';
+      final qty = _formatQty(_num(p['amount']));
+      final price = _formatMoneyCompact(_num(p['selectedPrice']));
+      final total = _formatMoneyCompact(_num(p['total']));
+      final cells = [total, price, qty, name, '$index'];
+      return TableRow(
+        children: cells.map((val) {
+          return Padding(
+            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+            child: Text(
+              val,
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 10),
+            ),
+          );
+        }).toList(),
+      );
+    }).toList();
+
+    Widget _cell(String text, {bool bold = false}) => Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
+          child: Text(
+            text,
+            textAlign: TextAlign.center,
+            style: TextStyle(
+              fontSize: bold ? 11 : 10,
+              fontWeight: bold ? FontWeight.bold : FontWeight.normal,
+            ),
+          ),
+        );
+
+    final totalRow = TableRow(
+      decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+      children: [
+        _cell(''),
+        _cell(''),
+        _cell(_formatQty(qtySum), bold: true),
+        _cell('إجمالي الكميات', bold: true),
+        _cell(''),
+      ],
+    );
+
+    return Table(
+      border: TableBorder.all(color: Colors.grey.shade400),
+      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      columnWidths: const {
+        0: FlexColumnWidth(2),
+        1: FlexColumnWidth(2),
+        2: FlexColumnWidth(1.2),
+        3: FlexColumnWidth(3.5),
+        4: FlexColumnWidth(0.8),
+      },
+      children: [
+        TableRow(
+          decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+          children: headerCells,
+        ),
+        ...productRows,
+        totalRow,
+      ],
     );
   }
 
@@ -216,28 +202,86 @@ class InvoiceReceiptCard extends StatelessWidget {
     return _money.format(value);
   }
 
-  Widget _totalRow(String label, String value, {bool bold = false}) {
+  Widget _metaTable(String typeLabel, String invoiceNo, _InvoiceWhen when) {
+    return Table(
+      border: TableBorder.all(color: Colors.grey.shade400),
+      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      children: [
+        TableRow(
+          decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+          children: [
+            _metaCell('النوع: $typeLabel'),
+            _metaCell('الرقم: $invoiceNo'),
+          ],
+        ),
+        TableRow(
+          decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+          children: [
+            _metaCell('التاريخ: ${when.date}'),
+            _metaCell('الوقت: ${when.time}'),
+          ],
+        ),
+      ],
+    );
+  }
+
+  Widget _metaCell(String text) {
     return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 2),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.spaceBetween,
-        children: [
-          Text(
-            '$label :',
+      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        style: const TextStyle(fontSize: 11),
+      ),
+    );
+  }
+
+  Widget _summaryTable(
+      double previousBalance, double totalSum, double paid, double balance) {
+    return Table(
+      border: TableBorder.all(color: Colors.grey.shade400),
+      defaultVerticalAlignment: TableCellVerticalAlignment.middle,
+      columnWidths: const {
+        0: FlexColumnWidth(3),
+        1: FlexColumnWidth(2),
+      },
+      children: [
+        _summaryTableRow('الرصيد السابق', _formatMoney(previousBalance)),
+        _summaryTableRow('إجمالي ف.', _formatMoney(totalSum), bold: true),
+        _summaryTableRow('المدفوع', _formatMoney(paid)),
+        _summaryTableRow(
+            'الرصيد الحالي (عليكم)', _formatMoney(balance), bold: true),
+      ],
+    );
+  }
+
+  TableRow _summaryTableRow(String label, String value, {bool bold = false}) {
+    return TableRow(
+      decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Text(
+            label,
+            textAlign: TextAlign.right,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: bold ? FontWeight.bold : FontWeight.w500,
             ),
           ),
-          Text(
+        ),
+        Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+          child: Text(
             value,
+            textAlign: TextAlign.center,
             style: TextStyle(
-              fontSize: 13,
+              fontSize: 12,
               fontWeight: bold ? FontWeight.bold : FontWeight.w600,
             ),
           ),
-        ],
-      ),
+        ),
+      ],
     );
   }
 

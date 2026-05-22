@@ -5,6 +5,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../Widgets/date_range_selector.dart';
+import '../expenses/expense_service.dart';
 import 'TodayInvoicesPage.dart';
 
 class SalesReportPage extends StatefulWidget {
@@ -21,6 +22,7 @@ class _SalesReportPageState extends State<SalesReportPage> {
 
   Map<String, double>? _result;
   double? _buyingTotal;
+  double _periodExpenses = 0;
 
   @override
   void initState() {
@@ -105,6 +107,14 @@ class _SalesReportPageState extends State<SalesReportPage> {
         buyingTotal += (doc.data()['totalSum'] ?? 0.0).toDouble();
       }
 
+      final expensesSnap =
+          await FirebaseFirestore.instance.collection('expenses').get();
+      final periodExpenses = ExpenseService.sumExpensesDocs(
+        expensesSnap.docs,
+        start: start,
+        end: end,
+      );
+
       if (!mounted) return;
       setState(() {
         _result = {
@@ -113,8 +123,11 @@ class _SalesReportPageState extends State<SalesReportPage> {
           'totalPaid': totalPaid,
           'totalBalance': totalBalance,
           'invoiceCount': invoiceCount.toDouble(),
+          'grossProfit': totalProfit,
+          'netProfit': totalProfit - periodExpenses,
         };
         _buyingTotal = buyingTotal;
+        _periodExpenses = periodExpenses;
         _loading = false;
       });
     } catch (e) {
@@ -227,9 +240,21 @@ class _SalesReportPageState extends State<SalesReportPage> {
                                     _result!['totalSales']!.toStringAsFixed(2),
                                 unit: 'ج.م'),
                             _SummaryRow(
-                                label: 'إجمالي الأرباح',
+                                label: 'هامش الربح (قبل المصروفات)',
                                 value:
-                                    _result!['totalProfit']!.toStringAsFixed(2),
+                                    (_result!['grossProfit'] ?? _result!['totalProfit']!)
+                                        .toStringAsFixed(2),
+                                unit: 'ج.م'),
+                            _SummaryRow(
+                                label: 'المصروفات',
+                                value: _periodExpenses.toStringAsFixed(2),
+                                unit: 'ج.م',
+                                isDebt: true),
+                            _SummaryRow(
+                                label: 'صافي الربح (بعد المصروفات)',
+                                value:
+                                    (_result!['netProfit'] ?? _result!['totalProfit']!)
+                                        .toStringAsFixed(2),
                                 unit: 'ج.م',
                                 highlight: true),
                             _SummaryRow(
@@ -261,8 +286,9 @@ class _SalesReportPageState extends State<SalesReportPage> {
                           color: Colors.green,
                           children: [
                             _SummaryRow(
-                                label: 'صافي الربح (ربح - مشتريات)',
-                                value: (_result!['totalProfit']! -
+                                label: 'صافي الربح (بعد المصروفات والمشتريات)',
+                                value: ((_result!['netProfit'] ??
+                                            _result!['totalProfit']!) -
                                         _buyingTotal!)
                                     .toStringAsFixed(2),
                                 unit: 'ج.م',

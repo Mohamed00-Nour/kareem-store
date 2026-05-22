@@ -190,6 +190,35 @@ class BluetoothThermalHandler(
                     }
                 }
 
+                "printreceipt" -> {
+                    if (outputStream == null) {
+                        result.success(false)
+                        return
+                    }
+                    try {
+                        val receiptPayload =
+                            ReceiptTableRenderer.parsePayload(call.arguments)
+                        if (receiptPayload == null) {
+                            result.success(false)
+                            return
+                        }
+                        val stream = outputStream!!
+                        applyPaperLayout(stream, receiptPayload.paperMm)
+                        val renderer = ReceiptTableRenderer(context)
+                        val bitmap = renderer.render(receiptPayload)
+                        printBitmapEscPos(stream, bitmap)
+                        if (!bitmap.isRecycled) {
+                            bitmap.recycle()
+                        }
+                        stream.flush()
+                        result.success(true)
+                    } catch (e: Exception) {
+                        Log.e(TAG, "printreceipt: ${e.message}")
+                        closeConnection()
+                        result.success(false)
+                    }
+                }
+
                 else -> result.notImplemented()
             }
         } catch (e: Throwable) {

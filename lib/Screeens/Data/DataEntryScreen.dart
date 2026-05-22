@@ -33,6 +33,7 @@ class _DataEntryScreenState extends State<DataEntryScreen> {
   List<String> _departments = [];
   String? _selectedDepartment;
   bool _onDemand = false;
+  bool _retail = false;
 
   bool _isLoading = false;
   File? _selectedImage;
@@ -98,13 +99,6 @@ Future<void> _addDepartment() async {
 }
 void _addProduct() async {
   if (_formKey.currentState!.validate()) {
-    if (_selectedDepartment == null) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('يرجى اختيار قسم')),
-      );
-      return;
-    }
-
     String productName = _productNameController.text.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
 
     // Check if the product already exists in the local list
@@ -121,7 +115,7 @@ void _addProduct() async {
       id: productName,
       randomNumber: random.nextInt(1000000),
       name: productName,
-      department: _selectedDepartment!,
+      department: _selectedDepartment ?? '',
       sellingPrice1: double.parse(_sellingPrice1Controller.text),
       sellingPrice2: double.parse(_sellingPrice2Controller.text),
       sellingPrice3: double.parse(_sellingPrice3Controller.text),
@@ -129,6 +123,7 @@ void _addProduct() async {
       quantity: int.parse(_quantityController.text),
       alertAmount: int.parse(_alertAmountController.text),
       onDemand: _onDemand,
+      retail: _retail,
       image: _selectedImage?.path,
     );
 
@@ -145,6 +140,7 @@ void _addProduct() async {
       _selectedImage = null;
       _selectedDepartment = null;
       _onDemand = false;
+      _retail = false;
     });
   }
 }
@@ -227,7 +223,7 @@ Future<void> _saveData() async {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        Text('القسم',
+        Text('القسم (اختياري)',
             style: TextStyle(
                 fontSize: 18.sp,
                 fontWeight: FontWeight.bold,
@@ -255,15 +251,9 @@ Future<void> _saveData() async {
                       });
                     },
                     decoration: InputDecoration(
-                      hintText: 'اختر القسم',
+                      hintText: 'اختر القسم (اختياري)',
                       border: InputBorder.none,
                     ),
-                    validator: (value) {
-                      if (value == null || value.isEmpty) {
-                        return 'يرجى اختيار قسم';
-                      }
-                      return null;
-                    },
                   ),
                 ),
               ),
@@ -392,23 +382,51 @@ Future<void> _saveData() async {
             ],
           ),
           _buildDepartmentDropdown(),
-          CheckboxListTile(
-            title: Text(
-              'حسب الطلب',
-              style: TextStyle(
-                fontSize: 16.sp,
-                fontWeight: FontWeight.bold,
-                color: Colors.black.withOpacity(0.7),
+          Row(
+            children: [
+              Expanded(
+                child: CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    'حسب الطلب',
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black.withOpacity(0.7),
+                    ),
+                  ),
+                  value: _onDemand,
+                  activeColor: Colors.black.withOpacity(0.7),
+                  onChanged: (value) {
+                    setState(() {
+                      _onDemand = value ?? false;
+                    });
+                  },
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
               ),
-            ),
-            value: _onDemand,
-            activeColor: Colors.black.withOpacity(0.7),
-            onChanged: (value) {
-              setState(() {
-                _onDemand = value ?? false;
-              });
-            },
-            controlAffinity: ListTileControlAffinity.leading,
+              Expanded(
+                child: CheckboxListTile(
+                  contentPadding: EdgeInsets.zero,
+                  title: Text(
+                    'قطاعي',
+                    style: TextStyle(
+                      fontSize: 16.sp,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.black.withOpacity(0.7),
+                    ),
+                  ),
+                  value: _retail,
+                  activeColor: Colors.black.withOpacity(0.7),
+                  onChanged: (value) {
+                    setState(() {
+                      _retail = value ?? false;
+                    });
+                  },
+                  controlAffinity: ListTileControlAffinity.leading,
+                ),
+              ),
+            ],
           ),
           Row(
             children: [
@@ -506,6 +524,7 @@ class Product {
   int quantity;
   int alertAmount;
   bool onDemand;
+  bool retail;
   String? image;
 
   Product({
@@ -520,6 +539,7 @@ class Product {
     required this.quantity,
     required this.alertAmount,
     this.onDemand = false,
+    this.retail = false,
     this.image,
   });
 
@@ -536,6 +556,7 @@ class Product {
       'quantity': quantity,
       'alertAmount': alertAmount,
       'onDemand': onDemand,
+      'retail': retail,
       'image': image,
     };
   }

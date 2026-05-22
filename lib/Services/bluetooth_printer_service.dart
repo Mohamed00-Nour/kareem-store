@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/paired_bluetooth_device.dart';
 import 'app_error_logger.dart';
+import '../models/invoice_receipt_print_data.dart';
 import '../models/printer_settings.dart';
 import 'bluetooth_permission_service.dart';
 import 'invoice_print_formatter.dart';
@@ -165,12 +166,30 @@ class BluetoothPrinterService {
     if (settings.connectionType != PrinterConnectionType.bluetooth) {
       return false;
     }
-    final text = InvoicePrintFormatter.format(
+    final receipt = InvoicePrintFormatter.buildReceiptPrintData(
       invoice: invoice,
       settings: settings,
       context: context,
     );
-    return printText(text, settings: settings);
+    return printReceiptTable(receipt, settings: settings);
+  }
+
+  static Future<bool> printReceiptTable(
+    InvoiceReceiptPrintData receipt, {
+    required PrinterSettings settings,
+  }) async {
+    if (!await _ensureConnected(settings)) return false;
+
+    for (var copy = 0; copy < settings.invoiceCopies; copy++) {
+      if (!await ThermalPrintChannel.initPaperLayout(settings.paperSize)) {
+        return false;
+      }
+      if (!await ThermalPrintChannel.printReceiptTable(receipt)) {
+        return false;
+      }
+      if (!await _finishReceipt(settings)) return false;
+    }
+    return true;
   }
 
   static Future<bool> printText(

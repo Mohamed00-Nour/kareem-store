@@ -61,7 +61,12 @@ class PreviousMonthSummaryScreen extends StatelessWidget {
                           return Text('Error: ${snapshot.error}');
                         } else {
                           final data = snapshot.data!;
-                          return Row(
+                          final gross = data['grossProfitMargin'] ?? data['totalProfitMargin']!;
+                          final expenses = data['totalExpenses'] ?? 0.0;
+                          final net = data['totalProfitMargin']!;
+                          return Column(
+                            children: [
+                              Row(
                             crossAxisAlignment: CrossAxisAlignment.center,
                             mainAxisAlignment: MainAxisAlignment.spaceAround,
                             children: [
@@ -71,7 +76,7 @@ class PreviousMonthSummaryScreen extends StatelessWidget {
                                   crossAxisAlignment: CrossAxisAlignment.start,
                                   children: [
                                     Text(
-                                      'إجمالي الربح',
+                                      'صافي الربح',
                                       style: TextStyle(
                                         fontSize: 15.sp,
                                         color: Colors.black.withOpacity(0.7),
@@ -80,10 +85,11 @@ class PreviousMonthSummaryScreen extends StatelessWidget {
                                     Row(
                                       children: [
                                         Text(
-                                          '${data['totalProfitMargin']!.toStringAsFixed(1)}',
+                                          '${net.toStringAsFixed(1)}',
                                           style: TextStyle(
                                             fontWeight: FontWeight.bold,
                                             fontSize: 15.sp,
+                                            color: Colors.green.shade800,
                                           ),
                                         ),
                                         SizedBox(width: 5.w),
@@ -126,6 +132,55 @@ class PreviousMonthSummaryScreen extends StatelessWidget {
                                           style: TextStyle(
                                             fontWeight: FontWeight.normal,
                                             fontSize: 15.sp,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                              Padding(
+                                padding: EdgeInsets.symmetric(horizontal: 10.w),
+                                child: Row(
+                                  mainAxisAlignment: MainAxisAlignment.spaceAround,
+                                  children: [
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'الربح قبل المصروفات',
+                                          style: TextStyle(
+                                            fontSize: 13.sp,
+                                            color: Colors.black.withOpacity(0.6),
+                                          ),
+                                        ),
+                                        Text(
+                                          '${gross.toStringAsFixed(1)} L.E',
+                                          style: TextStyle(
+                                            fontSize: 13.sp,
+                                            fontWeight: FontWeight.w600,
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                    Column(
+                                      crossAxisAlignment: CrossAxisAlignment.start,
+                                      children: [
+                                        Text(
+                                          'المصروفات',
+                                          style: TextStyle(
+                                            fontSize: 13.sp,
+                                            color: Colors.red.shade700,
+                                          ),
+                                        ),
+                                        Text(
+                                          '- ${expenses.toStringAsFixed(1)} L.E',
+                                          style: TextStyle(
+                                            fontSize: 13.sp,
+                                            fontWeight: FontWeight.w600,
+                                            color: Colors.red.shade700,
                                           ),
                                         ),
                                       ],

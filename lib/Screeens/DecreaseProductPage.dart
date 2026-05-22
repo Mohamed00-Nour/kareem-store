@@ -76,6 +76,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   List<String> _clients = [];
   int _defaultPriceTier = 1;
   bool _barcodeExternal = false;
+  /// When true, product search only lists products marked as قطاعي (retail).
+  bool _retailOnlyMode = false;
   Map<String, dynamic>? _lastInvoice;
   String? _editingRootInvoiceId;
   String? _editingClientSubDocId;
@@ -609,6 +611,32 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       setState(() {
         _isFetching = false;
       });
+    }
+  }
+
+  Iterable<Product> _productsMatchingSearch(String query) {
+    if (query.isEmpty) return const Iterable<Product>.empty();
+    final q = query.toLowerCase();
+    Iterable<Product> list = _products.where(
+      (p) => p.name.toLowerCase().contains(q),
+    );
+    if (_retailOnlyMode) {
+      list = list.where((p) => p.retail);
+    }
+    return list;
+  }
+
+  void _toggleRetailOnlyMode() {
+    setState(() {
+      _retailOnlyMode = !_retailOnlyMode;
+    });
+    if (_retailOnlyMode) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('وضع قطاعي: يمكن إضافة منتجات قطاعي فقط للفاتورة'),
+          duration: Duration(seconds: 2),
+        ),
+      );
     }
   }
 
@@ -2705,12 +2733,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                         strokeWidth: 2)))
                             : Autocomplete<Product>(
                                 optionsBuilder: (TextEditingValue val) {
-                                  if (val.text.isEmpty) {
-                                    return const Iterable<Product>.empty();
-                                  }
-                                  return _products.where((p) => p.name
-                                      .toLowerCase()
-                                      .contains(val.text.toLowerCase()));
+                                  return _productsMatchingSearch(val.text);
                                 },
                                 displayStringForOption: (p) => p.name,
                                 fieldViewBuilder: (ctx, ctrl, focus, _) {
@@ -2740,6 +2763,35 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               ),
                       ),
                     ),
+                    if (!widget.isReturnInvoice) ...[
+                      SizedBox(width: 4.w),
+                      Material(
+                        color: _retailOnlyMode
+                            ? Colors.orange.withOpacity(0.9)
+                            : Colors.grey.shade200,
+                        borderRadius: BorderRadius.circular(8.r),
+                        child: InkWell(
+                          onTap: _toggleRetailOnlyMode,
+                          borderRadius: BorderRadius.circular(8.r),
+                          child: Padding(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 10.w,
+                              vertical: 8.h,
+                            ),
+                            child: Text(
+                              _retailOnlyMode ? 'قطاعي ✓' : 'قطاعي',
+                              style: TextStyle(
+                                fontSize: 13.sp,
+                                fontWeight: FontWeight.bold,
+                                color: _retailOnlyMode
+                                    ? Colors.white
+                                    : Colors.black87,
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                    ],
                     SizedBox(width: 4.w),
                     IconButton(
                       icon: Icon(Icons.qr_code_scanner,
@@ -2799,8 +2851,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                   child: Row(
                     children: [
                       _invoiceHeaderCell('م', flex: 1),
-                      _invoiceHeaderCell('المنتج', flex: 5, align: TextAlign.right),
-                      _invoiceHeaderCell('السعر', flex: 1, compact: true),
+                      _invoiceHeaderCell('المنتج', flex: 4, align: TextAlign.right),
+                      _invoiceHeaderCell('السعر', flex: 2, compact: true),
                       _invoiceHeaderCell('الكمية', flex: 1, compact: true),
                       _invoiceHeaderCell('الإجمالي', flex: 2, compact: true),
                       SizedBox(width: 18.w),
@@ -2879,7 +2931,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       ),
                                     ),
                                     _invoiceValueCell(
-                                      flex: 5,
+                                      flex: 4,
                                       alignment: Alignment.centerRight,
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
@@ -2910,12 +2962,16 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       ),
                                     ),
                                     _invoiceValueCell(
-                                      flex: 1,
+                                      flex: 2,
                                       compact: true,
                                       child: Text(
                                         price.toStringAsFixed(1),
                                         textAlign: TextAlign.center,
-                                        style: TextStyle(fontSize: 11.sp),
+                                        style: TextStyle(
+                                          fontSize: 11.sp,
+                                          fontWeight: FontWeight.bold,
+                                          color: Colors.black87,
+                                        ),
                                       ),
                                     ),
                                     _invoiceValueCell(
@@ -3158,6 +3214,7 @@ class Product {
   double costPrice;
   double quantity;
   int alertAmount;
+  bool retail;
   String? image;
 
   Product({
@@ -3170,6 +3227,7 @@ class Product {
     required this.costPrice,
     required this.quantity,
     required this.alertAmount,
+    this.retail = false,
     this.image,
   });
 
@@ -3184,6 +3242,7 @@ class Product {
       'costPrice': costPrice,
       'quantity': quantity,
       'alertAmount': alertAmount,
+      'retail': retail,
       'image': image,
     };
   }
@@ -3199,6 +3258,7 @@ class Product {
       costPrice: (map['costPrice'] ?? 0.0).toDouble(),
       quantity: (map['quantity'] as num?)?.toDouble() ?? 0.0,
       alertAmount: (map['alertAmount'] ?? 0).toInt(),
+      retail: map['retail'] == true,
       image: map['image'],
     );
   }

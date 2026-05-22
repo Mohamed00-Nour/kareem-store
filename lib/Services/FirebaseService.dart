@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../expenses/expense_service.dart';
 import '../models/Employee.dart';
 
 class FirebaseService {
@@ -55,13 +56,42 @@ class FirebaseService {
   }
 
   Stream<double> getTotalExpensesValueStream() {
-    return FirebaseFirestore.instance.collection('expenses').snapshots().map((snapshot) {
-      double total = 0.0;
-      for (var doc in snapshot.docs) {
-        total += double.tryParse(doc['value']) ?? 0.0;
-      }
-      return total;
+    return _firestore.collection('expenses').snapshots().map((snapshot) {
+      return ExpenseService.sumExpensesDocs(snapshot.docs);
     });
+  }
+
+  Stream<double> getMonthlyExpensesSumStream() {
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, 1);
+    final end = DateTime(now.year, now.month + 1, 1)
+        .subtract(const Duration(seconds: 1));
+    return getMonthlyExpensesSumStreamForDateRange(start, end);
+  }
+
+  Stream<double> getMonthlyExpensesSumStreamForDateRange(
+    DateTime start,
+    DateTime end,
+  ) {
+    return _firestore.collection('expenses').snapshots().map((snapshot) {
+      return ExpenseService.sumExpensesDocs(
+        snapshot.docs,
+        start: start,
+        end: end,
+      );
+    });
+  }
+
+  static Map<String, double> _netProfitAfterExpenses(
+    Map<String, double> profitAndSum,
+    double totalExpenses,
+  ) {
+    return {
+      'totalProfitMargin': profitAndSum['totalProfitMargin']! - totalExpenses,
+      'totalSum': profitAndSum['totalSum']!,
+      'grossProfitMargin': profitAndSum['totalProfitMargin']!,
+      'totalExpenses': totalExpenses,
+    };
   }
 
   Stream<double> getTotalSparePartsValueStream() {
@@ -113,7 +143,11 @@ class FirebaseService {
       (salesSnap) async {
         final returnsSnap =
             await _firestore.collection('returnInvoices').get();
-        return _netWithReturns(_sumSalesInvoices(salesSnap), returnsSnap);
+        final expensesSnap = await _firestore.collection('expenses').get();
+        final gross =
+            _netWithReturns(_sumSalesInvoices(salesSnap), returnsSnap);
+        final expenses = ExpenseService.sumExpensesDocs(expensesSnap.docs);
+        return _netProfitAfterExpenses(gross, expenses);
       },
     );
   }
@@ -129,9 +163,10 @@ class FirebaseService {
   }
 
   Stream<Map<String, double>> getMonthlyProfitAndSumStream() {
-    DateTime now = DateTime.now();
-    DateTime startOfMonth = DateTime(now.year, now.month, 1);
-    DateTime endOfMonth = DateTime(now.year, now.month + 1, 1).subtract(Duration(seconds: 1));
+    final now = DateTime.now();
+    final startOfMonth = DateTime(now.year, now.month, 1);
+    final endOfMonth = DateTime(now.year, now.month + 1, 1)
+        .subtract(const Duration(seconds: 1));
 
     return _monthlyNetProfitAndSumStream(startOfMonth, endOfMonth);
   }
@@ -174,7 +209,15 @@ class FirebaseService {
           .where('date', isGreaterThanOrEqualTo: start)
           .where('date', isLessThanOrEqualTo: end)
           .get();
-      return _netWithReturns(_sumSalesInvoices(salesSnap), returnsSnap);
+      final expensesSnap = await _firestore.collection('expenses').get();
+      final gross =
+          _netWithReturns(_sumSalesInvoices(salesSnap), returnsSnap);
+      final expenses = ExpenseService.sumExpensesDocs(
+        expensesSnap.docs,
+        start: start,
+        end: end,
+      );
+      return _netProfitAfterExpenses(gross, expenses);
     });
   }
 
