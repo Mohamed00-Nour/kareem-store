@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../Widgets/egypt_phone_field.dart';
+import 'invoice_number_utils.dart';
 import 'invoice_print_service.dart';
 import 'sales_invoice_image_service.dart';
 import 'whatsapp_share_channel.dart';
@@ -15,7 +16,7 @@ class WhatsappInvoiceShareService {
     final total = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
     final previousBalance = _num(invoice['previousBalance']);
-    final clientBalance = previousBalance + total - paid;
+    final clientBalance = invoiceBalanceAfter(invoice);
 
     final buffer = StringBuffer();
     if (clientName.isNotEmpty) {
@@ -23,10 +24,9 @@ class WhatsappInvoiceShareService {
     }
     buffer.writeln('عليكم فاتورة آجل رقم $invoiceNumber');
     buffer.writeln('التاريخ $dateStr');
-    buffer.writeln('بإجمالي ${total.toStringAsFixed(2)} ج.م');
-    buffer.writeln('المدفوع ${paid.toStringAsFixed(2)} ج.م');
-    buffer.writeln(
-        'الرصيد الحالي عليكم ${clientBalance.toStringAsFixed(2)} ج.م');
+    buffer.writeln('بإجمالي ${invoiceAmount(total)} ج.م');
+    buffer.writeln('المدفوع ${invoiceAmount(paid)} ج.م');
+    buffer.writeln('الرصيد الحالي عليكم ${invoiceAmount(clientBalance)} ج.م');
     return buffer.toString().trim();
   }
 

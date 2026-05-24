@@ -14,6 +14,7 @@ import 'DecreaseProductPage.dart';
 import 'ReturnProductPage.dart';
 import 'Data/DataEntryScreen.dart';
 import 'PrinterSettingsPage.dart';
+import 'Invoices/SpecialInvoicesPage.dart';
 import '../expenses/ExpensesPage.dart';
 
 class HomePage extends StatelessWidget {
@@ -548,6 +549,15 @@ class HomePage extends StatelessWidget {
                               Navigator.of(context).push(MaterialPageRoute(
                                   builder: (context) =>
                                       const ExpensesPage()));
+                            },
+                          ),
+                          CardWidget(
+                            imagePath: 'assets/images/request.png',
+                            text: 'فواتير مميزة',
+                            onPressed: () {
+                              Navigator.of(context).push(MaterialPageRoute(
+                                  builder: (context) =>
+                                      const SpecialInvoicesPage()));
                             },
                           ),
             ],

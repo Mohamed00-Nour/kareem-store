@@ -7,6 +7,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart' hide TextDirection;
 import 'package:pdf/widgets.dart' as pw;
 
+import '../models/invoice_app_footer.dart';
+import 'invoice_number_utils.dart';
+import 'printer_settings_service.dart';
+
 enum ClientStatementType { financial, invoices, returns }
 
 class ClientStatementPdfService {
@@ -50,6 +54,17 @@ class ClientStatementPdfService {
     final periodStr =
         'من ${DateFormat('dd/MM/yyyy').format(startInclusive)} إلى ${DateFormat('dd/MM/yyyy').format(endInclusive)}';
     final nowStr = DateFormat('dd/MM/yyyy hh:mm a').format(DateTime.now());
+    final settings = await PrinterSettingsService.load();
+    final invoiceFooter = settings.salesInvoiceFooter;
+    final reportFooter = settings.a4ReportFooter;
+
+    pw.Widget center(String text, {bool bold = false, double fontSize = 10}) =>
+        pw.Text(
+          text,
+          textDirection: pw.TextDirection.rtl,
+          textAlign: pw.TextAlign.center,
+          style: cell(bold: bold, fontSize: fontSize),
+        );
 
     final pdf = pw.Document();
 
@@ -65,6 +80,8 @@ class ClientStatementPdfService {
           nowStr: nowStr,
           cell: cell,
           rtl: rtl,
+          center: center,
+          reportFooter: reportFooter,
         );
         break;
       case ClientStatementType.invoices:
@@ -78,6 +95,8 @@ class ClientStatementPdfService {
           nowStr: nowStr,
           cell: cell,
           rtl: rtl,
+          center: center,
+          invoiceFooter: invoiceFooter,
           invoicesSubcollection: 'invoices',
           statementHeader: 'كشف حساب الفواتير',
           invoiceTypeLabel: 'فاتورة مبيعات',
@@ -95,6 +114,8 @@ class ClientStatementPdfService {
           nowStr: nowStr,
           cell: cell,
           rtl: rtl,
+          center: center,
+          invoiceFooter: invoiceFooter,
           invoicesSubcollection: 'returnInvoices',
           statementHeader: 'كشف حساب فواتير المرتجع',
           invoiceTypeLabel: 'فاتورة مرتجع',
@@ -128,8 +149,10 @@ class ClientStatementPdfService {
     required DateTime end,
     required String periodStr,
     required String nowStr,
+    required String reportFooter,
     required pw.TextStyle Function({bool bold, double fontSize}) cell,
     required pw.Widget Function(String text, {bool bold, double fontSize}) rtl,
+    required pw.Widget Function(String text, {bool bold, double fontSize}) center,
   }) async {
     final snap = await FirebaseFirestore.instance
         .collection('clients')
@@ -245,6 +268,12 @@ class ClientStatementPdfService {
                     ),
                   ],
                 ),
+              pw.Spacer(),
+              for (final line in InvoiceAppFooter.resolveLines(reportFooter))
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 3),
+                  child: pw.Center(child: center(line, fontSize: 9)),
+                ),
             ],
           );
         },
@@ -260,8 +289,10 @@ class ClientStatementPdfService {
     required DateTime end,
     required String periodStr,
     required String nowStr,
+    required String invoiceFooter,
     required pw.TextStyle Function({bool bold, double fontSize}) cell,
     required pw.Widget Function(String text, {bool bold, double fontSize}) rtl,
+    required pw.Widget Function(String text, {bool bold, double fontSize}) center,
     required String invoicesSubcollection,
     required String statementHeader,
     required String invoiceTypeLabel,
@@ -315,7 +346,7 @@ class ClientStatementPdfService {
           (data['paidAmount'] as num?)?.toDouble() ?? 0.0;
       final previous =
           (data['previousBalance'] as num?)?.toDouble() ?? 0.0;
-      final remaining = totalSum - paid;
+      final remaining = invoiceBalanceAfter(data);
       final invoiceNumber = data['invoiceNumber']?.toString() ?? '-';
 
       pw.Widget h(String t) => pw.Padding(
@@ -383,26 +414,30 @@ class ClientStatementPdfService {
                     for (final p in products)
                       pw.TableRow(
                         children: [
-                          d(p['product']?.toString() ?? ''),
+                          d(invoiceProductName(p)),
                           d(p['amount']?.toString() ?? ''),
-                          d(((p['selectedPrice'] as num?)?.toDouble() ?? 0)
-                              .toStringAsFixed(2)),
-                          d(((p['total'] as num?)?.toDouble() ?? 0)
-                              .toStringAsFixed(2)),
+                          d(invoiceAmount(p['selectedPrice'])),
+                          d(invoiceAmount(p['total'])),
                         ],
                       ),
                   ],
                 ),
                 pw.SizedBox(height: 12),
-                rtl('الرصيد السابق: ${previous.toStringAsFixed(2)}'),
-                rtl('إجمالي الفاتورة: ${totalSum.toStringAsFixed(2)}',
+                rtl('الرصيد السابق: ${invoiceAmount(previous)}'),
+                rtl('إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
                     bold: true),
-                rtl('المدفوع: ${paid.toStringAsFixed(2)}'),
-                rtl('المتبقي: ${remaining.toStringAsFixed(2)}'),
+                rtl('المدفوع: ${invoiceAmount(paid)}'),
+                rtl('المتبقي عليكم: ${invoiceAmount(remaining)}'),
                 if ((data['notes']?.toString() ?? '').isNotEmpty) ...[
                   pw.SizedBox(height: 6),
                   rtl('ملاحظات: ${data['notes']}'),
                 ],
+                pw.SizedBox(height: 10),
+                for (final line in InvoiceAppFooter.resolveLines(invoiceFooter))
+                  pw.Padding(
+                    padding: const pw.EdgeInsets.only(top: 3),
+                    child: pw.Center(child: center(line, fontSize: 9)),
+                  ),
                 pw.Spacer(),
                 pw.Align(
                   alignment: pw.Alignment.centerLeft,

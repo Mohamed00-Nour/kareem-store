@@ -13,6 +13,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Screeens/DecreaseProductPage.dart';
 import '../Services/client_statement_pdf_service.dart';
+import '../Services/invoice_number_utils.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 
@@ -1253,25 +1254,19 @@ Future<void> _saveBalance() async {
             ),
             children: [
               cell(
-                p['product']?.toString() ?? '',
+                invoiceProductName(p),
                 align: TextAlign.right,
               ),
-              cell(p['amount']?.toString() ?? '0'),
-              cell(
-                (double.tryParse(p['selectedPrice']?.toString() ?? '') ?? 0)
-                    .toStringAsFixed(2),
-              ),
-              cell(
-                (double.tryParse(p['total']?.toString() ?? '') ?? 0)
-                    .toStringAsFixed(2),
-              ),
+              cell(invoiceQty(p['amount'])),
+              cell(invoiceAmount(p['selectedPrice'])),
+              cell(invoiceAmount(p['total'])),
             ],
           ),
         TableRow(
           decoration: BoxDecoration(color: Colors.grey.shade100),
           children: [
             cell(''),
-            cell(qtySum.toStringAsFixed(1), bold: true),
+            cell(invoiceQty(qtySum), bold: true),
             cell(''),
             cell(''),
           ],
@@ -1672,7 +1667,7 @@ Future<void> _saveBalance() async {
                                               Row(
                                                 children: [
                                                   Text(
-                                                    'الرصيد السابق: ${previousBalance.toStringAsFixed(2)}',
+                                                    'الرصيد السابق: ${invoiceAmount(previousBalance)}',
                                                     style: const TextStyle(
                                                       fontSize: 14,
                                                       fontWeight: FontWeight.bold,
@@ -1680,7 +1675,7 @@ Future<void> _saveBalance() async {
                                                   ),
                                                   SizedBox(width: 20.w,),
                                                   Text(
-                                                    'إجمالي الفاتورة: ${totalSum.toStringAsFixed(2)}',
+                                                    'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
                                                     style: const TextStyle(
                                                       fontSize: 14,
                                                       fontWeight: FontWeight.bold,
@@ -1689,7 +1684,7 @@ Future<void> _saveBalance() async {
                                                 ],
                                               ),
                                               Text(
-                                                'المدفوع: ${(double.tryParse(invoice['paidAmount'].toString()) ?? 0.0).toStringAsFixed(2)}',
+                                                'المدفوع: ${invoiceAmount(invoice['paidAmount'])}',
                                                 style: const TextStyle(
                                                   fontSize: 16,
                                                   fontWeight: FontWeight.bold,
@@ -1697,7 +1692,7 @@ Future<void> _saveBalance() async {
                                                 ),
                                               ),
                                               Text(
-                                                'المتبقي: ${((double.tryParse(invoice['totalSum'].toString()) ?? 0.0) - (double.tryParse(invoice['paidAmount'].toString()) ?? 0.0)).toStringAsFixed(2)}',
+                                                'المتبقي عليكم: ${invoiceAmount(invoiceBalanceAfter(invoiceData))}',
                                                 style: const TextStyle(
                                                   fontSize: 14,
                                                   fontWeight: FontWeight.bold,

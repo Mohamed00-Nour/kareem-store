@@ -109,6 +109,8 @@ class SalesInvoiceUpdateService {
       'notes': notes,
       'invoiceDiscount': effectiveDiscountAmt,
       'products': newProducts,
+      if (originalInvoice.containsKey('isSpecial'))
+        'isSpecial': originalInvoice['isSpecial'] == true,
     };
 
     await FirebaseFirestore.instance

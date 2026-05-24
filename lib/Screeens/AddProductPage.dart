@@ -5,6 +5,7 @@ import 'Data/DataEntryScreen.dart';
 import 'home_page.dart';
 import '../Buing Invoices/BuyingInvoiceListPage.dart';
 import '../Buing Invoices/BuyingInvoiceDetailPage.dart';
+import '../Services/invoice_number_utils.dart';
 
 void _selectAllField(TextEditingController controller) {
   final text = controller.text;
@@ -302,23 +303,79 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
-  Future<void> _fetchAndSetSupplierBalance(String supplierName) async {
+  Future<double> _fetchSupplierBalance(String supplierName) async {
+    final name = supplierName.trim();
+    if (name.isEmpty) return 0.0;
     try {
-      QuerySnapshot query = await FirebaseFirestore.instance
+      final query = await FirebaseFirestore.instance
           .collection('suppliers')
-          .where('name', isEqualTo: supplierName)
+          .where('name', isEqualTo: name)
+          .limit(1)
           .get();
-      if (!mounted) return;
       if (query.docs.isNotEmpty) {
-        setState(() {
-          _supplierBalance =
-              (query.docs.first['totalBalance'] ?? 0.0).toDouble();
-        });
-      } else {
-        setState(() => _supplierBalance = 0.0);
+        return invoiceNum(query.docs.first['totalBalance']);
       }
     } catch (e) {
       print('Error fetching supplier balance: $e');
+    }
+    return 0.0;
+  }
+
+  Future<void> _fetchAndSetSupplierBalance(String supplierName) async {
+    final bal = await _fetchSupplierBalance(supplierName);
+    if (!mounted) return;
+    setState(() => _supplierBalance = bal);
+  }
+
+  Future<void> _syncProductPricesToFirestore({
+    required Product product,
+    required double sp1,
+    required double sp2,
+    required double sp3,
+    required String sp1Text,
+    required String sp2Text,
+    required String sp3Text,
+  }) async {
+    final updates = <String, dynamic>{};
+    if (sp1Text.trim().isNotEmpty &&
+        (sp1 - product.sellingPrice1).abs() > 0.001) {
+      updates['sellingPrice1'] = sp1;
+    }
+    if (sp2Text.trim().isNotEmpty &&
+        (sp2 - product.sellingPrice2).abs() > 0.001) {
+      updates['sellingPrice2'] = sp2;
+    }
+    if (sp3Text.trim().isNotEmpty &&
+        (sp3 - product.sellingPrice3).abs() > 0.001) {
+      updates['sellingPrice3'] = sp3;
+    }
+    if (updates.isEmpty) return;
+
+    try {
+      final query = await FirebaseFirestore.instance
+          .collection('products')
+          .where('name', isEqualTo: product.name)
+          .limit(1)
+          .get();
+      if (query.docs.isEmpty) return;
+      await query.docs.first.reference.update(updates);
+
+      if (!mounted) return;
+      setState(() {
+        final idx = _products.indexWhere((p) => p.name == product.name);
+        if (idx == -1) return;
+        if (updates.containsKey('sellingPrice1')) {
+          _products[idx].sellingPrice1 = sp1;
+        }
+        if (updates.containsKey('sellingPrice2')) {
+          _products[idx].sellingPrice2 = sp2;
+        }
+        if (updates.containsKey('sellingPrice3')) {
+          _products[idx].sellingPrice3 = sp3;
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to sync product prices: $e');
     }
   }
 
@@ -758,7 +815,7 @@ class _AddProductPageState extends State<AddProductPage> {
                                 borderRadius: BorderRadius.circular(8.r)),
                             padding: EdgeInsets.symmetric(vertical: 12.h),
                           ),
-                          onPressed: () {
+                          onPressed: () async {
                             Navigator.pop(ctx);
                             if (removeProduct) {
                               if (editIndex != null) {
@@ -769,6 +826,16 @@ class _AddProductPageState extends State<AddProductPage> {
                               }
                               return;
                             }
+                            await _syncProductPricesToFirestore(
+                              product: product,
+                              sp1: sp1,
+                              sp2: sp2,
+                              sp3: sp3,
+                              sp1Text: sp1Ctrl.text,
+                              sp2Text: sp2Ctrl.text,
+                              sp3Text: sp3Ctrl.text,
+                            );
+                            if (!mounted) return;
                             final entry = {
                               'product': product.name,
                               'productId': product.id,
@@ -831,6 +898,9 @@ class _AddProductPageState extends State<AddProductPage> {
     bool addingNewSupplier = false;
     String supplierSearch = '';
     String? supplierDuplicateWarning;
+    double? checkoutSupplierBalance =
+        checkoutSupplier != null ? _supplierBalance : null;
+    bool loadingCheckoutSupplierBalance = false;
     final paidCtrl = TextEditingController();
     final notesCtrl = TextEditingController();
     final newSupplierCtrl = TextEditingController();
@@ -844,6 +914,34 @@ class _AddProductPageState extends State<AddProductPage> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(20.r))),
       builder: (ctx) {
         return StatefulBuilder(builder: (ctx, setSheet) {
+          Future<void> loadCheckoutSupplierBalance(String supplierName) async {
+            if (supplierName.trim().isEmpty) {
+              setSheet(() {
+                checkoutSupplierBalance = null;
+                loadingCheckoutSupplierBalance = false;
+              });
+              return;
+            }
+            setSheet(() {
+              loadingCheckoutSupplierBalance = true;
+              checkoutSupplierBalance = null;
+            });
+            final bal = await _fetchSupplierBalance(supplierName.trim());
+            setSheet(() {
+              checkoutSupplierBalance = bal;
+              loadingCheckoutSupplierBalance = false;
+            });
+          }
+
+          if (checkoutSupplier != null &&
+              checkoutSupplier!.name.trim().isNotEmpty &&
+              checkoutSupplierBalance == null &&
+              !loadingCheckoutSupplierBalance) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              loadCheckoutSupplierBalance(checkoutSupplier!.name);
+            });
+          }
+
           double totalSum = _calculateTotalSum();
           double paid = double.tryParse(paidCtrl.text) ?? 0.0;
           double remaining = paid - totalSum;
@@ -1164,10 +1262,10 @@ class _AddProductPageState extends State<AddProductPage> {
                             final isSelected =
                                 checkoutSupplier?.name == s.name;
                             return InkWell(
-                              onTap: () async {
+                              onTap: () {
                                 setSheet(() => checkoutSupplier = s);
-                                await _fetchAndSetSupplierBalance(s.name);
-                                if (ctx.mounted) setSheet(() {});
+                                loadCheckoutSupplierBalance(s.name);
+                                _fetchAndSetSupplierBalance(s.name);
                               },
                               child: Container(
                                 padding: EdgeInsets.symmetric(
@@ -1213,15 +1311,69 @@ class _AddProductPageState extends State<AddProductPage> {
                         );
                       }),
                     ),
-                    if (_supplierBalance != 0.0) ...[
-                      SizedBox(height: 6.h),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Text(
-                          'الرصيد السابق: ${_supplierBalance.toStringAsFixed(2)}',
-                          style: TextStyle(
-                              fontSize: 12.sp, color: Colors.red.shade700),
-                        ),
+                    if (checkoutSupplier != null &&
+                        checkoutSupplier!.name.trim().isNotEmpty) ...[
+                      SizedBox(height: 10.h),
+                      Builder(
+                        builder: (_) {
+                          final balanceBefore = checkoutSupplierBalance ?? 0.0;
+                          final invoiceUnpaid = totalSum - paid;
+                          final balanceAfter = balanceBefore - invoiceUnpaid;
+                          TextStyle balanceStyle(double amount) => TextStyle(
+                                fontSize: 13.sp,
+                                fontWeight: FontWeight.bold,
+                                color: amount > 0
+                                    ? Colors.red.shade700
+                                    : Colors.black87,
+                              );
+                          return Container(
+                            width: double.infinity,
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 12.w, vertical: 10.h),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(10.r),
+                              border: Border.all(
+                                  color: Colors.orange.withOpacity(0.4)),
+                            ),
+                            child: loadingCheckoutSupplierBalance
+                                ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                        width: 18.w,
+                                        height: 18.w,
+                                        child: const CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      SizedBox(width: 8.w),
+                                      Text(
+                                        'جاري تحميل الرصيد...',
+                                        style: TextStyle(fontSize: 13.sp),
+                                      ),
+                                    ],
+                                  )
+                                : Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Text(
+                                        'الرصيد قبل الفاتورة: ${invoiceAmount(balanceBefore)} ج.م',
+                                        textAlign: TextAlign.center,
+                                        style: balanceStyle(balanceBefore),
+                                      ),
+                                      SizedBox(height: 6.h),
+                                      Text(
+                                        'الرصيد بعد الفاتورة (المتبقي للمورد): ${invoiceAmount(balanceAfter)} ج.م',
+                                        textAlign: TextAlign.center,
+                                        style: balanceStyle(balanceAfter)
+                                            .copyWith(fontSize: 14.sp),
+                                      ),
+                                    ],
+                                  ),
+                          );
+                        },
                       ),
                     ],
                     SizedBox(height: 10.h),

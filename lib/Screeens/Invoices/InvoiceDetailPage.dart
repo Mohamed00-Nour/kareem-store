@@ -3,6 +3,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../Services/invoice_print_ui.dart';
+import '../../Services/invoice_special_service.dart';
 import '../../Services/sales_invoice_actions_service.dart';
 import '../../Services/whatsapp_invoice_share_service.dart';
 import '../../Widgets/invoice_action_buttons.dart';
@@ -21,6 +22,8 @@ class InvoiceDetailPage extends StatefulWidget {
 class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
   String _userRole = 'user';
   bool _deleted = false;
+  late bool _isSpecial;
+  bool _togglingSpecial = false;
 
   Map<String, dynamic> get invoice => widget.invoice;
 
@@ -32,7 +35,49 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
   @override
   void initState() {
     super.initState();
+    _isSpecial = InvoiceSpecialService.isSpecial(widget.invoice);
     _loadUserRole();
+  }
+
+  String get _sourceCollection =>
+      InvoiceSpecialService.sourceCollection(invoice);
+
+  Future<void> _toggleSpecial() async {
+    if (_rootInvoiceId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('معرّف الفاتورة غير متوفر')),
+      );
+      return;
+    }
+    setState(() => _togglingSpecial = true);
+    final next = !_isSpecial;
+    try {
+      await InvoiceSpecialService.setSpecial(
+        collection: _sourceCollection,
+        docId: _rootInvoiceId,
+        clientName: _clientId,
+        special: next,
+      );
+      if (!mounted) return;
+      setState(() {
+        _isSpecial = next;
+        invoice['isSpecial'] = next;
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            next ? 'تم تمييز الفاتورة كمميزة' : 'تم إلغاء تمييز الفاتورة',
+          ),
+        ),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _togglingSpecial = false);
+    }
   }
 
   Future<void> _loadUserRole() async {
@@ -176,6 +221,24 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
         ),
         backgroundColor: Colors.black.withOpacity(0.7),
         actions: [
+          IconButton(
+            tooltip: _isSpecial ? 'إلغاء التمييز' : 'تمييز كفاتورة مميزة',
+            onPressed: _togglingSpecial ? null : _toggleSpecial,
+            icon: _togglingSpecial
+                ? SizedBox(
+                    width: 22.w,
+                    height: 22.w,
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.amber,
+                    ),
+                  )
+                : Icon(
+                    _isSpecial ? Icons.star : Icons.star_border,
+                    color: Colors.amber,
+                    size: 26.sp,
+                  ),
+          ),
           InvoiceActionButtons(
             showEditDelete: _isAdmin,
             onPrint: _print,

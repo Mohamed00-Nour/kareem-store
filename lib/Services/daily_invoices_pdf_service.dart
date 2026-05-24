@@ -7,6 +7,10 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart' hide TextDirection;
 import 'package:pdf/widgets.dart' as pw;
 
+import '../models/invoice_app_footer.dart';
+import 'invoice_number_utils.dart';
+import 'printer_settings_service.dart';
+
 /// Builds a PDF with one sales invoice per page.
 class DailyInvoicesPdfService {
   static Future<File> generate({
@@ -35,6 +39,15 @@ class DailyInvoicesPdfService {
           style: cell(bold: bold, fontSize: fontSize),
         );
 
+    pw.Widget center(String text, {bool bold = false, double fontSize = 10}) =>
+        pw.Text(
+          text,
+          textDirection: pw.TextDirection.rtl,
+          textAlign: pw.TextAlign.center,
+          style: cell(bold: bold, fontSize: fontSize),
+        );
+
+    final settings = await PrinterSettingsService.load();
     final periodStr =
         'من ${DateFormat('dd/MM/yyyy').format(from)} إلى ${DateFormat('dd/MM/yyyy').format(to)}';
     final nowStr = DateFormat('dd/MM/yyyy hh:mm a').format(DateTime.now());
@@ -64,8 +77,10 @@ class DailyInvoicesPdfService {
           data: data,
           periodStr: periodStr,
           nowStr: nowStr,
+          salesInvoiceFooter: settings.salesInvoiceFooter,
           cell: cell,
           rtl: rtl,
+          center: center,
         );
       }
     }
@@ -83,15 +98,17 @@ class DailyInvoicesPdfService {
     required Map<String, dynamic> data,
     required String periodStr,
     required String nowStr,
+    required String salesInvoiceFooter,
     required pw.TextStyle Function({bool bold, double fontSize}) cell,
     required pw.Widget Function(String text, {bool bold, double fontSize}) rtl,
+    required pw.Widget Function(String text, {bool bold, double fontSize}) center,
   }) {
     final date = _parseDate(data['date']);
     final products = List<Map<String, dynamic>>.from(data['products'] ?? []);
     final totalSum = _num(data['totalSum']);
     final paid = _num(data['paidAmount']);
     final previous = _num(data['previousBalance']);
-    final balance = _num(data['balance']);
+    final balance = invoiceBalanceAfter(data);
     final profit = _num(data['profitMargin']);
     final invoiceNumber = data['invoiceNumber']?.toString() ?? '-';
     final clientName = data['clientName']?.toString() ?? '';
@@ -158,26 +175,33 @@ class DailyInvoicesPdfService {
                   for (final p in products)
                     pw.TableRow(
                       children: [
-                        d(p['product']?.toString() ?? ''),
+                        d(invoiceProductName(p)),
                         d(p['amount']?.toString() ?? ''),
-                        d(_num(p['selectedPrice']).toStringAsFixed(2)),
-                        d(_num(p['total']).toStringAsFixed(2)),
+                        d(invoiceAmount(p['selectedPrice'])),
+                        d(invoiceAmount(p['total'])),
                       ],
                     ),
                 ],
               ),
               pw.SizedBox(height: 12),
-              if (previous != 0) rtl('الرصيد السابق: ${previous.toStringAsFixed(2)}'),
-              rtl('إجمالي الفاتورة: ${totalSum.toStringAsFixed(2)} ج.م',
+              if (previous != 0) rtl('الرصيد السابق: ${invoiceAmount(previous)}'),
+              rtl('إجمالي الفاتورة: ${invoiceAmount(totalSum)} ج.م',
                   bold: true),
-              rtl('المدفوع: ${paid.toStringAsFixed(2)} ج.م'),
-              rtl('المتبقي: ${balance.toStringAsFixed(2)} ج.م'),
+              rtl('المدفوع: ${invoiceAmount(paid)} ج.م'),
+              rtl('المتبقي عليكم: ${invoiceAmount(balance)} ج.م'),
               if (profit != 0)
-                rtl('هامش الربح: ${profit.toStringAsFixed(2)} ج.م', fontSize: 9),
+                rtl('هامش الربح: ${invoiceAmount(profit)} ج.م', fontSize: 9),
               if ((data['notes']?.toString() ?? '').isNotEmpty) ...[
                 pw.SizedBox(height: 6),
                 rtl('ملاحظات: ${data['notes']}'),
               ],
+              pw.SizedBox(height: 10),
+              for (final line
+                  in InvoiceAppFooter.resolveLines(salesInvoiceFooter))
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 3),
+                  child: pw.Center(child: center(line, fontSize: 9)),
+                ),
               pw.Spacer(),
               pw.Row(
                 mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,

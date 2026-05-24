@@ -1,9 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
+import '../models/invoice_app_footer.dart';
 import '../models/invoice_labels.dart';
 import '../models/invoice_receipt_print_data.dart';
 import '../models/printer_settings.dart';
+import 'invoice_number_utils.dart';
 
 class InvoicePrintContext {
   final String? clientAddress;
@@ -143,7 +145,7 @@ class InvoicePrintFormatter {
     for (final item in products) {
       if (item is! Map) continue;
       final map = Map<String, dynamic>.from(item);
-      final name = map['product']?.toString() ?? '';
+      final name = invoiceProductName(map);
       final qtyStr = _formatQty(_num(map['amount']));
       qtySum += _num(map['amount']);
       textRowIndex++;
@@ -186,7 +188,7 @@ class InvoicePrintFormatter {
     final previous = _num(invoice['previousBalance']);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final balance = _num(invoice['balance']);
+    final balance = invoiceBalanceAfter(invoice);
 
     line(_summaryRow(cols.width, labels.previousBalance, previous));
     line(_summaryRow(cols.width, 'إجمالي ف.', totalSum));
@@ -206,6 +208,11 @@ class InvoicePrintFormatter {
     if (notes.isNotEmpty) {
       line(sep);
       line(_center('ملاحظات: $notes', cols.width));
+    }
+
+    line(sep);
+    for (final footerLine in InvoiceAppFooter.resolveLines(settings.salesInvoiceFooter)) {
+      line(_center(footerLine, cols.width));
     }
 
     return buffer.toString();
@@ -262,7 +269,7 @@ class InvoicePrintFormatter {
     for (final item in products) {
       if (item is! Map) continue;
       final map = Map<String, dynamic>.from(item);
-      final name = map['product']?.toString() ?? '';
+      final name = invoiceProductName(map);
       qtySum += _num(map['amount']);
       rowIndex++;
       final extras = <String>[];
@@ -301,7 +308,7 @@ class InvoicePrintFormatter {
     final previous = _num(invoice['previousBalance']);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final balance = _num(invoice['balance']);
+    final balance = invoiceBalanceAfter(invoice);
 
     final summaryTable = <List<String>>[
       [_formatMoney(previous), labels.previousBalance],
@@ -331,7 +338,7 @@ class InvoicePrintFormatter {
       qtyTotalLine: _center(_formatQty(qtySum), cols.width),
       summaryTableRows: summaryTable,
       trailingLines: trailing,
-      salesFooter: settings.salesInvoiceFooter,
+      salesFooter: InvoiceAppFooter.resolve(settings.salesInvoiceFooter),
     );
   }
 
@@ -583,10 +590,8 @@ class InvoicePrintFormatter {
     if (deviceLabel.isNotEmpty) {
       buffer.writeln(deviceLabel);
     }
-    if (settings.salesInvoiceFooter.isNotEmpty) {
-      buffer.writeln('-' * settings.paperSize.charsPerLine);
-      buffer.writeln(settings.salesInvoiceFooter);
-    }
+    buffer.writeln('-' * settings.paperSize.charsPerLine);
+    buffer.writeln(InvoiceAppFooter.resolve(settings.salesInvoiceFooter));
     return buffer.toString().trimRight();
   }
 
@@ -656,8 +661,8 @@ class InvoicePrintFormatter {
       settings: settings,
       context: const InvoicePrintContext(),
     );
-    if (settings.salesInvoiceFooter.isEmpty) return body;
-    return '$body${'-' * settings.paperSize.charsPerLine}\n${settings.salesInvoiceFooter}\n';
+    final footer = InvoiceAppFooter.resolve(settings.salesInvoiceFooter);
+    return '$body${'-' * settings.paperSize.charsPerLine}\n$footer\n';
   }
 
   /// Full on-screen preview: test slip + sample invoice.

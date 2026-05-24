@@ -13,17 +13,80 @@ class ProductListPage extends StatefulWidget {
   _ProductListPageState createState() => _ProductListPageState();
 }
 
+enum _ProductListFilter { all, lowStock, onDemand, retail }
+
 class _ProductListPageState extends State<ProductListPage> {
   String _searchQuery = "";
   final TextEditingController _searchController = TextEditingController();
-  bool _showLowStock = false;
-  bool _showOnDemand = false;
+  _ProductListFilter _filter = _ProductListFilter.all;
   bool _showCostPrice = true;
   String _userRole = 'user';
 
   bool _isOnDemand(Map<String, dynamic> product) {
     return product['onDemand'] == true;
   }
+
+  bool _isRetail(Map<String, dynamic> product) {
+    return product['retail'] == true;
+  }
+
+  bool _matchesFilter(Map<String, dynamic> product) {
+    switch (_filter) {
+      case _ProductListFilter.retail:
+        return _isRetail(product);
+      case _ProductListFilter.onDemand:
+        return _isOnDemand(product);
+      case _ProductListFilter.lowStock:
+        return !_isOnDemand(product) &&
+            !_isRetail(product) &&
+            product['quantity'] <= product['alertAmount'];
+      case _ProductListFilter.all:
+        return !_isOnDemand(product) && !_isRetail(product);
+    }
+  }
+
+  void _openMoreMenu() {
+    showModalBottomSheet<void>(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.inventory_2_outlined),
+              title: const Text('جرد المخزن'),
+              onTap: () {
+                Navigator.pop(ctx);
+                if (_userRole == 'admin') {
+                  Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (context) => const TotalInventoryValuePage(),
+                    ),
+                  );
+                } else {
+                  _showInventoryPermissionDeniedDialog();
+                }
+              },
+            ),
+            ListTile(
+              leading: Icon(
+                _showCostPrice ? Icons.visibility_off : Icons.visibility,
+              ),
+              title: Text(_showCostPrice ? 'إخفاء التكلفة' : 'إظهار التكلفة'),
+              onTap: () {
+                Navigator.pop(ctx);
+                setState(() => _showCostPrice = !_showCostPrice);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _loadUserRole() async {
     try {
       final prefs = await SharedPreferences.getInstance();
@@ -149,60 +212,38 @@ void initState() {
     );
   }
 
+  Widget _filterChip(String label, _ProductListFilter mode) {
+    final selected = _filter == mode;
+    return FilterChip(
+      label: Text(label, style: TextStyle(fontSize: 13.sp)),
+      selected: selected,
+      onSelected: (_) => setState(() => _filter = mode),
+      selectedColor: Colors.orange.withOpacity(0.35),
+      checkmarkColor: Colors.black87,
+      backgroundColor: Colors.grey.withOpacity(0.15),
+      side: BorderSide(
+        color: selected
+            ? Colors.orange.withOpacity(0.9)
+            : Colors.black.withOpacity(0.2),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xffeeeced),
       appBar: AppBar(
-        title: Text('جميع المنتجات',
-            style: TextStyle(fontSize: 20.sp, color: Colors.white)),
+        title: Text(
+          'جميع المنتجات',
+          style: TextStyle(fontSize: 20.sp, color: Colors.white),
+        ),
         backgroundColor: Colors.black.withOpacity(0.7),
         actions: [
-          TextButton(
-            onPressed: () {
-              if (_userRole == 'admin') {
-                Navigator.of(context).push(
-                  MaterialPageRoute(
-                      builder: (context) => TotalInventoryValuePage()
-                  ),
-                );
-              } else {
-                _showInventoryPermissionDeniedDialog();
-              }
-            },
-            child: Text('جرد المخزن',
-                style: TextStyle(fontSize: 16.sp, color: Colors.white)),
-          ),
-          TextButton(
-            onPressed: () => setState(() => _showCostPrice = !_showCostPrice),
-            child: Text(
-              _showCostPrice ? 'إخفاء التكلفة' : 'إظهار التكلفة',
-              style: TextStyle(fontSize: 14.sp, color: Colors.white),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _showOnDemand = false;
-                _showLowStock = !_showLowStock;
-              });
-            },
-            child: Text(
-              _showLowStock ? 'عرض الكل' : 'عرض النواقص',
-              style: TextStyle(fontSize: 14.sp, color: Colors.white),
-            ),
-          ),
-          TextButton(
-            onPressed: () {
-              setState(() {
-                _showLowStock = false;
-                _showOnDemand = !_showOnDemand;
-              });
-            },
-            child: Text(
-              _showOnDemand ? 'عرض الكل' : 'حسب الطلب',
-              style: TextStyle(fontSize: 14.sp, color: Colors.white),
-            ),
+          IconButton(
+            icon: const Icon(Icons.more_vert, color: Colors.white),
+            tooltip: 'المزيد',
+            onPressed: _openMoreMenu,
           ),
         ],
       ),
@@ -235,6 +276,23 @@ void initState() {
                   _searchQuery = query;
                 });
               },
+            ),
+          ),
+          Padding(
+            padding: EdgeInsets.fromLTRB(10.w, 0, 10.w, 8.h),
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  _filterChip('الكل', _ProductListFilter.all),
+                  SizedBox(width: 8.w),
+                  _filterChip('النواقص', _ProductListFilter.lowStock),
+                  SizedBox(width: 8.w),
+                  _filterChip('حسب الطلب', _ProductListFilter.onDemand),
+                  SizedBox(width: 8.w),
+                  _filterChip('قطاعي', _ProductListFilter.retail),
+                ],
+              ),
             ),
           ),
           Padding(
@@ -307,23 +365,10 @@ void initState() {
                         return productName.contains(_searchQuery.toLowerCase());
                       }).toList();
 
-                final displayedProducts = _showOnDemand
-                    ? filteredProducts.where((doc) {
-                        final product = doc.data() as Map<String, dynamic>;
-                        return _isOnDemand(product);
-                      }).toList()
-                    : _showLowStock
-                        ? filteredProducts.where((doc) {
-                            final product =
-                                doc.data() as Map<String, dynamic>;
-                            return !_isOnDemand(product) &&
-                                product['quantity'] <= product['alertAmount'];
-                          }).toList()
-                        : filteredProducts.where((doc) {
-                            final product =
-                                doc.data() as Map<String, dynamic>;
-                            return !_isOnDemand(product);
-                          }).toList();
+                final displayedProducts = filteredProducts.where((doc) {
+                  final product = doc.data() as Map<String, dynamic>;
+                  return _matchesFilter(product);
+                }).toList();
 
                 return ListView.builder(
                   itemCount: displayedProducts.length,

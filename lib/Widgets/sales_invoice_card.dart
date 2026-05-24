@@ -68,7 +68,7 @@ class SalesInvoiceCard extends StatelessWidget {
               ],
               const Spacer(),
               Text(
-                '${total.toStringAsFixed(2)} ج.م',
+                '${invoiceAmount(total)} ج.م',
                 style: TextStyle(
                   fontSize: 13.sp,
                   fontWeight: FontWeight.bold,

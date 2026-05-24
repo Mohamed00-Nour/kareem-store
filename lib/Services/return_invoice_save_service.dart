@@ -51,6 +51,7 @@ class ReturnInvoiceSaveService {
       'notes': notes,
       'invoiceDiscount': effectiveDiscountAmt,
       'invoiceType': 'return',
+      'isSpecial': false,
       'products': products,
     };
 
@@ -106,6 +107,7 @@ class ReturnInvoiceSaveService {
       'paymentMethod': paymentMethod,
       'notes': notes,
       'invoiceType': 'return',
+      'isSpecial': false,
       'products': products,
     });
 

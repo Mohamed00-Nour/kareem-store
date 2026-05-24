@@ -4,6 +4,7 @@ import '../models/printer_settings.dart';
 import 'app_error_logger.dart';
 import 'bluetooth_permission_service.dart';
 import 'bluetooth_printer_service.dart';
+import 'invoice_number_utils.dart';
 import 'invoice_print_formatter.dart';
 import 'printer_settings_service.dart';
 
@@ -197,11 +198,11 @@ class InvoicePrintService {
       }
     }
 
-    final total = _toDouble(invoice['totalSum']);
-    final paid = _toDouble(invoice['paidAmount']);
-    if (!invoice.containsKey('balance') || invoice['balance'] == null) {
-      invoice['balance'] = total - paid;
+    if (!invoice.containsKey('previousBalance') ||
+        invoice['previousBalance'] == null) {
+      invoice['previousBalance'] = 0.0;
     }
+    invoice['balance'] = invoiceBalanceAfter(invoice);
 
     return invoice;
   }

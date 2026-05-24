@@ -76,7 +76,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   List<String> _clients = [];
   int _defaultPriceTier = 1;
   bool _barcodeExternal = false;
-  /// When true, product search only lists products marked as قطاعي (retail).
+  /// When true, search lists قطاعي (retail) products only.
+  /// When false (normal), retail products are hidden from search.
   bool _retailOnlyMode = false;
   Map<String, dynamic>? _lastInvoice;
   String? _editingRootInvoiceId;
@@ -99,6 +100,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final TextEditingController localPaidCtrl =
         TextEditingController(text: _paidAmountController.text);
     String selectedClient = _clientNameController.text;
+    double? selectedClientBalance;
+    bool loadingClientBalance = false;
+    bool addingNewClient = false;
 
     showModalBottomSheet(
       context: context,
@@ -108,6 +112,32 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(20.r))),
       builder: (ctx) {
         return StatefulBuilder(builder: (ctx, setSheet) {
+          Future<void> loadDialogClientBalance(String clientName) async {
+            if (clientName.trim().isEmpty) {
+              setSheet(() {
+                selectedClientBalance = null;
+                loadingClientBalance = false;
+              });
+              return;
+            }
+            setSheet(() {
+              loadingClientBalance = true;
+              selectedClientBalance = null;
+            });
+            final bal = await _fetchClientBalance(clientName.trim());
+            setSheet(() {
+              selectedClientBalance = bal;
+              loadingClientBalance = false;
+            });
+          }
+
+          if (selectedClient.isNotEmpty &&
+              selectedClientBalance == null &&
+              !loadingClientBalance) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              loadDialogClientBalance(selectedClient);
+            });
+          }
           final filtered = searchQuery.isEmpty
               ? _clients
               : _clients
@@ -226,7 +256,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       textDirection: TextDirection.rtl,
                       autofocus: true,
                       decoration: InputDecoration(
-                        hintText: 'اسم العميل الجديد',
+                        hintText: 'اسم العميل الجديد *',
                         hintTextDirection: TextDirection.rtl,
                         contentPadding: EdgeInsets.symmetric(
                             horizontal: 12.w, vertical: 10.h),
@@ -244,7 +274,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       keyboardType: const TextInputType.numberWithOptions(
                           decimal: true),
                       decoration: InputDecoration(
-                        hintText: 'الرصيد الافتتاحي',
+                        hintText: 'الرصيد الافتتاحي (اختياري)',
                         hintTextDirection: TextDirection.rtl,
                         contentPadding: EdgeInsets.symmetric(
                             horizontal: 12.w, vertical: 10.h),
@@ -258,7 +288,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     SizedBox(height: 8.h),
                     EgyptPhoneField(
                       controller: newClientPhoneCtrl,
-                      hintText: '1xxxxxxxxx',
+                      hintText: '1xxxxxxxxx (اختياري)',
                     ),
                     SizedBox(height: 8.h),
                     SizedBox(
@@ -271,60 +301,107 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               borderRadius: BorderRadius.circular(10.r)),
                           padding: EdgeInsets.symmetric(vertical: 12.h),
                         ),
-                        onPressed: () async {
-                          final newName = newClientCtrl.text.trim();
-                          if (newName.isEmpty) return;
-                          if (!EgyptPhoneField.isValidLocalPart(
-                              newClientPhoneCtrl.text)) {
-                            ScaffoldMessenger.of(ctx).showSnackBar(
-                              const SnackBar(
-                                content: Text(
-                                    'يرجى إدخال رقم هاتف صحيح بعد +20'),
-                              ),
-                            );
-                            return;
-                          }
-                          final alreadyExists = _clients
-                              .map((c) => c.toLowerCase())
-                              .contains(newName.toLowerCase());
-                          if (!alreadyExists) {
-                            final balance = double.tryParse(
-                                    newClientBalanceCtrl.text.trim()) ??
-                                0.0;
-                            final phone = EgyptPhoneField.toWhatsappDigits(
-                                newClientPhoneCtrl.text);
-                            await FirebaseFirestore.instance
-                                .collection('clients')
-                                .doc(newName)
-                                .set({
-                              'clientName': newName,
-                              'balance': balance,
-                              'phone': phone,
-                              'id': newName,
-                            }, SetOptions(merge: true));
-                          }
-                          if (!ctx.mounted) return;
-                          setSheet(() {
-                            if (!alreadyExists) {
-                              _clients.add(newName);
-                              duplicateWarning = null;
-                            } else {
-                              duplicateWarning = 'هذا العميل موجود بالفعل';
-                            }
-                            selectedClient = alreadyExists
-                                ? _clients.firstWhere((c) =>
-                                    c.toLowerCase() == newName.toLowerCase())
-                                : newName;
-                            if (!alreadyExists) {
-                              showAddField = false;
-                              newClientCtrl.clear();
-                              newClientBalanceCtrl.clear();
-                              newClientPhoneCtrl.clear();
-                            }
-                          });
-                        },
-                        child: Text('إضافة العميل',
-                            style: TextStyle(fontSize: 13.sp)),
+                        onPressed: addingNewClient
+                            ? null
+                            : () async {
+                                final newName = newClientCtrl.text.trim();
+                                if (newName.isEmpty) {
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('يرجى إدخال اسم العميل'),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                final phoneText =
+                                    newClientPhoneCtrl.text.trim();
+                                if (phoneText.isNotEmpty &&
+                                    !EgyptPhoneField.isValidLocalPart(
+                                        phoneText)) {
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                          'يرجى إدخال رقم هاتف صحيح بعد +20'),
+                                    ),
+                                  );
+                                  return;
+                                }
+                                final alreadyExists = _clients.any((c) =>
+                                    c.toLowerCase() == newName.toLowerCase());
+                                if (alreadyExists) {
+                                  setSheet(() {
+                                    duplicateWarning =
+                                        'هذا العميل موجود بالفعل';
+                                    selectedClient = _clients.firstWhere((c) =>
+                                        c.toLowerCase() ==
+                                        newName.toLowerCase());
+                                  });
+                                  return;
+                                }
+
+                                setSheet(() {
+                                  addingNewClient = true;
+                                  duplicateWarning = null;
+                                });
+                                try {
+                                  final balanceText =
+                                      newClientBalanceCtrl.text.trim();
+                                  final balance = balanceText.isEmpty
+                                      ? 0.0
+                                      : (double.tryParse(balanceText) ?? 0.0);
+                                  final phone = phoneText.isEmpty
+                                      ? ''
+                                      : EgyptPhoneField.toWhatsappDigits(
+                                          phoneText);
+                                  await FirebaseFirestore.instance
+                                      .collection('clients')
+                                      .doc(newName)
+                                      .set({
+                                    'clientName': newName,
+                                    'balance': balance,
+                                    'phone': phone,
+                                    'id': newName,
+                                  }, SetOptions(merge: true));
+
+                                  if (!ctx.mounted) return;
+                                  setSheet(() {
+                                    _clients.insert(0, newName);
+                                    selectedClient = newName;
+                                    selectedClientBalance = balance;
+                                    showAddField = false;
+                                    newClientCtrl.clear();
+                                    newClientBalanceCtrl.clear();
+                                    newClientPhoneCtrl.clear();
+                                  });
+                                  if (!mounted) return;
+                                  setState(() {
+                                    _clientBalance = balance;
+                                  });
+                                } catch (e) {
+                                  if (!ctx.mounted) return;
+                                  ScaffoldMessenger.of(ctx).showSnackBar(
+                                    SnackBar(
+                                      content:
+                                          Text('خطأ أثناء إضافة العميل: $e'),
+                                    ),
+                                  );
+                                } finally {
+                                  if (ctx.mounted) {
+                                    setSheet(() => addingNewClient = false);
+                                  }
+                                }
+                              },
+                        child: addingNewClient
+                            ? SizedBox(
+                                width: 22.w,
+                                height: 22.w,
+                                child: const CircularProgressIndicator(
+                                  strokeWidth: 2,
+                                  color: Colors.white,
+                                ),
+                              )
+                            : Text('إضافة العميل',
+                                style: TextStyle(fontSize: 13.sp)),
                       ),
                     ),
                   ],
@@ -382,9 +459,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               final client = filtered[i];
                               final isSelected = client == selectedClient;
                               return InkWell(
-                                onTap: () async {
+                                onTap: () {
                                   setSheet(() => selectedClient = client);
-                                  await _fetchAndSetClientBalance(client);
+                                  loadDialogClientBalance(client);
                                 },
                                 child: Container(
                                   padding: EdgeInsets.symmetric(
@@ -433,6 +510,49 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                           ),
                   ),
                   Divider(height: 20.h),
+
+                  if (selectedClient.isNotEmpty) ...[
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.symmetric(
+                          horizontal: 12.w, vertical: 10.h),
+                      decoration: BoxDecoration(
+                        color: Colors.orange.withOpacity(0.12),
+                        borderRadius: BorderRadius.circular(10.r),
+                        border: Border.all(color: Colors.orange.withOpacity(0.4)),
+                      ),
+                      child: loadingClientBalance
+                          ? Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                SizedBox(
+                                  width: 18.w,
+                                  height: 18.w,
+                                  child: const CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                  ),
+                                ),
+                                SizedBox(width: 8.w),
+                                Text(
+                                  'جاري تحميل الرصيد...',
+                                  style: TextStyle(fontSize: 13.sp),
+                                ),
+                              ],
+                            )
+                          : Text(
+                              'الرصيد الحالي: ${invoiceAmount(selectedClientBalance ?? 0)} ج.م',
+                              textAlign: TextAlign.center,
+                              style: TextStyle(
+                                fontSize: 14.sp,
+                                fontWeight: FontWeight.bold,
+                                color: (selectedClientBalance ?? 0) > 0
+                                    ? Colors.red.shade700
+                                    : Colors.black87,
+                              ),
+                            ),
+                    ),
+                    SizedBox(height: 12.h),
+                  ],
 
                   // ── المبلغ المدفوع ──
                   Align(
@@ -489,11 +609,16 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       ),
                       onPressed: selectedClient.isEmpty
                           ? null
-                          : () {
+                          : () async {
+                              final bal = await _fetchClientBalance(
+                                selectedClient.trim(),
+                              );
+                              if (!mounted) return;
                               setState(() {
                                 _clientNameController.text = selectedClient;
                                 _paidAmountController.text =
                                     localPaidCtrl.text;
+                                _clientBalance = bal;
                               });
                               Navigator.of(ctx).pop();
                             },
@@ -510,19 +635,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         });
       },
     );
-  }
-
-  Future<double> _fetchClientBalance(String clientName) async {
-    DocumentSnapshot clientDoc = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(clientName)
-        .get();
-
-    if (clientDoc.exists) {
-      return clientDoc['balance'] ?? 0.0;
-    } else {
-      return 0.0;
-    }
   }
 
   void _applyInvoiceToEdit(Map<String, dynamic> inv) {
@@ -622,6 +734,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     );
     if (_retailOnlyMode) {
       list = list.where((p) => p.retail);
+    } else {
+      list = list.where((p) => !p.retail);
     }
     return list;
   }
@@ -814,6 +928,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'notes': notes,
           'invoiceDiscount': effectiveDiscountAmt,
           'invoiceType': 'sale',
+          'isSpecial': false,
           'products': _addedProducts,
         };
 
@@ -874,6 +989,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'previousBalance': _clientBalance,
           'paymentMethod': paymentMethod,
           'notes': notes,
+          'isSpecial': false,
           'products': _addedProducts,
         });
 
@@ -1084,21 +1200,40 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     );
   }
 
-  Future<void> _fetchAndSetClientBalance(String clientName) async {
-    DocumentSnapshot clientDoc = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(clientName)
-        .get();
+  bool _clientNameInList(String clientName) {
+    final normalized = clientName.trim().toLowerCase();
+    if (normalized.isEmpty) return false;
+    return _clients.any((c) => c.trim().toLowerCase() == normalized);
+  }
 
+  Future<bool> _clientExists(String clientName) async {
+    final name = clientName.trim();
+    if (name.isEmpty) return false;
+    if (_clientNameInList(name)) return true;
+    final clientDoc = await FirebaseFirestore.instance
+        .collection('clients')
+        .doc(name)
+        .get();
+    return clientDoc.exists;
+  }
+
+  Future<double> _fetchClientBalance(String clientName) async {
+    final name = clientName.trim();
+    if (name.isEmpty) return 0.0;
+    final clientDoc = await FirebaseFirestore.instance
+        .collection('clients')
+        .doc(name)
+        .get();
     if (clientDoc.exists) {
-      setState(() {
-        _clientBalance = (clientDoc['balance'] ?? 0.0).toDouble();
-      });
-    } else {
-      setState(() {
-        _clientBalance = 0.0;
-      });
+      return invoiceNum(clientDoc.data()?['balance']);
     }
+    return 0.0;
+  }
+
+  Future<void> _fetchAndSetClientBalance(String clientName) async {
+    final bal = await _fetchClientBalance(clientName);
+    if (!mounted) return;
+    setState(() => _clientBalance = bal);
   }
 
   // ─────────────────────────────────────────────
@@ -1112,6 +1247,58 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final result =
         isPercent ? subtotal - (subtotal * discount / 100) : subtotal - discount;
     return result < 0 ? 0 : result;
+  }
+
+  Future<void> _syncProductPricesToFirestore({
+    required Product product,
+    required double sp1,
+    required double sp2,
+    required double sp3,
+    required String sp1Text,
+    required String sp2Text,
+    required String sp3Text,
+  }) async {
+    final updates = <String, dynamic>{};
+    if (sp1Text.trim().isNotEmpty &&
+        (sp1 - product.sellingPrice1).abs() > 0.001) {
+      updates['sellingPrice1'] = sp1;
+    }
+    if (sp2Text.trim().isNotEmpty &&
+        (sp2 - product.sellingPrice2).abs() > 0.001) {
+      updates['sellingPrice2'] = sp2;
+    }
+    if (sp3Text.trim().isNotEmpty &&
+        (sp3 - product.sellingPrice3).abs() > 0.001) {
+      updates['sellingPrice3'] = sp3;
+    }
+    if (updates.isEmpty) return;
+
+    try {
+      final query = await FirebaseFirestore.instance
+          .collection('products')
+          .where('name', isEqualTo: product.name)
+          .limit(1)
+          .get();
+      if (query.docs.isEmpty) return;
+      await query.docs.first.reference.update(updates);
+
+      if (!mounted) return;
+      setState(() {
+        final idx = _products.indexWhere((p) => p.name == product.name);
+        if (idx == -1) return;
+        if (updates.containsKey('sellingPrice1')) {
+          _products[idx].sellingPrice1 = sp1;
+        }
+        if (updates.containsKey('sellingPrice2')) {
+          _products[idx].sellingPrice2 = sp2;
+        }
+        if (updates.containsKey('sellingPrice3')) {
+          _products[idx].sellingPrice3 = sp3;
+        }
+      });
+    } catch (e) {
+      debugPrint('Failed to sync product prices: $e');
+    }
   }
 
   void _incrementInvoiceLineQuantity(int index) {
@@ -1141,6 +1328,18 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     double customPrice = editIndex != null && (_addedProducts[editIndex]['priceTier'] ?? 1) == 0
         ? ((_addedProducts[editIndex]['selectedPrice'] ?? 0.0) as num).toDouble()
         : 0.0;
+    double sp1 = editIndex != null
+        ? invoiceNum(_addedProducts[editIndex]['sellingPrice1'])
+        : product.sellingPrice1;
+    double sp2 = editIndex != null
+        ? invoiceNum(_addedProducts[editIndex]['sellingPrice2'])
+        : product.sellingPrice2;
+    double sp3 = editIndex != null
+        ? invoiceNum(_addedProducts[editIndex]['sellingPrice3'])
+        : product.sellingPrice3;
+    if (sp1 == 0) sp1 = product.sellingPrice1;
+    if (sp2 == 0) sp2 = product.sellingPrice2;
+    if (sp3 == 0) sp3 = product.sellingPrice3;
     double discount = editIndex != null
         ? ((_addedProducts[editIndex]['discount'] ?? 0.0) as num).toDouble()
         : 0.0;
@@ -1160,16 +1359,22 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         TextEditingController(text: barcodeNote);
     final TextEditingController customPriceCtrl =
         TextEditingController(text: customPrice > 0 ? customPrice.toStringAsFixed(2) : '');
+    final TextEditingController sp1Ctrl =
+        TextEditingController(text: sp1 > 0 ? sp1.toStringAsFixed(2) : '');
+    final TextEditingController sp2Ctrl =
+        TextEditingController(text: sp2 > 0 ? sp2.toStringAsFixed(2) : '');
+    final TextEditingController sp3Ctrl =
+        TextEditingController(text: sp3 > 0 ? sp3.toStringAsFixed(2) : '');
 
     double getPriceForTier(int tier) {
       if (tier == 0) return customPrice;
       switch (tier) {
         case 2:
-          return product.sellingPrice2;
+          return sp2;
         case 3:
-          return product.sellingPrice3;
+          return sp3;
         default:
-          return product.sellingPrice1;
+          return sp1;
       }
     }
 
@@ -1214,9 +1419,86 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     // ── سعر البيع ──
                     Row(children: [
                       Expanded(
-                          flex: 3,
-                          child: _SheetValueBox(
-                              value: getPriceForTier(priceTier).toStringAsFixed(1))),
+                        flex: 3,
+                        child: priceTier == 0
+                            ? TextField(
+                                controller: customPriceCtrl,
+                                textAlign: TextAlign.center,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                style: TextStyle(
+                                    fontSize: 16.sp,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.orange.shade800),
+                                decoration: InputDecoration(
+                                  hintText: 'سعر خاص',
+                                  hintStyle: TextStyle(
+                                      fontSize: 12.sp, color: Colors.grey),
+                                  border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8.r),
+                                      borderSide: const BorderSide(
+                                          color: Colors.orange)),
+                                  focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8.r),
+                                      borderSide: const BorderSide(
+                                          color: Colors.orange, width: 2)),
+                                  contentPadding: EdgeInsets.symmetric(
+                                      vertical: 10.h, horizontal: 12.w),
+                                ),
+                                onTap: () => _selectAllField(customPriceCtrl),
+                                onChanged: (v) => setSheet(() {
+                                  customPrice = double.tryParse(v) ?? 0.0;
+                                }),
+                              )
+                            : TextField(
+                                controller: priceTier == 2
+                                    ? sp2Ctrl
+                                    : priceTier == 3
+                                        ? sp3Ctrl
+                                        : sp1Ctrl,
+                                textAlign: TextAlign.center,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                        decimal: true),
+                                style: TextStyle(
+                                    fontSize: 16.sp,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.orange.shade800),
+                                decoration: InputDecoration(
+                                  hintText: 'أدخل السعر',
+                                  hintStyle: TextStyle(
+                                      fontSize: 12.sp, color: Colors.grey),
+                                  border: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8.r),
+                                      borderSide: const BorderSide(
+                                          color: Colors.orange)),
+                                  focusedBorder: OutlineInputBorder(
+                                      borderRadius: BorderRadius.circular(8.r),
+                                      borderSide: const BorderSide(
+                                          color: Colors.orange, width: 2)),
+                                  contentPadding: EdgeInsets.symmetric(
+                                      vertical: 10.h, horizontal: 12.w),
+                                ),
+                                onTap: () => _selectAllField(
+                                  priceTier == 2
+                                      ? sp2Ctrl
+                                      : priceTier == 3
+                                          ? sp3Ctrl
+                                          : sp1Ctrl,
+                                ),
+                                onChanged: (v) => setSheet(() {
+                                  final parsed = double.tryParse(v) ?? 0.0;
+                                  if (priceTier == 2) {
+                                    sp2 = parsed;
+                                  } else if (priceTier == 3) {
+                                    sp3 = parsed;
+                                  } else {
+                                    sp1 = parsed;
+                                  }
+                                }),
+                              ),
+                      ),
                       SizedBox(width: 8.w),
                       _PriceTierBtn(
                           label: '3',
@@ -1240,42 +1522,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       SizedBox(width: 8.w),
                       Text('سعر البيع', style: TextStyle(fontSize: 13.sp)),
                     ]),
-                    // ── Custom price input (visible when خاص selected) ──
-                    if (priceTier == 0) ...[  
-                      SizedBox(height: 8.h),
-                      Row(children: [
-                        Expanded(
-                          child: TextField(
-                            controller: customPriceCtrl,
-                            textAlign: TextAlign.center,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
-                            autofocus: true,
-                            style: TextStyle(
-                                fontSize: 16.sp,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange.shade800),
-                            decoration: InputDecoration(
-                              hintText: 'أدخل السعر الخاص',
-                              hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
-                              border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8.r),
-                                  borderSide: const BorderSide(color: Colors.orange)),
-                              focusedBorder: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8.r),
-                                  borderSide: const BorderSide(color: Colors.orange, width: 2)),
-                              contentPadding: EdgeInsets.symmetric(vertical: 10.h, horizontal: 12.w),
-                              prefixIcon: Icon(Icons.edit, size: 18.sp, color: Colors.orange),
-                            ),
-                            onTap: () => _selectAllField(customPriceCtrl),
-                            onChanged: (v) => setSheet(() {
-                              customPrice = double.tryParse(v) ?? 0.0;
-                            }),
-                          ),
-                        ),
-                        SizedBox(width: 8.w),
-                        Text('سعر خاص', style: TextStyle(fontSize: 13.sp)),
-                      ]),
-                    ],
                     SizedBox(height: 10.h),
 
                     // ── الكمية ──
@@ -1562,7 +1808,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 borderRadius: BorderRadius.circular(8.r)),
                             padding: EdgeInsets.symmetric(vertical: 12.h),
                           ),
-                          onPressed: () {
+                          onPressed: () async {
                             Navigator.pop(ctx);
                             if (removeProduct) {
                               if (editIndex != null) {
@@ -1573,6 +1819,16 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               }
                               return;
                             }
+                            await _syncProductPricesToFirestore(
+                              product: product,
+                              sp1: sp1,
+                              sp2: sp2,
+                              sp3: sp3,
+                              sp1Text: sp1Ctrl.text,
+                              sp2Text: sp2Ctrl.text,
+                              sp3Text: sp3Ctrl.text,
+                            );
+                            if (!mounted) return;
                             double price = getPriceForTier(priceTier);
                             double total = calcTotal(
                                 amount, discount, discountIsPercent, priceTier);
@@ -1580,9 +1836,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               'product': product.name,
                               'date': _selectedDate,
                               'amount': amount,
-                              'sellingPrice1': product.sellingPrice1,
-                              'sellingPrice2': product.sellingPrice2,
-                              'sellingPrice3': product.sellingPrice3,
+                              'sellingPrice1': sp1,
+                              'sellingPrice2': sp2,
+                              'sellingPrice3': sp3,
                               'quantity': product.quantity,
                               'selectedPrice': priceTier == 0 ? customPrice : price,
                               'priceTier': priceTier,
@@ -1642,6 +1898,12 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     bool discountIsPercent = !_isEditing;
     String checkoutClient = _clientNameController.text;
     String notes = _isEditing ? _editingNotes : '';
+    double? checkoutClientBalance = checkoutClient.trim().isNotEmpty &&
+            checkoutClient.trim() == _clientNameController.text.trim()
+        ? _clientBalance
+        : null;
+    bool loadingCheckoutClientBalance = false;
+    bool checkoutClientNotFound = false;
 
     final TextEditingController paidCtrl = TextEditingController(
       text: _isEditing
@@ -1664,6 +1926,38 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           borderRadius: BorderRadius.vertical(top: Radius.circular(20.r))),
       builder: (ctx) {
         return StatefulBuilder(builder: (ctx, setSheet) {
+          Future<void> loadCheckoutClientBalance(String clientName) async {
+            if (clientName.trim().isEmpty) {
+              setSheet(() {
+                checkoutClientBalance = null;
+                loadingCheckoutClientBalance = false;
+                checkoutClientNotFound = false;
+              });
+              return;
+            }
+            setSheet(() {
+              loadingCheckoutClientBalance = true;
+              checkoutClientBalance = null;
+              checkoutClientNotFound = false;
+            });
+            final name = clientName.trim();
+            final exists = await _clientExists(name);
+            final bal = exists ? await _fetchClientBalance(name) : 0.0;
+            setSheet(() {
+              checkoutClientNotFound = !exists;
+              checkoutClientBalance = exists ? bal : null;
+              loadingCheckoutClientBalance = false;
+            });
+          }
+
+          if (checkoutClient.trim().isNotEmpty &&
+              checkoutClientBalance == null &&
+              !loadingCheckoutClientBalance) {
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              loadCheckoutClientBalance(checkoutClient);
+            });
+          }
+
           double totalSum = _calculateTotalSum();
           double effectiveDiscountAmt = discountIsPercent
               ? totalSum * invoiceDiscount / 100
@@ -1935,7 +2229,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               onTap: () => _selectAllField(ctrl2),
                               onChanged: (v) {
                                 checkoutClient = v;
-                                setSheet(() {});
+                                setSheet(() {
+                                  checkoutClientBalance = null;
+                                  loadingCheckoutClientBalance = false;
+                                  checkoutClientNotFound = false;
+                                });
+                                if (v.trim().isNotEmpty) {
+                                  loadCheckoutClientBalance(v);
+                                }
                               },
                               decoration: InputDecoration(
                                 hintText:
@@ -1956,11 +2257,107 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               ),
                             );
                           },
-                          onSelected: (c) =>
-                              setSheet(() => checkoutClient = c),
+                          onSelected: (c) {
+                            checkoutClient = c;
+                            setSheet(() => checkoutClientNotFound = false);
+                            loadCheckoutClientBalance(c);
+                            _fetchAndSetClientBalance(c);
+                          },
                         ),
                       ),
                     ]),
+                    if (checkoutClientNotFound) ...[
+                      SizedBox(height: 8.h),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 12.w, vertical: 10.h),
+                        decoration: BoxDecoration(
+                          color: Colors.red.shade50,
+                          borderRadius: BorderRadius.circular(10.r),
+                          border: Border.all(color: Colors.red.shade300),
+                        ),
+                        child: Text(
+                          'هذا العميل غير موجود',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 14.sp,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red.shade700,
+                          ),
+                        ),
+                      ),
+                    ],
+                    if (checkoutClient.trim().isNotEmpty &&
+                        !checkoutClientNotFound) ...[
+                      SizedBox(height: 10.h),
+                      Builder(
+                        builder: (_) {
+                          final balanceBefore = checkoutClientBalance ?? 0.0;
+                          final invoiceUnpaid = totalAfterDiscount - paid;
+                          final balanceAfter = widget.isReturnInvoice
+                              ? balanceBefore - invoiceUnpaid
+                              : balanceBefore + invoiceUnpaid;
+                          final afterLabel = widget.isReturnInvoice
+                              ? 'الرصيد بعد المرتجع (المتبقي عليكم)'
+                              : 'الرصيد بعد الفاتورة (المتبقي عليكم)';
+                          TextStyle balanceStyle(double amount) => TextStyle(
+                                fontSize: 13.sp,
+                                fontWeight: FontWeight.bold,
+                                color: amount > 0
+                                    ? Colors.red.shade700
+                                    : Colors.black87,
+                              );
+                          return Container(
+                            width: double.infinity,
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 12.w, vertical: 10.h),
+                            decoration: BoxDecoration(
+                              color: Colors.orange.withOpacity(0.12),
+                              borderRadius: BorderRadius.circular(10.r),
+                              border: Border.all(
+                                  color: Colors.orange.withOpacity(0.4)),
+                            ),
+                            child: loadingCheckoutClientBalance
+                                ? Row(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      SizedBox(
+                                        width: 18.w,
+                                        height: 18.w,
+                                        child: const CircularProgressIndicator(
+                                          strokeWidth: 2,
+                                        ),
+                                      ),
+                                      SizedBox(width: 8.w),
+                                      Text(
+                                        'جاري تحميل الرصيد...',
+                                        style: TextStyle(fontSize: 13.sp),
+                                      ),
+                                    ],
+                                  )
+                                : Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.stretch,
+                                    children: [
+                                      Text(
+                                        'الرصيد قبل الفاتورة: ${invoiceAmount(balanceBefore)} ج.م',
+                                        textAlign: TextAlign.center,
+                                        style: balanceStyle(balanceBefore),
+                                      ),
+                                      SizedBox(height: 6.h),
+                                      Text(
+                                        '$afterLabel: ${invoiceAmount(balanceAfter)} ج.م',
+                                        textAlign: TextAlign.center,
+                                        style: balanceStyle(balanceAfter)
+                                            .copyWith(fontSize: 14.sp),
+                                      ),
+                                    ],
+                                  ),
+                          );
+                        },
+                      ),
+                    ],
                     SizedBox(height: 10.h),
 
                     // ── ملاحظات ──
@@ -2014,6 +2411,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                           Text('يجب ادخال اسم العميل')));
                               return;
                             }
+                            if (!await _clientExists(checkoutClient.trim())) {
+                              setSheet(() => checkoutClientNotFound = true);
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text('هذا العميل غير موجود'),
+                                ),
+                              );
+                              return;
+                            }
                             final paidAmount =
                                 double.tryParse(paidCtrl.text) ?? 0.0;
                             if (paymentMethod == 'نقداً' &&
@@ -2027,8 +2433,13 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               return;
                             }
                             Navigator.pop(ctx);
-                            await _fetchAndSetClientBalance(
-                                checkoutClient.trim());
+                            final bal = await _fetchClientBalance(
+                              checkoutClient.trim(),
+                            );
+                            if (!mounted) return;
+                            setState(() {
+                              _clientBalance = bal;
+                            });
                             _clientNameController.text =
                                 checkoutClient.trim();
                             _saveData(
@@ -2809,8 +3220,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                         horizontal: 12.w, vertical: 5.h),
                     child: Row(children: [
                       GestureDetector(
-                        onTap: () =>
-                            setState(() => _clientNameController.clear()),
+                        onTap: () => setState(() {
+                          _clientNameController.clear();
+                          _clientBalance = 0.0;
+                        }),
                         child: Container(
                           padding: EdgeInsets.all(4.w),
                           decoration: BoxDecoration(
@@ -2822,11 +3235,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                         ),
                       ),
                       SizedBox(width: 8.w),
-                      if (_clientBalance > 0) ...[
+                      if (_clientBalance > 0)
                         Icon(Icons.warning_amber_rounded,
                             color: Colors.red, size: 18.sp),
-                        SizedBox(width: 4.w),
-                      ],
+                      SizedBox(width: 4.w),
                       Expanded(
                         child: Text(_clientNameController.text,
                             textAlign: TextAlign.right,
@@ -2834,12 +3246,16 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 fontSize: 15.sp,
                                 fontWeight: FontWeight.bold)),
                       ),
-                      if (_clientBalance > 0)
-                        Text(
-                          'رصيد: ${_clientBalance.toStringAsFixed(2)} ج.م',
-                          style: TextStyle(
-                              fontSize: 11.sp, color: Colors.red.shade700),
+                      Text(
+                        'رصيد: ${invoiceAmount(_clientBalance)} ج.م',
+                        style: TextStyle(
+                          fontSize: 12.sp,
+                          fontWeight: FontWeight.w600,
+                          color: _clientBalance > 0
+                              ? Colors.red.shade700
+                              : Colors.black87,
                         ),
+                      ),
                     ]),
                   ),
 
@@ -2893,8 +3309,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 (p['selectedPrice'] as num).toDouble();
                             final hasDiscount =
                                 (p['discount'] ?? 0.0) > 0;
-                            final barcode = p['barcodeNote'] ?? '';
-
                             return GestureDetector(
                               onTap: () =>
                                   _showProductSheet(editIndex: index),
@@ -2939,25 +3353,16 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                             CrossAxisAlignment.end,
                                         children: [
                                           Text(
-                                            p['product']?.toString() ?? '',
+                                            invoiceProductName(p),
                                             textAlign: TextAlign.right,
                                             style: TextStyle(
                                               fontSize: 10.sp,
                                               height: 1.2,
                                               fontWeight: FontWeight.w600,
                                             ),
-                                            maxLines: 2,
+                                            maxLines: 3,
                                             overflow: TextOverflow.ellipsis,
                                           ),
-                                          if (barcode.isNotEmpty)
-                                            Text(
-                                              barcode,
-                                              textAlign: TextAlign.right,
-                                              style: TextStyle(
-                                                fontSize: 10.sp,
-                                                color: Colors.grey,
-                                              ),
-                                            ),
                                         ],
                                       ),
                                     ),
@@ -2965,7 +3370,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       flex: 2,
                                       compact: true,
                                       child: Text(
-                                        price.toStringAsFixed(1),
+                                        invoiceAmount(price),
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
                                           fontSize: 11.sp,
@@ -2983,7 +3388,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                           _incrementInvoiceLineQuantity(
                                               index),
                                       child: Text(
-                                        amount.toStringAsFixed(1),
+                                        invoiceQty(amount),
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
                                           fontSize: 11.sp,
@@ -2999,7 +3404,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
                                           Text(
-                                            total.toStringAsFixed(1),
+                                            invoiceAmount(total),
                                             textAlign: TextAlign.center,
                                             style: TextStyle(
                                               fontSize: 11.sp,
@@ -3082,7 +3487,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                         borderRadius: BorderRadius.circular(8.r),
                       ),
                       child: Text(
-                        totalSum.toStringAsFixed(2),
+                        invoiceAmount(totalSum),
                         style: TextStyle(
                             fontSize: 18.sp,
                             fontWeight: FontWeight.bold,
@@ -3097,7 +3502,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       Text('ج.م',
                           style: TextStyle(
                               fontSize: 11.sp, color: Colors.black54)),
-                      Text(totalQty.toStringAsFixed(1),
+                      Text(invoiceQty(totalQty),
                           style: TextStyle(
                               fontSize: 16.sp,
                               fontWeight: FontWeight.bold,

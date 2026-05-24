@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import 'Services/invoice_number_utils.dart';
+
 class EditProductPage extends StatefulWidget {
   final String productId;
   final Map<String, dynamic> productData;
@@ -27,6 +29,8 @@ class _EditProductPageState extends State<EditProductPage> {
 
   List<String> _departments = [];
   String? _selectedDepartment;
+  bool _onDemand = false;
+  bool _retail = false;
 
   @override
   void initState() {
@@ -42,6 +46,8 @@ class _EditProductPageState extends State<EditProductPage> {
     _randomNumberController = TextEditingController(text: widget.productData['randomNumber'].toString());
     _departmentController = TextEditingController();
     _selectedDepartment = widget.productData['department'];
+    _onDemand = widget.productData['onDemand'] == true;
+    _retail = widget.productData['retail'] == true;
     _loadDepartments();
   }
 
@@ -90,6 +96,8 @@ class _EditProductPageState extends State<EditProductPage> {
         'image': _imageController.text.isNotEmpty ? _imageController.text : null,
         'randomNumber': int.parse(_randomNumberController.text),
         'department': _selectedDepartment,
+        'onDemand': _onDemand,
+        'retail': _retail,
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('تم حفظ البيانات بنجاح')),
@@ -180,6 +188,63 @@ class _EditProductPageState extends State<EditProductPage> {
     );
   }
 
+  Widget _buildProductOptionsCard() {
+    return Card(
+      margin: EdgeInsets.symmetric(horizontal: 20.w, vertical: 8.h),
+      elevation: 2,
+      color: Colors.orange.withOpacity(0.8),
+      child: Padding(
+        padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 4.h),
+        child: Row(
+          children: [
+            Expanded(
+              child: CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  'حسب الطلب',
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black.withOpacity(0.7),
+                  ),
+                ),
+                value: _onDemand,
+                activeColor: Colors.black.withOpacity(0.7),
+                onChanged: (value) {
+                  setState(() {
+                    _onDemand = value ?? false;
+                  });
+                },
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            ),
+            Expanded(
+              child: CheckboxListTile(
+                contentPadding: EdgeInsets.zero,
+                title: Text(
+                  'قطاعي',
+                  style: TextStyle(
+                    fontSize: 16.sp,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.black.withOpacity(0.7),
+                  ),
+                ),
+                value: _retail,
+                activeColor: Colors.black.withOpacity(0.7),
+                onChanged: (value) {
+                  setState(() {
+                    _retail = value ?? false;
+                  });
+                },
+                controlAffinity: ListTileControlAffinity.leading,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -210,6 +275,7 @@ class _EditProductPageState extends State<EditProductPage> {
               ),
               _buildCard('الصورة', _imageController, TextInputType.text, isOptional: true),
               _buildDepartmentDropdown(),
+              _buildProductOptionsCard(),
               SizedBox(height: 20.h),
               Center(
                 child: ElevatedButton(
@@ -310,7 +376,7 @@ class ProductChangesPage extends StatelessWidget {
               rows: changes.map((change) {
                 return DataRow(cells: [
                   DataCell(Text((change['date'] as Timestamp).toDate().toString().split(' ')[0], style: TextStyle(fontSize: 14.sp))),
-                  DataCell(Text(change['amount'].toStringAsFixed(2), style: TextStyle(fontSize: 14.sp))),
+                  DataCell(Text(invoiceAmount(change['amount']), style: TextStyle(fontSize: 14.sp))),
                   DataCell(Text(
                     change['type'] == 'decrease' ? 'بيع' : change['type'] == 'update' ? 'تحديث' : 'شراء',
                     style: TextStyle(fontSize: 14.sp),

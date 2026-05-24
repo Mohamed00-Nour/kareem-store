@@ -7,11 +7,11 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import '../models/invoice_app_footer.dart';
+import 'invoice_number_utils.dart';
 import 'printer_settings_service.dart';
 
 class SalesInvoicePdfService {
-  static final _money = NumberFormat('#,##0.00', 'en_US');
-
   static Future<File> generate(Map<String, dynamic> invoice) async {
     final settings = await PrinterSettingsService.load();
     final amiriRegular =
@@ -47,9 +47,9 @@ class SalesInvoicePdfService {
         List<Map<String, dynamic>>.from(invoice['products'] ?? []);
     final totalSum = (invoice['totalSum'] as num?)?.toDouble() ?? 0.0;
     final paid = (invoice['paidAmount'] as num?)?.toDouble() ?? 0.0;
-    final balance = (invoice['balance'] as num?)?.toDouble() ?? 0.0;
     final previous =
         (invoice['previousBalance'] as num?)?.toDouble() ?? 0.0;
+    final balance = invoiceBalanceAfter(invoice);
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
     final qtySum = products.fold<double>(
@@ -144,16 +144,16 @@ class SalesInvoicePdfService {
                   for (final p in products)
                     pw.TableRow(
                       children: [
-                        d(p['product']?.toString() ?? ''),
+                        d(invoiceProductName(p)),
                         d(p['amount']?.toString() ?? ''),
-                        d(_formatMoney(_num(p['selectedPrice']))),
-                        d(_formatMoney(_num(p['total']))),
+                        d(invoiceAmount(p['selectedPrice'])),
+                        d(invoiceAmount(p['total'])),
                       ],
                     ),
                   pw.TableRow(
                     children: [
                       d(''),
-                      d(qtySum.toStringAsFixed(1)),
+                      d(invoiceQty(qtySum)),
                       d(''),
                       d(''),
                     ],
@@ -162,13 +162,20 @@ class SalesInvoicePdfService {
               ),
               pw.SizedBox(height: 12),
               rtl(
-                  '${settings.labels.previousBalance} : ${_formatMoney(previous)}'),
-              rtl('إجمالي ف. : ${_formatMoney(totalSum)}', bold: true),
-              rtl('${settings.labels.paid} : ${_formatMoney(paid)}'),
-              rtl('الرصيد الحالي (عليكم) : ${_formatMoney(balance)}',
+                  '${settings.labels.previousBalance} : ${invoiceAmount(previous)}'),
+              rtl('إجمالي ف. : ${invoiceAmount(totalSum)}', bold: true),
+              rtl('${settings.labels.paid} : ${invoiceAmount(paid)}'),
+              rtl('الرصيد الحالي (عليكم) : ${invoiceAmount(balance)}',
                   bold: true),
               if ((invoice['notes']?.toString() ?? '').isNotEmpty)
                 rtl('ملاحظات: ${invoice['notes']}'),
+              pw.SizedBox(height: 10),
+              for (final line
+                  in InvoiceAppFooter.resolveLines(settings.salesInvoiceFooter))
+                pw.Padding(
+                  padding: const pw.EdgeInsets.only(top: 3),
+                  child: pw.Center(child: center(line, fontSize: 9)),
+                ),
             ],
           );
         },
@@ -181,8 +188,6 @@ class SalesInvoicePdfService {
     await file.writeAsBytes(await pdf.save());
     return file;
   }
-
-  static String _formatMoney(double value) => _money.format(value);
 
   static double _num(dynamic value) {
     if (value is num) return value.toDouble();

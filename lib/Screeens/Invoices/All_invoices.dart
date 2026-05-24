@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../Services/invoice_special_service.dart';
 import 'InvoiceDetailPage.dart';
 
 class InvoiceListPage extends StatefulWidget {
@@ -65,8 +66,11 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
       if (!mounted) return;
       setState(() {
         _invoices.clear();
-        _invoices.addAll(querySnapshot.docs
-            .map((doc) => doc.data() as Map<String, dynamic>));
+        _invoices.addAll(querySnapshot.docs.map((doc) {
+          final data = Map<String, dynamic>.from(doc.data() as Map);
+          data['id'] = doc.id;
+          return data;
+        }));
         _filterInvoices(); // Apply filtering after fetching
         _isFetching = false;
       });
@@ -180,10 +184,12 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   }
 
   Future<void> _navigateToInvoiceDetail(Map<String, dynamic> invoice) async {
+    final payload = Map<String, dynamic>.from(invoice);
+    payload['_sourceCollection'] = widget.collection;
     final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (context) => InvoiceDetailPage(invoice: invoice),
+        builder: (context) => InvoiceDetailPage(invoice: payload),
       ),
     );
     if (changed == true) {
@@ -328,10 +334,16 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
               itemCount: _filteredInvoices.length,
               itemBuilder: (context, index) {
                 final invoice = _filteredInvoices[index];
+                final special = InvoiceSpecialService.isSpecial(invoice);
                 return Card(
-                  color: Colors.orange.withOpacity(0.8),
+                  color: special
+                      ? Colors.amber.shade100
+                      : Colors.orange.withOpacity(0.8),
                   elevation: 2,
                   child: ListTile(
+                    leading: special
+                        ? Icon(Icons.star, color: Colors.amber.shade800)
+                        : null,
                     title: Center(
                         child: Text('فاتورة #${invoice['invoiceNumber']}')),
                     subtitle: Center(

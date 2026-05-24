@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
-import 'package:intl/intl.dart';
+import '../models/invoice_app_footer.dart';
+import '../Services/invoice_number_utils.dart';
 
 /// Full invoice layout captured as PNG for WhatsApp / sharing.
 class InvoiceReceiptCard extends StatelessWidget {
@@ -23,15 +24,15 @@ class InvoiceReceiptCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final products =
         List<Map<String, dynamic>>.from(invoice['products'] ?? []);
-    final previousBalance = _num(invoice['previousBalance']);
-    final totalSum = _num(invoice['totalSum']);
-    final paid = _num(invoice['paidAmount']);
-    final clientBalance = previousBalance + totalSum - paid;
+    final previousBalance = invoiceNum(invoice['previousBalance']);
+    final totalSum = invoiceNum(invoice['totalSum']);
+    final paid = invoiceNum(invoice['paidAmount']);
+    final clientBalance = invoiceBalanceAfter(invoice);
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
     final qtySum = products.fold<double>(
       0,
-      (s, p) => s + _num(p['amount']),
+      (s, p) => s + invoiceNum(p['amount']),
     );
 
     return Container(
@@ -109,6 +110,21 @@ class InvoiceReceiptCard extends StatelessWidget {
               style: const TextStyle(fontSize: 12),
             ),
           ],
+          const SizedBox(height: 10),
+          ...InvoiceAppFooter.resolveLines().map(
+            (line) => Padding(
+              padding: const EdgeInsets.only(top: 2),
+              child: Text(
+                line,
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                  fontSize: 10,
+                  color: Colors.black54,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
         ],
       ),
     );
@@ -132,10 +148,10 @@ class InvoiceReceiptCard extends StatelessWidget {
     final productRows = products.asMap().entries.map((entry) {
       final index = entry.key + 1;
       final p = entry.value;
-      final name = p['product']?.toString() ?? '';
-      final qty = _formatQty(_num(p['amount']));
-      final price = _formatMoneyCompact(_num(p['selectedPrice']));
-      final total = _formatMoneyCompact(_num(p['total']));
+      final name = invoiceProductName(p);
+      final qty = invoiceQty(p['amount']);
+      final price = invoiceAmount(p['selectedPrice']);
+      final total = invoiceAmount(p['total']);
       final cells = [total, price, qty, name, '$index'];
       return TableRow(
         children: cells.map((val) {
@@ -168,7 +184,7 @@ class InvoiceReceiptCard extends StatelessWidget {
       children: [
         _cell(''),
         _cell(''),
-        _cell(_formatQty(qtySum), bold: true),
+        _cell(invoiceQty(qtySum), bold: true),
         _cell('إجمالي الكميات', bold: true),
         _cell(''),
       ],
@@ -193,13 +209,6 @@ class InvoiceReceiptCard extends StatelessWidget {
         totalRow,
       ],
     );
-  }
-
-  static String _formatMoneyCompact(double value) {
-    if (value == value.roundToDouble()) {
-      return NumberFormat('#,##0', 'en_US').format(value);
-    }
-    return _money.format(value);
   }
 
   Widget _metaTable(String typeLabel, String invoiceNo, _InvoiceWhen when) {
@@ -246,11 +255,11 @@ class InvoiceReceiptCard extends StatelessWidget {
         1: FlexColumnWidth(2),
       },
       children: [
-        _summaryTableRow('الرصيد السابق', _formatMoney(previousBalance)),
-        _summaryTableRow('إجمالي ف.', _formatMoney(totalSum), bold: true),
-        _summaryTableRow('المدفوع', _formatMoney(paid)),
+        _summaryTableRow('الرصيد السابق', invoiceAmount(previousBalance)),
+        _summaryTableRow('إجمالي ف.', invoiceAmount(totalSum), bold: true),
+        _summaryTableRow('المدفوع', invoiceAmount(paid)),
         _summaryTableRow(
-            'الرصيد الحالي (عليكم)', _formatMoney(balance), bold: true),
+            'الرصيد الحالي (عليكم)', invoiceAmount(balance), bold: true),
       ],
     );
   }
@@ -283,22 +292,6 @@ class InvoiceReceiptCard extends StatelessWidget {
         ),
       ],
     );
-  }
-
-  static final _money = NumberFormat('#,##0.00', 'en_US');
-
-  static String _formatMoney(double value) => _money.format(value);
-
-  static String _formatQty(double value) {
-    if (value == value.roundToDouble()) {
-      return value.toStringAsFixed(0);
-    }
-    return value.toStringAsFixed(1);
-  }
-
-  static double _num(dynamic value) {
-    if (value is num) return value.toDouble();
-    return double.tryParse(value?.toString() ?? '') ?? 0.0;
   }
 
   static String _paymentTypeLabel(dynamic method) {

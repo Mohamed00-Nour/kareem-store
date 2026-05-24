@@ -48,11 +48,9 @@ class InvoiceProductsTable extends StatelessWidget {
       .map((e) => Map<String, dynamic>.from(e))
       .toList();
 
-  String _productName(Map<String, dynamic> row) =>
-      row['product']?.toString() ?? '';
+  String _productName(Map<String, dynamic> row) => invoiceProductName(row);
 
-  String _qty(Map<String, dynamic> row) =>
-      invoiceAmount(row['amount'], 2);
+  String _qty(Map<String, dynamic> row) => invoiceQty(row['amount']);
 
   String _price(Map<String, dynamic> row) {
     if (kind == InvoiceDisplayKind.purchase) {
@@ -67,13 +65,13 @@ class InvoiceProductsTable extends StatelessWidget {
       if (stored != null) return invoiceAmount(stored, 2);
       final q = invoiceNum(row['amount']);
       final c = invoiceNum(row['cost'] ?? row['selectedPrice']);
-      return (q * c).toStringAsFixed(2);
+      return invoiceAmount(q * c);
     }
     final stored = row['total'] ?? row['totalCost'];
     if (stored != null) return invoiceAmount(stored, 2);
     final q = invoiceNum(row['amount']);
     final p = invoiceNum(row['selectedPrice'] ?? row['cost']);
-    return (q * p).toStringAsFixed(2);
+    return invoiceAmount(q * p);
   }
 
   @override
@@ -166,7 +164,7 @@ class InvoiceProductsTable extends StatelessWidget {
           children: [
             const SizedBox.shrink(),
             const SizedBox.shrink(),
-            valueCell(qtySum.toStringAsFixed(1), bold: true),
+            valueCell(invoiceQty(qtySum), bold: true),
             const SizedBox.shrink(),
             const SizedBox.shrink(),
           ],
@@ -176,7 +174,7 @@ class InvoiceProductsTable extends StatelessWidget {
   }
 }
 
-/// Footer: الرصيد السابق، إجمالي، المدفوع، المتبقي.
+/// Footer: الرصيد السابق، إجمالي، المدفوع، المتبقي (balance after invoice).
 class InvoiceTotalsFooter extends StatelessWidget {
   final Map<String, dynamic> invoice;
 
@@ -187,9 +185,10 @@ class InvoiceTotalsFooter extends StatelessWidget {
     final previous = invoiceNum(invoice['previousBalance']);
     final total = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
-    final remaining = invoice.containsKey('balance')
-        ? invoiceNum(invoice['balance'])
-        : (total - paid);
+    final remaining = invoiceBalanceAfter(invoice);
+    final remainingLabel = invoiceIsSupplierPurchase(invoice)
+        ? 'المتبقي للمورد'
+        : 'المتبقي عليكم';
 
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 10.h),
@@ -202,7 +201,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
               Row(
                 children: [
                   Text(
-                    'الرصيد السابق: ${previous.toStringAsFixed(2)}',
+                    'الرصيد السابق: ${invoiceAmount(previous)}',
                     style: TextStyle(
                       fontSize: 14.sp,
                       fontWeight: FontWeight.bold,
@@ -210,7 +209,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
                   ),
                   SizedBox(width: 20.w),
                   Text(
-                    'إجمالي الفاتورة: ${total.toStringAsFixed(2)}',
+                    'إجمالي الفاتورة: ${invoiceAmount(total)}',
                     style: TextStyle(
                       fontSize: 14.sp,
                       fontWeight: FontWeight.bold,
@@ -219,7 +218,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
                 ],
               ),
               Text(
-                'المدفوع: ${paid.toStringAsFixed(2)}',
+                'المدفوع: ${invoiceAmount(paid)}',
                 style: TextStyle(
                   fontSize: 16.sp,
                   fontWeight: FontWeight.bold,
@@ -227,7 +226,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
                 ),
               ),
               Text(
-                'المتبقي: ${remaining.toStringAsFixed(2)}',
+                '$remainingLabel: ${invoiceAmount(remaining)}',
                 style: TextStyle(
                   fontSize: 14.sp,
                   fontWeight: FontWeight.bold,

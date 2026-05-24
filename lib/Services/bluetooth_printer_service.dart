@@ -2,6 +2,7 @@ import 'package:flutter/foundation.dart';
 
 import '../models/paired_bluetooth_device.dart';
 import 'app_error_logger.dart';
+import '../models/invoice_app_footer.dart';
 import '../models/invoice_receipt_print_data.dart';
 import '../models/printer_settings.dart';
 import 'bluetooth_permission_service.dart';
@@ -102,16 +103,20 @@ class BluetoothPrinterService {
     return ThermalPrintChannel.writeBytes(bytes);
   }
 
-  static Future<bool> _finishReceipt(PrinterSettings settings) async {
+  static Future<bool> _finishReceipt(
+    PrinterSettings settings, {
+    bool skipInvoiceFooter = false,
+  }) async {
     final trailingLines =
         settings.textHeightPosition + settings.bottomMargin;
     for (var i = 0; i < trailingLines; i++) {
       final ok = await _writeLine('\n', size: 1, paperSize: settings.paperSize);
       if (!ok) return false;
     }
-    if (settings.salesInvoiceFooter.isNotEmpty) {
+    if (!skipInvoiceFooter) {
+      final footer = InvoiceAppFooter.resolve(settings.salesInvoiceFooter);
       final ok = await _writeLine(
-        settings.salesInvoiceFooter,
+        '$footer\n',
         size: _textSizeFromFont(settings.fontSize),
         paperSize: settings.paperSize,
       );
@@ -187,7 +192,9 @@ class BluetoothPrinterService {
       if (!await ThermalPrintChannel.printReceiptTable(receipt)) {
         return false;
       }
-      if (!await _finishReceipt(settings)) return false;
+      if (!await _finishReceipt(settings, skipInvoiceFooter: true)) {
+        return false;
+      }
     }
     return true;
   }

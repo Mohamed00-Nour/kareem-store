@@ -4,7 +4,6 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
-import 'package:uuid/uuid.dart';
 import 'dart:math';
 
 class DataEntryScreen extends StatefulWidget {
@@ -36,6 +35,7 @@ class _DataEntryScreenState extends State<DataEntryScreen> {
   bool _retail = false;
 
   bool _isLoading = false;
+  bool _isAddingProduct = false;
   File? _selectedImage;
 
   @override
@@ -97,36 +97,65 @@ Future<void> _addDepartment() async {
     }
   }
 }
-void _addProduct() async {
-  if (_formKey.currentState!.validate()) {
-    String productName = _productNameController.text.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+double _optionalDouble(TextEditingController controller) {
+  final text = controller.text.trim();
+  if (text.isEmpty) return 0.0;
+  return double.tryParse(text) ?? 0.0;
+}
 
-    // Check if the product already exists in the local list
-    if (_products.any((product) => product.name == productName)) {
+Future<bool> _productExistsInDatabase(String productName) async {
+  final productsRef = FirebaseFirestore.instance.collection('products');
+  final doc = await productsRef.doc(productName).get();
+  if (doc.exists) return true;
+  final query =
+      await productsRef.where('name', isEqualTo: productName).limit(1).get();
+  return query.docs.isNotEmpty;
+}
+
+Future<void> _addProduct() async {
+  if (!_formKey.currentState!.validate()) return;
+
+  final productName = _productNameController.text
+      .trim()
+      .replaceAll(RegExp(r'\s+'), ' ')
+      .toLowerCase();
+
+  if (_products.any((product) => product.name == productName)) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('المنتج موجود بالفعل في القائمة')),
+    );
+    return;
+  }
+
+  setState(() => _isAddingProduct = true);
+  try {
+    if (await _productExistsInDatabase(productName)) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('المنتج موجود بالفعل في القائمة')),
+        const SnackBar(
+            content: Text('المنتج موجود بالفعل في قاعدة البيانات')),
       );
       return;
     }
 
-    var uuid = Uuid();
-    var random = Random();
-    Product newProduct = Product(
+    final random = Random();
+    final newProduct = Product(
       id: productName,
       randomNumber: random.nextInt(1000000),
       name: productName,
       department: _selectedDepartment ?? '',
-      sellingPrice1: double.parse(_sellingPrice1Controller.text),
-      sellingPrice2: double.parse(_sellingPrice2Controller.text),
-      sellingPrice3: double.parse(_sellingPrice3Controller.text),
-      costPrice: double.parse(_costPriceController.text),
-      quantity: int.parse(_quantityController.text),
-      alertAmount: int.parse(_alertAmountController.text),
+      sellingPrice1: _optionalDouble(_sellingPrice1Controller),
+      sellingPrice2: _optionalDouble(_sellingPrice2Controller),
+      sellingPrice3: _optionalDouble(_sellingPrice3Controller),
+      costPrice: _optionalDouble(_costPriceController),
+      quantity: _optionalDouble(_quantityController),
+      alertAmount: _optionalDouble(_alertAmountController),
       onDemand: _onDemand,
       retail: _retail,
       image: _selectedImage?.path,
     );
 
+    if (!mounted) return;
     setState(() {
       _products.add(newProduct);
       _productNameController.clear();
@@ -142,43 +171,62 @@ void _addProduct() async {
       _onDemand = false;
       _retail = false;
     });
+  } catch (e) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('خطأ أثناء التحقق من المنتج: $e')),
+    );
+  } finally {
+    if (mounted) setState(() => _isAddingProduct = false);
   }
 }
 
 Future<void> _saveData() async {
-  if (_isLoading) return; // Prevent multiple triggers
+  if (_isLoading) return;
+  if (_products.isEmpty) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('لا توجد منتجات للحفظ')),
+    );
+    return;
+  }
 
-  setState(() {
-    _isLoading = true;
-  });
+  setState(() => _isLoading = true);
 
   try {
-    // Save products
-    if (_products.isNotEmpty) {
-      CollectionReference productsRef = FirebaseFirestore.instance.collection('products');
-      for (var product in _products) {
-        // Check if the product already exists in Firestore
-        QuerySnapshot query = await productsRef.where('name', isEqualTo: product.name).get();
-        if (query.docs.isEmpty) {
-          if (product.image != null) {
-            product.image = await _uploadImage(File(product.image!));
-          }
-          await productsRef.doc(product.id).set(product.toMap());
-        }
+    final productsRef =
+        FirebaseFirestore.instance.collection('products');
+    var savedCount = 0;
+    var skippedCount = 0;
+
+    for (final product in _products) {
+      if (await _productExistsInDatabase(product.name)) {
+        skippedCount++;
+        continue;
       }
+      if (product.image != null) {
+        product.image = await _uploadImage(File(product.image!));
+      }
+      await productsRef.doc(product.id).set(product.toMap());
+      savedCount++;
     }
 
+    if (!mounted) return;
+    if (savedCount > 0) {
+      setState(() => _products.clear());
+    }
+    final message = skippedCount > 0
+        ? 'تم حفظ $savedCount منتج، وتخطي $skippedCount موجود مسبقاً'
+        : 'تم حفظ البيانات بنجاح';
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('تم حفظ البيانات بنجاح')),
-    );  
+      SnackBar(content: Text(message)),
+    );
   } catch (e) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('Error saving data: $e')),
+      SnackBar(content: Text('خطأ أثناء الحفظ: $e')),
     );
   } finally {
-    setState(() {
-      _isLoading = false;
-    });
+    if (mounted) setState(() => _isLoading = false);
   }
 }
 
@@ -319,20 +367,30 @@ Future<void> _saveData() async {
                   _buildProductInputSection(),
                   SizedBox(height: 15.h),
                   ElevatedButton(
-                    onPressed: _saveData,
+                    onPressed: _isLoading ? null : _saveData,
                     style: ElevatedButton.styleFrom(
                       shape: RoundedRectangleBorder(
                         borderRadius: BorderRadius.circular(8.0.r),
                       ),
                       backgroundColor: Colors.black.withOpacity(0.7),
+                      disabledBackgroundColor: Colors.grey.shade500,
                     ),
-                    child: Text(
-                      'حفظ البيانات',
-                      style: TextStyle(
-                        fontSize: 18.sp,
-                        color: Colors.white.withOpacity(1),
-                      ),
-                    ),
+                    child: _isLoading
+                        ? SizedBox(
+                            width: 22.w,
+                            height: 22.w,
+                            child: const CircularProgressIndicator(
+                              strokeWidth: 2,
+                              color: Colors.white,
+                            ),
+                          )
+                        : Text(
+                            'حفظ البيانات',
+                            style: TextStyle(
+                              fontSize: 18.sp,
+                              color: Colors.white.withOpacity(1),
+                            ),
+                          ),
                   ),
                 ],
               ),
@@ -363,22 +421,33 @@ Future<void> _saveData() async {
                   fontSize: 18.sp,
                   fontWeight: FontWeight.bold,
                   color: Colors.black.withOpacity(0.7))),
-          _buildTextField('اسم المنتج', _productNameController),
+          _buildTextField('اسم المنتج', _productNameController, required: true),
           Row(
             children: [
-              Expanded(child: _buildTextField('سعر البيع 1', _sellingPrice1Controller, isNumber: true)),
+              Expanded(
+                  child: _buildTextField('سعر البيع 1', _sellingPrice1Controller,
+                      isNumber: true)),
               SizedBox(width: 8.w),
-              Expanded(child: _buildTextField('سعر البيع 2', _sellingPrice2Controller, isNumber: true)),
+              Expanded(
+                  child: _buildTextField('سعر البيع 2', _sellingPrice2Controller,
+                      isNumber: true)),
               SizedBox(width: 8.w),
-              Expanded(child: _buildTextField('سعر البيع 3', _sellingPrice3Controller, isNumber: true)),
+              Expanded(
+                  child: _buildTextField('سعر البيع 3', _sellingPrice3Controller,
+                      isNumber: true)),
             ],
           ),
           _buildTextField('سعر التكلفة', _costPriceController, isNumber: true),
           Row(
             children: [
-              Expanded(child: _buildTextField('الكمية', _quantityController, isNumber: true)),
+              Expanded(
+                  child: _buildTextField('الكمية', _quantityController,
+                      isNumber: true)),
               SizedBox(width: 8.w),
-              Expanded(child: _buildTextField('الكمية التنبيهية', _alertAmountController, isNumber: true)),
+              Expanded(
+                  child: _buildTextField(
+                      'الكمية التنبيهية', _alertAmountController,
+                      isNumber: true)),
             ],
           ),
           _buildDepartmentDropdown(),
@@ -445,20 +514,30 @@ Future<void> _saveData() async {
             Image.file(_selectedImage!, height: 100.h, width: 100.w),
           Center(
             child: ElevatedButton(
-              onPressed: _addProduct,
+              onPressed: _isAddingProduct || _isLoading ? null : _addProduct,
               style: ElevatedButton.styleFrom(
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(8.0.r),
                 ),
                 backgroundColor: Colors.black.withOpacity(0.7),
+                disabledBackgroundColor: Colors.grey.shade500,
               ),
-              child: Text(
-                'إضافة المنتج',
-                style: TextStyle(
-                  fontSize: 18.sp,
-                  color: Colors.white.withOpacity(1),
-                ),
-              ),
+              child: _isAddingProduct
+                  ? SizedBox(
+                      width: 22.w,
+                      height: 22.w,
+                      child: const CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.white,
+                      ),
+                    )
+                  : Text(
+                      'إضافة المنتج',
+                      style: TextStyle(
+                        fontSize: 18.sp,
+                        color: Colors.white.withOpacity(1),
+                      ),
+                    ),
             ),
           ),
           Wrap(
@@ -480,7 +559,12 @@ Future<void> _saveData() async {
     );
   }
 
-  Widget _buildTextField(String hint, TextEditingController controller, {bool isNumber = false}) {
+  Widget _buildTextField(
+    String hint,
+    TextEditingController controller, {
+    bool isNumber = false,
+    bool required = false,
+  }) {
     return Card(
       margin: EdgeInsets.symmetric(vertical: 8.h),
       elevation: 2,
@@ -489,20 +573,30 @@ Future<void> _saveData() async {
         padding: EdgeInsets.all(5.w),
         child: TextFormField(
           controller: controller,
-          keyboardType: isNumber ? TextInputType.number : TextInputType.text,
+          keyboardType: isNumber
+              ? const TextInputType.numberWithOptions(decimal: true)
+              : TextInputType.text,
           decoration: InputDecoration(
             hintText: hint,
             border: InputBorder.none,
           ),
           validator: (value) {
-            if (value == null || value.isEmpty) {
+            final text = value?.trim() ?? '';
+            if (required && text.isEmpty) {
               return 'هذا الحقل مطلوب';
             }
-            if (isNumber && double.tryParse(value) == null) {
+            if (isNumber && text.isNotEmpty && double.tryParse(text) == null) {
               return 'يرجى إدخال رقم صالح';
             }
-            if (hint.startsWith('سعر بيع') && double.tryParse(value)! <= double.tryParse(_costPriceController.text)!) {
-              return 'يجب أن يكون سعر البيع أكبر من سعر التكلفة';
+            if (hint.startsWith('سعر بيع') && text.isNotEmpty) {
+              final sell = double.tryParse(text);
+              final costText = _costPriceController.text.trim();
+              if (sell != null &&
+                  costText.isNotEmpty &&
+                  double.tryParse(costText) != null &&
+                  sell <= double.parse(costText)) {
+                return 'يجب أن يكون سعر البيع أكبر من سعر التكلفة';
+              }
             }
             return null;
           },
@@ -521,8 +615,8 @@ class Product {
   double sellingPrice2;
   double sellingPrice3;
   double costPrice;
-  int quantity;
-  int alertAmount;
+  double quantity;
+  double alertAmount;
   bool onDemand;
   bool retail;
   String? image;

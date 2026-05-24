@@ -305,7 +305,7 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         const Text(
-                          'المتبقي على الفاتورة',
+                          'المتبقي عليكم',
                           style: TextStyle(
                             fontWeight: FontWeight.bold,
                             fontSize: 14,
@@ -318,8 +318,11 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
                             final paid = double.tryParse(
                                     value.text.replaceAll(',', '.')) ??
                                 0.0;
-                            final remaining = (invoiceTotal - paid)
-                                .clamp(0.0, double.infinity);
+                            final preview = Map<String, dynamic>.from(
+                                widget.invoiceData);
+                            preview['totalSum'] = invoiceTotal;
+                            preview['paidAmount'] = paid;
+                            final remaining = invoiceBalanceAfter(preview);
                             return Text(
                               remaining.toStringAsFixed(2),
                               style: TextStyle(

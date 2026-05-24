@@ -42,6 +42,7 @@ class ReceiptTableRenderer(private val context: Context) {
         val qtyTotalLine: String?,
         val summaryTableRows: List<List<String>>,
         val trailingLines: List<String>,
+        val salesFooter: String,
     )
 
     private var arabicTypeface: Typeface? = null
@@ -444,6 +445,14 @@ class ReceiptTableRenderer(private val context: Context) {
         totalH += 6
         totalH += measureSummaryTable(payload.summaryTableRows, width, paint)
         totalH += measureRtlBlock(payload.trailingLines, width, paint)
+        if (payload.salesFooter.isNotBlank()) {
+            totalH += measureCenteredBlock(
+                payload.salesFooter.split('\n').filter { it.isNotBlank() },
+                width,
+                paint,
+            )
+            totalH += 4
+        }
         totalH += 12
 
         val sliceHeight = 24
@@ -513,6 +522,9 @@ class ReceiptTableRenderer(private val context: Context) {
         y += 4
         y = drawSummaryTable(canvas, y, width, payload.summaryTableRows, paint, linePaint, rowFillPaint)
         drawRtlLines(payload.trailingLines)
+        if (payload.salesFooter.isNotBlank()) {
+            drawCenteredLines(payload.salesFooter.split('\n').filter { it.isNotBlank() })
+        }
 
         return bitmap
     }
@@ -669,6 +681,7 @@ class ReceiptTableRenderer(private val context: Context) {
                 summaryTableRows = summaryRows,
                 trailingLines = (map["trailingLines"] as? List<*>)
                     ?.mapNotNull { it?.toString() } ?: emptyList(),
+                salesFooter = map["salesFooter"]?.toString()?.trim() ?: "",
             )
         }
     }
