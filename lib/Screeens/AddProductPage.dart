@@ -29,6 +29,7 @@ class _AddProductPageState extends State<AddProductPage> {
   Supplier? _selectedSupplier;
   DateTime? _selectedDate;
   final List<Map<String, dynamic>> _addedProducts = [];
+  int _lineIdCounter = 0;
   final TextEditingController _dateController = TextEditingController();
   TextEditingController _productController = TextEditingController();
   bool _dataModified = false;
@@ -91,6 +92,21 @@ class _AddProductPageState extends State<AddProductPage> {
   double _calculateTotalSum() {
     return _addedProducts.fold(
         0.0, (sum, p) => sum + (p['totalCost'] as num).toDouble());
+  }
+
+  void _assignLineId(Map<String, dynamic> entry) {
+    entry.putIfAbsent('lineId', () => _lineIdCounter++);
+  }
+
+  void _reorderAddedProducts(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) {
+        newIndex -= 1;
+      }
+      final item = _addedProducts.removeAt(oldIndex);
+      _addedProducts.insert(newIndex, item);
+      _dataModified = true;
+    });
   }
 
   void _pickDate() async {
@@ -849,6 +865,10 @@ class _AddProductPageState extends State<AddProductPage> {
                               'newSellingPrice3': sp3,
                               'expiryDate': expiryDate,
                             };
+                            if (editIndex != null) {
+                              final lineId = _addedProducts[editIndex]['lineId'];
+                              if (lineId != null) entry['lineId'] = lineId;
+                            }
                             setState(() {
                               if (editIndex != null) {
                                 _addedProducts[editIndex] = entry;
@@ -856,8 +876,11 @@ class _AddProductPageState extends State<AddProductPage> {
                                 int idx = _addedProducts.indexWhere(
                                     (p) => p['product'] == product.name);
                                 if (idx != -1) {
+                                  final lineId = _addedProducts[idx]['lineId'];
+                                  if (lineId != null) entry['lineId'] = lineId;
                                   _addedProducts[idx] = entry;
                                 } else {
+                                  _assignLineId(entry);
                                   _addedProducts.add(entry);
                                 }
                               }
@@ -1805,10 +1828,12 @@ class _AddProductPageState extends State<AddProductPage> {
                             ],
                           ),
                         )
-                      : ListView.builder(
+                      : ReorderableListView.builder(
                           padding:
                               EdgeInsets.only(top: 4.h, bottom: 80.h),
+                          buildDefaultDragHandles: false,
                           itemCount: _addedProducts.length,
+                          onReorder: _reorderAddedProducts,
                           itemBuilder: (context, index) {
                             final p = _addedProducts[index];
                             final amount =
@@ -1816,7 +1841,10 @@ class _AddProductPageState extends State<AddProductPage> {
                             final cost = (p['cost'] as num).toDouble();
                             final totalCost =
                                 (p['totalCost'] as num).toDouble();
-                            return GestureDetector(
+                            return Material(
+                              key: ValueKey(p['lineId'] ?? index),
+                              color: Colors.transparent,
+                              child: GestureDetector(
                               onTap: () =>
                                   _showProductSheet(editIndex: index),
                               child: Container(
@@ -1835,12 +1863,15 @@ class _AddProductPageState extends State<AddProductPage> {
                                   ],
                                 ),
                                 child: Row(children: [
-                                  Container(
-                                    width: 28.w,
-                                    alignment: Alignment.center,
-                                    child: Icon(Icons.drag_handle,
-                                        color: Colors.grey.shade400,
-                                        size: 20.sp),
+                                  ReorderableDragStartListener(
+                                    index: index,
+                                    child: Container(
+                                      width: 28.w,
+                                      alignment: Alignment.center,
+                                      child: Icon(Icons.drag_handle,
+                                          color: Colors.grey.shade400,
+                                          size: 20.sp),
+                                    ),
                                   ),
                                   Expanded(
                                       flex: 3,
@@ -1879,6 +1910,7 @@ class _AddProductPageState extends State<AddProductPage> {
                                   ),
                                 ]),
                               ),
+                            ),
                             );
                           },
                         ),

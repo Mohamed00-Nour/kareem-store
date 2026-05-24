@@ -64,6 +64,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   DateTime? _selectedDate;
 
   final List<Map<String, dynamic>> _addedProducts = [];
+  int _lineIdCounter = 0;
   final TextEditingController _dateController = TextEditingController();
   bool _dataModified = false;
   bool _isSaving = false;
@@ -664,6 +665,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     for (final p in products) {
       _addedProducts.add(Map<String, dynamic>.from(p as Map));
     }
+    _ensureAllLineIds();
 
     _editingPaymentMethod = inv['paymentMethod']?.toString() ?? 'نقداً';
     _editingNotes = inv['notes']?.toString() ?? '';
@@ -706,6 +708,33 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
   double _calculateTotalSum() {
     return _addedProducts.fold(0.0, (sum, product) => sum + product['total']);
+  }
+
+  void _assignLineId(Map<String, dynamic> entry) {
+    entry.putIfAbsent('lineId', () => _lineIdCounter++);
+  }
+
+  void _ensureAllLineIds() {
+    for (final p in _addedProducts) {
+      _assignLineId(p);
+    }
+    for (final p in _addedProducts) {
+      final id = p['lineId'];
+      if (id is int && id >= _lineIdCounter) {
+        _lineIdCounter = id + 1;
+      }
+    }
+  }
+
+  void _reorderAddedProducts(int oldIndex, int newIndex) {
+    setState(() {
+      if (newIndex > oldIndex) {
+        newIndex -= 1;
+      }
+      final item = _addedProducts.removeAt(oldIndex);
+      _addedProducts.insert(newIndex, item);
+      _dataModified = true;
+    });
   }
 
   Future<void> _fetchProducts() async {
@@ -1847,6 +1876,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               'discountIsPercent': discountIsPercent,
                               'barcodeNote': barcodeNote,
                             };
+                            if (editIndex != null) {
+                              final lineId = _addedProducts[editIndex]['lineId'];
+                              if (lineId != null) entry['lineId'] = lineId;
+                            }
                             setState(() {
                               if (editIndex != null) {
                                 _addedProducts[editIndex] = entry;
@@ -1854,8 +1887,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 int idx = _addedProducts.indexWhere(
                                     (p) => p['product'] == product.name);
                                 if (idx != -1) {
+                                  final lineId = _addedProducts[idx]['lineId'];
+                                  if (lineId != null) entry['lineId'] = lineId;
                                   _addedProducts[idx] = entry;
                                 } else {
+                                  _assignLineId(entry);
                                   _addedProducts.add(entry);
                                 }
                               }
@@ -3008,60 +3044,79 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     );
   }
 
+  static const double _invoiceSerialColWidth = 20;
+  static const double _invoicePriceColWidth = 42;
+  static const double _invoiceQtyColWidth = 30;
+  static const double _invoiceTotalColWidth = 48;
+  static const double _invoiceDragColWidth = 14;
+
   Widget _invoiceHeaderCell(
     String label, {
-    required int flex,
+    int flex = 1,
+    double? width,
     TextAlign align = TextAlign.center,
     bool compact = false,
+    double? fontSize,
+    bool expanded = true,
   }) {
-    return Expanded(
-      flex: flex,
-      child: Container(
-        margin: EdgeInsets.symmetric(
-          horizontal: compact ? 1.w : 2.w,
-          vertical: compact ? 1.h : 2.h,
-        ),
-        padding: EdgeInsets.symmetric(
-          horizontal: compact ? 2.w : 4.w,
-          vertical: compact ? 4.h : 8.h,
-        ),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade100,
-        ),
-        alignment: align == TextAlign.right ? Alignment.centerRight : Alignment.center,
-        child: Text(
-          label,
-          textAlign: align,
-          style: TextStyle(
-            fontSize: compact ? 11.sp : 12.sp,
-            fontWeight: FontWeight.bold,
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _invoiceValueCell({
-    required int flex,
-    required Widget child,
-    Color? backgroundColor,
-    Alignment alignment = Alignment.center,
-    VoidCallback? onTap,
-    bool compact = false,
-  }) {
-    Widget box = Container(
+    final cell = Container(
       margin: EdgeInsets.symmetric(
         horizontal: compact ? 1.w : 2.w,
         vertical: compact ? 1.h : 2.h,
       ),
       padding: EdgeInsets.symmetric(
-        horizontal: compact ? 2.w : 6.w,
-        vertical: compact ? 4.h : 10.h,
+        horizontal: compact ? 1.w : 4.w,
+        vertical: compact ? 3.h : 8.h,
       ),
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+      ),
+      alignment:
+          align == TextAlign.right ? Alignment.centerRight : Alignment.center,
+      child: Text(
+        label,
+        textAlign: align,
+        style: TextStyle(
+          fontSize: fontSize ?? (compact ? 11.sp : 12.sp),
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+    );
+    if (width != null) {
+      return SizedBox(width: width.w, child: cell);
+    }
+    if (!expanded) {
+      return cell;
+    }
+    return Expanded(flex: flex, child: cell);
+  }
+
+  Widget _invoiceValueCell({
+    int flex = 1,
+    double? width,
+    required Widget child,
+    Color? backgroundColor,
+    Alignment alignment = Alignment.center,
+    VoidCallback? onTap,
+    bool compact = false,
+    bool tight = false,
+    bool expanded = true,
+  }) {
+    Widget box = Container(
+      margin: EdgeInsets.symmetric(
+        horizontal: tight ? 0.5.w : (compact ? 1.w : 2.w),
+        vertical: tight ? 0.5.h : (compact ? 1.h : 2.h),
+      ),
+      padding: tight
+          ? EdgeInsets.zero
+          : EdgeInsets.symmetric(
+              horizontal: width != null ? 1.w : (compact ? 2.w : 6.w),
+              vertical: width != null ? 3.h : (compact ? 4.h : 10.h),
+            ),
       decoration: BoxDecoration(
         color: backgroundColor ?? Colors.white,
         border: Border.all(color: Colors.grey.shade400, width: 1),
-        borderRadius: BorderRadius.circular(6.r),
+        borderRadius: BorderRadius.circular(tight ? 4.r : 6.r),
       ),
       alignment: alignment,
       child: child,
@@ -3072,6 +3127,18 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         behavior: HitTestBehavior.opaque,
         child: box,
       );
+    }
+    if (width != null) {
+      return SizedBox(
+        width: width.w,
+        child: tight ? Center(child: box) : box,
+      );
+    }
+    if (tight) {
+      return Expanded(flex: flex, child: Center(child: box));
+    }
+    if (!expanded) {
+      return box;
     }
     return Expanded(flex: flex, child: box);
   }
@@ -3266,12 +3333,37 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       horizontal: 6.w, vertical: 6.h),
                   child: Row(
                     children: [
-                      _invoiceHeaderCell('م', flex: 1),
-                      _invoiceHeaderCell('المنتج', flex: 4, align: TextAlign.right),
-                      _invoiceHeaderCell('السعر', flex: 2, compact: true),
-                      _invoiceHeaderCell('الكمية', flex: 1, compact: true),
-                      _invoiceHeaderCell('الإجمالي', flex: 2, compact: true),
-                      SizedBox(width: 18.w),
+                      _invoiceHeaderCell(
+                        'م',
+                        width: _invoiceSerialColWidth,
+                        compact: true,
+                        fontSize: 9.sp,
+                      ),
+                      Expanded(
+                        flex: 4,
+                        child: _invoiceHeaderCell(
+                          'المنتج',
+                          flex: 1,
+                          align: TextAlign.right,
+                          expanded: false,
+                        ),
+                      ),
+                      _invoiceHeaderCell(
+                        'السعر',
+                        width: _invoicePriceColWidth,
+                        compact: true,
+                      ),
+                      _invoiceHeaderCell(
+                        'الكمية',
+                        width: _invoiceQtyColWidth,
+                        compact: true,
+                      ),
+                      _invoiceHeaderCell(
+                        'الإجمالي',
+                        width: _invoiceTotalColWidth,
+                        compact: true,
+                      ),
+                      SizedBox(width: _invoiceDragColWidth.w),
                     ],
                   ),
                 ),
@@ -3294,10 +3386,12 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             ],
                           ),
                         )
-                      : ListView.builder(
+                      : ReorderableListView.builder(
                           padding:
                               EdgeInsets.only(top: 4.h, bottom: 80.h),
+                          buildDefaultDragHandles: false,
                           itemCount: _addedProducts.length,
+                          onReorder: _reorderAddedProducts,
                           itemBuilder: (context, index) {
                             final p = _addedProducts[index];
                             final amount =
@@ -3309,44 +3403,35 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 (p['selectedPrice'] as num).toDouble();
                             final hasDiscount =
                                 (p['discount'] ?? 0.0) > 0;
-                            return GestureDetector(
+                            return Material(
+                              key: ValueKey(p['lineId'] ?? index),
+                              color: Colors.transparent,
+                              child: GestureDetector(
                               onTap: () =>
                                   _showProductSheet(editIndex: index),
-                              onLongPress: () {
-                                final name = p['product']?.toString() ?? '';
-                                setState(() {
-                                  _addedProducts.removeAt(index);
-                                  _dataModified = true;
-                                });
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  SnackBar(
-                                    content: Text(
-                                      name.isEmpty
-                                          ? 'تم حذف المنتج من الفاتورة'
-                                          : 'تم حذف $name من الفاتورة',
-                                    ),
-                                  ),
-                                );
-                              },
                               child: Padding(
                                 padding: EdgeInsets.symmetric(
                                     horizontal: 6.w, vertical: 2.h),
                                 child: Row(
                                   children: [
                                     _invoiceValueCell(
-                                      flex: 1,
+                                      width: _invoiceSerialColWidth,
+                                      compact: true,
                                       child: Text(
                                         '${index + 1}',
                                         textAlign: TextAlign.center,
                                         style: TextStyle(
-                                          fontSize: 13.sp,
-                                          fontWeight: FontWeight.bold,
+                                          fontSize: 9.sp,
+                                          fontWeight: FontWeight.w600,
                                         ),
                                       ),
                                     ),
-                                    _invoiceValueCell(
+                                    Expanded(
                                       flex: 4,
+                                      child: _invoiceValueCell(
+                                      flex: 1,
                                       alignment: Alignment.centerRight,
+                                      expanded: false,
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
                                         crossAxisAlignment:
@@ -3366,9 +3451,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                         ],
                                       ),
                                     ),
+                                    ),
                                     _invoiceValueCell(
-                                      flex: 2,
-                                      compact: true,
+                                      width: _invoicePriceColWidth,
+                                      tight: true,
                                       child: Text(
                                         invoiceAmount(price),
                                         textAlign: TextAlign.center,
@@ -3380,8 +3466,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       ),
                                     ),
                                     _invoiceValueCell(
-                                      flex: 1,
-                                      compact: true,
+                                      width: _invoiceQtyColWidth,
+                                      tight: true,
                                       backgroundColor:
                                           Colors.teal.withOpacity(0.08),
                                       onTap: () =>
@@ -3398,8 +3484,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       ),
                                     ),
                                     _invoiceValueCell(
-                                      flex: 2,
-                                      compact: true,
+                                      width: _invoiceTotalColWidth,
+                                      tight: true,
                                       child: Column(
                                         mainAxisSize: MainAxisSize.min,
                                         children: [
@@ -3426,17 +3512,21 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                         ],
                                       ),
                                     ),
-                                    SizedBox(
-                                      width: 18.w,
-                                      child: Icon(
-                                        Icons.drag_handle,
-                                        color: Colors.grey.shade400,
-                                        size: 18.sp,
+                                    ReorderableDragStartListener(
+                                      index: index,
+                                      child: SizedBox(
+                                        width: _invoiceDragColWidth.w,
+                                        child: Icon(
+                                          Icons.drag_handle,
+                                          color: Colors.grey.shade400,
+                                          size: 16.sp,
+                                        ),
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
+                            ),
                             );
                           },
                         ),
