@@ -165,14 +165,7 @@ class ReceiptTableRenderer(private val context: Context) {
         return bounds
     }
 
-    /** Product cell (1) is right-aligned; all others are centered. */
-    private fun cellAlignment(colIndex: Int): Layout.Alignment {
-        return if (colIndex == 1) {
-            Layout.Alignment.ALIGN_OPPOSITE
-        } else {
-            Layout.Alignment.ALIGN_CENTER
-        }
-    }
+    private fun cellAlignment(): Layout.Alignment = Layout.Alignment.ALIGN_CENTER
 
     private fun loadLogoBitmap(assetPath: String?, width: Int): Bitmap? {
         if (assetPath.isNullOrBlank()) return null
@@ -378,7 +371,7 @@ class ReceiptTableRenderer(private val context: Context) {
                 val (left, right) = bounds[i]
                 val inner = (right - left - cellPadH * 2).coerceAtLeast(8)
                 val lh = layoutHeight(
-                    staticLayout(cells[i], p, inner, cellAlignment(i)),
+                    staticLayout(cells[i], p, inner, cellAlignment()),
                 )
                 maxH = max(maxH, lh)
             }
@@ -436,7 +429,7 @@ class ReceiptTableRenderer(private val context: Context) {
         totalH += measureCenteredBlock(payload.centeredLines, width, paint)
         totalH += 6
         totalH += measureTwoColTable(payload.metaTableRows, width, paint)
-        totalH += measureRtlBlock(payload.bodyLines, width, paint)
+        totalH += measureCenteredBlock(payload.bodyLines, width, paint)
         totalH += 6
         totalH += measureTable(payload.tableHeaders, payload.tableRows, width, paint, headerPaint)
         if (!payload.qtyTotalLine.isNullOrBlank()) {
@@ -444,7 +437,7 @@ class ReceiptTableRenderer(private val context: Context) {
         }
         totalH += 6
         totalH += measureSummaryTable(payload.summaryTableRows, width, paint)
-        totalH += measureRtlBlock(payload.trailingLines, width, paint)
+        totalH += measureCenteredBlock(payload.trailingLines, width, paint)
         if (payload.salesFooter.isNotBlank()) {
             totalH += measureCenteredBlock(
                 payload.salesFooter.split('\n').filter { it.isNotBlank() },
@@ -497,7 +490,7 @@ class ReceiptTableRenderer(private val context: Context) {
         drawCenteredLines(payload.centeredLines)
         y += 2
         y = drawTwoColTable(canvas, y, width, payload.metaTableRows, paint, linePaint, rowFillPaint)
-        drawRtlLines(payload.bodyLines)
+        drawCenteredLines(payload.bodyLines)
         y += 4
         y = drawBorderedTable(
             canvas,
@@ -521,7 +514,7 @@ class ReceiptTableRenderer(private val context: Context) {
         }
         y += 4
         y = drawSummaryTable(canvas, y, width, payload.summaryTableRows, paint, linePaint, rowFillPaint)
-        drawRtlLines(payload.trailingLines)
+        drawCenteredLines(payload.trailingLines)
         if (payload.salesFooter.isNotBlank()) {
             drawCenteredLines(payload.salesFooter.split('\n').filter { it.isNotBlank() })
         }
@@ -565,7 +558,7 @@ class ReceiptTableRenderer(private val context: Context) {
             for (i in 0 until numCols) {
                 val (left, right) = bounds[i]
                 val inner = (right - left - cellPadH * 2).coerceAtLeast(8)
-                val layout = staticLayout(cells[i], p, inner, cellAlignment(i))
+                val layout = staticLayout(cells[i], p, inner, cellAlignment())
                 rowH = max(rowH, layout.height + cellPadV * 2)
             }
             val yBottom = yTop + rowH
@@ -594,7 +587,7 @@ class ReceiptTableRenderer(private val context: Context) {
             for (i in 0 until numCols) {
                 val (left, right) = bounds[i]
                 val inner = (right - left - cellPadH * 2).coerceAtLeast(8)
-                val layout = staticLayout(cells[i], p, inner, cellAlignment(i))
+                val layout = staticLayout(cells[i], p, inner, cellAlignment())
                 canvas.save()
                 canvas.translate((left + cellPadH).toFloat(), (yTop + cellPadV).toFloat())
                 layout.draw(canvas)

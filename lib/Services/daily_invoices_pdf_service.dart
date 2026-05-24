@@ -146,7 +146,14 @@ class DailyInvoicesPdfService {
               pw.Divider(),
               pw.SizedBox(height: 8),
               rtl('رقم الفاتورة: #$invoiceNumber', bold: true, fontSize: 12),
-              rtl('العميل: $clientName', fontSize: 11),
+              pw.Center(
+                child: pw.Text(
+                  'العميل: $clientName',
+                  textDirection: pw.TextDirection.rtl,
+                  textAlign: pw.TextAlign.center,
+                  style: cell(fontSize: 11),
+                ),
+              ),
               if (date != null)
                 rtl('التاريخ: ${DateFormat('dd/MM/yyyy hh:mm a').format(date)}',
                     fontSize: 10),

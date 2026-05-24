@@ -135,7 +135,7 @@ class InvoicePrintFormatter {
       total: 'الإجمالي',
       price: 'السعر',
       qty: 'الكمية',
-      product: 'المنتج',
+      product: 'اسم المنتج',
     ));
     line(_tableRule(cols));
 
@@ -506,7 +506,7 @@ class InvoicePrintFormatter {
     return '${_col(total, cols.total, right: true)}|'
         '${_col(price, cols.price, right: true)}|'
         '${_col(qty, cols.qty, right: true)}|'
-        '${_col(product, cols.product)}|'
+        '${_col(product, cols.product, center: true)}|'
         '${_col(rowNum, cols.rowNum, right: true)}';
   }
 
@@ -518,9 +518,10 @@ class InvoicePrintFormatter {
         '${'-' * cols.rowNum}';
   }
 
-  static String _col(String text, int width, {bool right = false}) {
+  static String _col(String text, int width, {bool right = false, bool center = false}) {
     var t = text;
     if (t.length > width) t = t.substring(0, width);
+    if (center) return _center(t, width);
     return right ? t.padLeft(width) : t.padRight(width);
   }
 

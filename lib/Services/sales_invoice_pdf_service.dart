@@ -118,8 +118,11 @@ class SalesInvoicePdfService {
                 ],
               ),
               pw.Divider(),
-              center('اسم العميل', bold: true),
-              center(invoice['clientName']?.toString() ?? '', fontSize: 12),
+              center(
+                'اسم العميل : ${invoice['clientName']?.toString() ?? ''}',
+                fontSize: 12,
+                bold: true,
+              ),
               pw.SizedBox(height: 10),
               pw.Table(
                 border:
