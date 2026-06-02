@@ -104,11 +104,11 @@ double _optionalDouble(TextEditingController controller) {
 }
 
 Future<bool> _productExistsInDatabase(String productName) async {
-  final productsRef = FirebaseFirestore.instance.collection('products');
-  final doc = await productsRef.doc(productName).get();
-  if (doc.exists) return true;
-  final query =
-      await productsRef.where('name', isEqualTo: productName).limit(1).get();
+  final query = await FirebaseFirestore.instance
+      .collection('products')
+      .where('name', isEqualTo: productName)
+      .limit(1)
+      .get();
   return query.docs.isNotEmpty;
 }
 
@@ -139,8 +139,11 @@ Future<void> _addProduct() async {
     }
 
     final random = Random();
+    // Firestore document IDs cannot contain "/"; use auto id, store name as field.
+    final docId =
+        FirebaseFirestore.instance.collection('products').doc().id;
     final newProduct = Product(
-      id: productName,
+      id: docId,
       randomNumber: random.nextInt(1000000),
       name: productName,
       department: _selectedDepartment ?? '',
