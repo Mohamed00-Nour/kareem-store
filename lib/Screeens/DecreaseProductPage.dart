@@ -1485,6 +1485,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         : true;
     String barcodeNote =
         editIndex != null ? (_addedProducts[editIndex]['barcodeNote'] ?? '') : '';
+    String customProductName = editIndex != null
+        ? (_addedProducts[editIndex]['customProductName']?.toString() ?? '')
+        : '';
     bool removeProduct = false;
     bool costObscured = false;
 
@@ -1494,6 +1497,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         TextEditingController(text: discount > 0 ? discount.toStringAsFixed(1) : '');
     final TextEditingController barcodeCtrl =
         TextEditingController(text: barcodeNote);
+    final TextEditingController customNameCtrl =
+        TextEditingController(text: customProductName);
     final TextEditingController customPriceCtrl =
         TextEditingController(text: customPrice > 0 ? customPrice.toStringAsFixed(2) : '');
     final TextEditingController sp1Ctrl =
@@ -1584,6 +1589,36 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                           ),
                         ),
                       ],
+                    ),
+                    SizedBox(height: 6.h),
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'اسم المخزن: ${sheetProduct.name}',
+                        style: TextStyle(
+                          fontSize: 11.sp,
+                          color: Colors.black54,
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 8.h),
+                    TextField(
+                      controller: customNameCtrl,
+                      textAlign: TextAlign.right,
+                      decoration: InputDecoration(
+                        labelText: 'اسم مخصص (للفاتورة فقط)',
+                        hintText: 'اتركه فارغاً لاستخدام اسم المخزن',
+                        hintStyle: TextStyle(fontSize: 11.sp),
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(8.r),
+                        ),
+                        contentPadding: EdgeInsets.symmetric(
+                          vertical: 10.h,
+                          horizontal: 12.w,
+                        ),
+                      ),
+                      onTap: () => _selectAllField(customNameCtrl),
+                      onChanged: (v) => customProductName = v,
                     ),
                     SizedBox(height: 14.h),
 
@@ -2003,7 +2038,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             double price = getPriceForTier(priceTier);
                             double total = calcTotal(
                                 amount, discount, discountIsPercent, priceTier);
-                            final entry = {
+                            final entry = <String, dynamic>{
                               'product': sheetProduct.name,
                               'date': _selectedDate,
                               'amount': amount,
@@ -2018,6 +2053,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               'discountIsPercent': discountIsPercent,
                               'barcodeNote': barcodeNote,
                             };
+                            final trimmedCustomName =
+                                customProductName.trim();
+                            if (trimmedCustomName.isNotEmpty) {
+                              entry['customProductName'] = trimmedCustomName;
+                            }
                             if (editIndex != null) {
                               final lineId = _addedProducts[editIndex]['lineId'];
                               if (lineId != null) entry['lineId'] = lineId;
@@ -2027,7 +2067,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 _addedProducts[editIndex] = entry;
                               } else {
                                 int idx = _addedProducts.indexWhere(
-                                    (p) => p['product'] == product.name);
+                                    (p) =>
+                                        p['product'] == sheetProduct.name &&
+                                        (p['customProductName']?.toString() ??
+                                                '') ==
+                                            trimmedCustomName);
                                 if (idx != -1) {
                                   final lineId = _addedProducts[idx]['lineId'];
                                   if (lineId != null) entry['lineId'] = lineId;

@@ -65,7 +65,8 @@ double invoiceBalanceAfter(Map<String, dynamic> invoice) {
   return previous + unpaid;
 }
 
-/// Product line label on invoices: name plus optional per-line note ([barcodeNote]).
+/// Product line label on invoices: [customProductName] if set, else catalog [product],
+/// plus optional per-line note ([barcodeNote]).
 String invoiceProductName(dynamic product) {
   if (product is! Map) {
     return product?.toString().trim() ?? '';
@@ -73,8 +74,19 @@ String invoiceProductName(dynamic product) {
   final map = product is Map<String, dynamic>
       ? product
       : Map<String, dynamic>.from(product);
-  final name = map['product']?.toString().trim() ?? '';
+  final catalogName = map['product']?.toString().trim() ?? '';
+  final customName = map['customProductName']?.toString().trim() ?? '';
+  final name = customName.isNotEmpty ? customName : catalogName;
   final note = map['barcodeNote']?.toString().trim() ?? '';
   if (note.isEmpty) return name;
   return '$name $note';
+}
+
+/// Catalog product name used for stock / Firestore lookups (not [customProductName]).
+String invoiceCatalogProductName(dynamic product) {
+  if (product is! Map) return product?.toString().trim() ?? '';
+  final map = product is Map<String, dynamic>
+      ? product
+      : Map<String, dynamic>.from(product);
+  return map['product']?.toString().trim() ?? '';
 }
