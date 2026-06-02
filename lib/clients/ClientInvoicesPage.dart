@@ -44,14 +44,21 @@ class ClientInvoicesPage extends StatefulWidget {
 }
 
 class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
+  static const int _invoicePageSize = 20;
+
   final TextEditingController _balanceController = TextEditingController();
+  final ScrollController _invoiceScrollController = ScrollController();
   double _enteredBalance = 0.0;
-  int _selectedYear = DateTime.now().year;
-  int _selectedMonth = DateTime.now().month;
   bool _isSaving = false; // Add loading state
   bool _generatingStatement = false;
   bool _autoEditTriggered = false;
   List<_ProdInfo> _allProds = [];
+
+  List<QueryDocumentSnapshot> _invoices = [];
+  DocumentSnapshot? _lastInvoiceDoc;
+  bool _isLoadingInvoices = true;
+  bool _isLoadingMoreInvoices = false;
+  bool _hasMoreInvoices = true;
 
   Future<void> _fetchAllProds() async {
     try {
@@ -149,10 +156,97 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-  final List<String> _arabicMonths = [
-    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
-  ];
+  Query _invoicesQuery() => FirebaseFirestore.instance
+      .collection('clients')
+      .doc(widget.clientId)
+      .collection('invoices')
+      .orderBy('date', descending: true);
+
+  void _onInvoiceScroll() {
+    if (!_invoiceScrollController.hasClients) return;
+    final pos = _invoiceScrollController.position;
+    if (pos.pixels < pos.maxScrollExtent - 300) return;
+    _loadMoreInvoices();
+  }
+
+  Future<void> _fetchInvoices({bool reset = false}) async {
+    if (reset) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingInvoices = true;
+        _invoices = [];
+        _lastInvoiceDoc = null;
+        _hasMoreInvoices = true;
+      });
+    } else {
+      if (_isLoadingMoreInvoices || !_hasMoreInvoices || _isLoadingInvoices) {
+        return;
+      }
+      setState(() => _isLoadingMoreInvoices = true);
+    }
+
+    try {
+      Query query = _invoicesQuery().limit(_invoicePageSize);
+      if (!reset && _lastInvoiceDoc != null) {
+        query = query.startAfterDocument(_lastInvoiceDoc!);
+      }
+
+      final snap = await query.get();
+      if (!mounted) return;
+
+      setState(() {
+        if (reset) {
+          _invoices = snap.docs;
+        } else {
+          _invoices.addAll(snap.docs);
+        }
+        if (snap.docs.isNotEmpty) {
+          _lastInvoiceDoc = snap.docs.last;
+        }
+        _hasMoreInvoices = snap.docs.length >= _invoicePageSize;
+        _isLoadingInvoices = false;
+        _isLoadingMoreInvoices = false;
+      });
+
+      if (reset) {
+        await _tryAutoEditInvoice();
+      }
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _isLoadingInvoices = false;
+        _isLoadingMoreInvoices = false;
+      });
+    }
+  }
+
+  Future<void> _loadMoreInvoices() => _fetchInvoices(reset: false);
+
+  Future<void> _refreshInvoices() => _fetchInvoices(reset: true);
+
+  Future<void> _tryAutoEditInvoice() async {
+    if (_autoEditTriggered || widget.autoEditRootInvoiceId == null) return;
+
+    for (final doc in _invoices) {
+      final data = doc.data() as Map<String, dynamic>;
+      if (data['invoiceId']?.toString() == widget.autoEditRootInvoiceId) {
+        _autoEditTriggered = true;
+        _handleEditInvoice(doc);
+        return;
+      }
+    }
+
+    final q = await FirebaseFirestore.instance
+        .collection('clients')
+        .doc(widget.clientId)
+        .collection('invoices')
+        .where('invoiceId', isEqualTo: widget.autoEditRootInvoiceId)
+        .limit(1)
+        .get();
+    if (!mounted || q.docs.isEmpty) return;
+    _autoEditTriggered = true;
+    _handleEditInvoice(q.docs.first);
+  }
 
 // In your ClientInvoicesPage, update the balance saving method
 
@@ -863,7 +957,7 @@ Future<void> _saveBalance() async {
       ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
         content: Text('تم تعديل الفاتورة بنجاح'),
       ));
-      setState(() {});
+      await _refreshInvoices();
       if (widget.autoEditRootInvoiceId != null) {
         Navigator.pop(context, true);
       }
@@ -969,6 +1063,7 @@ Future<void> _saveBalance() async {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم حذف الفاتورة بنجاح')),
       );
+      await _refreshInvoices();
     } catch (e) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('حدث خطأ أثناء حذف الفاتورة: $e')),
@@ -1021,8 +1116,9 @@ Future<void> _saveBalance() async {
 
   Future<void> _showAccountStatementDialog() async {
     ClientStatementType statementType = ClientStatementType.financial;
-    DateTime from = DateTime(_selectedYear, _selectedMonth, 1);
-    DateTime to = DateTime(_selectedYear, _selectedMonth + 1, 0);
+    final now = DateTime.now();
+    DateTime from = DateTime(now.year, now.month, 1);
+    DateTime to = DateTime(now.year, now.month + 1, 0);
 
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1321,6 +1417,145 @@ Future<void> _saveBalance() async {
     super.initState();
     _loadUserRole();
     _fetchAllProds();
+    _invoiceScrollController.addListener(_onInvoiceScroll);
+    _fetchInvoices(reset: true);
+  }
+
+  @override
+  void dispose() {
+    _invoiceScrollController.removeListener(_onInvoiceScroll);
+    _invoiceScrollController.dispose();
+    _balanceController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildInvoiceCard(QueryDocumentSnapshot invoice) {
+    final invoiceData = invoice.data() as Map<String, dynamic>;
+    final dateField = invoiceData['date'];
+    if (dateField is! Timestamp) {
+      return const SizedBox.shrink();
+    }
+
+    final invoiceDate = dateField.toDate().toLocal();
+    final formattedDate = invoiceDate.toString().split(' ')[0];
+    final formattedTime = intl.DateFormat('hh:mm a').format(invoiceDate);
+
+    final previousBalance = invoiceData.containsKey('previousBalance')
+        ? (double.tryParse(invoiceData['previousBalance'].toString()) ?? 0.0)
+        : 0.0;
+
+    final totalSum = invoiceData.containsKey('totalSum')
+        ? (double.tryParse(invoiceData['totalSum'].toString()) ?? 0.0)
+        : 0.0;
+
+    return Card(
+      margin: const EdgeInsets.all(10.0),
+      child: Padding(
+        padding: const EdgeInsets.all(10.0),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Row(
+              mainAxisAlignment: MainAxisAlignment.spaceBetween,
+              children: [
+                Text(
+                  'رقم الفاتورة: #${invoice['invoiceNumber']}',
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    IconButton(
+                      icon: const Icon(Icons.print_outlined, color: Colors.black87),
+                      tooltip: 'طباعة',
+                      onPressed: () => _printInvoice(invoiceData),
+                    ),
+                    IconButton(
+                      icon: FaIcon(
+                        FontAwesomeIcons.whatsapp,
+                        color: Colors.green.shade700,
+                        size: 22,
+                      ),
+                      tooltip: 'مشاركة في واتساب',
+                      onPressed: () => _shareInvoiceOnWhatsApp(invoiceData),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.edit, color: Colors.blue),
+                      onPressed: () => _handleEditInvoice(invoice),
+                    ),
+                    IconButton(
+                      icon: const Icon(Icons.delete, color: Colors.red),
+                      onPressed: () => _handleDeleteInvoice(
+                        invoice.id,
+                        invoice['totalSum'],
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 5),
+            Text('التاريخ: $formattedDate', style: const TextStyle(fontSize: 14)),
+            Text('$formattedTime :الوقت ', style: const TextStyle(fontSize: 14)),
+            SizedBox(height: 10.h),
+            _buildInvoiceProductsTable(
+              List<dynamic>.from(invoiceData['products'] ?? []),
+            ),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 10.0),
+              child: Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                children: [
+                  Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Row(
+                        children: [
+                          Text(
+                            'الرصيد السابق: ${invoiceAmount(previousBalance)}',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                          SizedBox(width: 20.w),
+                          Text(
+                            'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                            ),
+                          ),
+                        ],
+                      ),
+                      Text(
+                        'المدفوع: ${invoiceAmount(invoice['paidAmount'])}',
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.green,
+                        ),
+                      ),
+                      Text(
+                        'المتبقي عليكم: ${invoiceAmount(invoiceBalanceAfter(invoiceData))}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.redAccent,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
   }
 
   @override
@@ -1342,58 +1577,6 @@ Future<void> _saveBalance() async {
                 onPressed: (_isSaving || _generatingStatement)
                     ? null
                     : _showAccountStatementDialog,
-              ),
-              DropdownButton<int>(
-                value: _selectedYear,
-                dropdownColor: Colors.white,
-                icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
-                underline: SizedBox(),
-                selectedItemBuilder: (context) {
-                  return List.generate(6, (index) {
-                    int year = DateTime.now().year - index;
-                    return Align(
-                      alignment: Alignment.center,
-                      child: Text(year.toString(), style: const TextStyle(color: Colors.white)),
-                    );
-                  });
-                },
-                items: List.generate(6, (index) {
-                  int year = DateTime.now().year - index;
-                  return DropdownMenuItem(
-                    value: year,
-                    child: Text(year.toString(), style: const TextStyle(color: Colors.black)),
-                  );
-                }),
-                onChanged: (value) {
-                  setState(() {
-                    _selectedYear = value!;
-                  });
-                },
-              ),
-              DropdownButton<int>(
-                value: _selectedMonth,
-                dropdownColor: Colors.white,
-                icon: const Icon(Icons.arrow_drop_down, color: Colors.white),
-                underline: SizedBox(),
-                selectedItemBuilder: (context) {
-                  return List.generate(12, (index) {
-                    return Align(
-                      alignment: Alignment.center,
-                      child: Text(_arabicMonths[index], style: const TextStyle(color: Colors.white)),
-                    );
-                  });
-                },
-                items: List.generate(12, (index) {
-                  return DropdownMenuItem(
-                    value: index + 1,
-                    child: Text(_arabicMonths[index], style: const TextStyle(color: Colors.black)),
-                  );
-                }),
-                onChanged: (value) {
-                  setState(() {
-                    _selectedMonth = value!;
-                  });
-                },
               ),
             ],
           ),
@@ -1518,202 +1701,39 @@ Future<void> _saveBalance() async {
                 ),
               ),
               Expanded(
-                child: StreamBuilder<QuerySnapshot>(
-                  stream: FirebaseFirestore.instance
-                      .collection('clients')
-                      .doc(widget.clientId)
-                      .collection('invoices')
-                      .orderBy('date', descending: true)
-                      .snapshots(),
-                  builder: (context, snapshot) {
-                    if (!snapshot.hasData) {
-                      return Center(
-                          child: CircularProgressIndicator(
-                              color: Colors.orange.withOpacity(0.7)));
-                    }
-
-                    final invoices = snapshot.data!.docs.where((doc) {
-                      final date = doc['date']?.toDate();
-                      return date != null &&
-                        date.year == _selectedYear &&
-                        date.month == _selectedMonth;
-                    }).toList();
-
-                    if (!_autoEditTriggered &&
-                        widget.autoEditRootInvoiceId != null &&
-                        invoices.isNotEmpty) {
-                      _autoEditTriggered = true;
-                      WidgetsBinding.instance.addPostFrameCallback((_) {
-                        for (final doc in invoices) {
-                          final data = doc.data() as Map<String, dynamic>;
-                          if (data['invoiceId']?.toString() ==
-                              widget.autoEditRootInvoiceId) {
-                            _handleEditInvoice(doc);
-                            break;
-                          }
-                        }
-                      });
-                    }
-
-                    return ListView.builder(
-                      itemCount: invoices.length,
-                      itemBuilder: (context, index) {
-                        final invoiceRef = invoices[index].reference;
-                        return FutureBuilder<DocumentSnapshot>(
-                          future: invoiceRef.get(),
-                          builder: (context, invoiceSnapshot) {
-                            if (!invoiceSnapshot.hasData) {
-                              return Center(
-                                  child: CircularProgressIndicator(
-                                      color: Colors.orange.withOpacity(0.7)));
-                            }
-
-                            final invoice = invoiceSnapshot.data!;
-                            DateTime invoiceDate =
-                                invoice['date'].toDate().toLocal();
-                            String formattedDate =
-                                invoiceDate.toString().split(' ')[0];
-                            String formattedTime =
-                                intl.DateFormat('hh:mm a').format(invoiceDate);
-
-                            final invoiceData = invoice.data() as Map<String, dynamic>;
-
-                            final previousBalance = invoiceData.containsKey('previousBalance')
-                                ? (double.tryParse(invoiceData['previousBalance'].toString()) ?? 0.0)
-                                : 0.0;
-
-                            final totalSum = invoiceData.containsKey('totalSum')
-                                ? (double.tryParse(invoiceData['totalSum'].toString()) ?? 0.0)
-                                : 0.0;
-
-                            return Card(
-                              margin: const EdgeInsets.all(10.0),
-                              child: Padding(
-                                padding: const EdgeInsets.all(10.0),
-                                child: Column(
-                                  crossAxisAlignment: CrossAxisAlignment.start,
-                                  children: [
-                                    Row(
-                                      mainAxisAlignment:
-                                          MainAxisAlignment.spaceBetween,
-                                      children: [
-                                        Text(
-                                            'رقم الفاتورة: #${invoice['invoiceNumber']}',
-                                            style: const TextStyle(
-                                                fontSize: 14,
-                                                fontWeight: FontWeight.bold)),
-                                        Row(
-                                          mainAxisSize: MainAxisSize.min,
-                                          children: [
-                                            IconButton(
-                                              icon: const Icon(
-                                                  Icons.print_outlined,
-                                                  color: Colors.black87),
-                                              tooltip: 'طباعة',
-                                              onPressed: () =>
-                                                  _printInvoice(invoiceData),
-                                            ),
-                                            IconButton(
-                                              icon: FaIcon(
-                                                FontAwesomeIcons.whatsapp,
-                                                color: Colors.green.shade700,
-                                                size: 22,
-                                              ),
-                                              tooltip: 'مشاركة في واتساب',
-                                              onPressed: () =>
-                                                  _shareInvoiceOnWhatsApp(
-                                                      invoiceData),
-                                            ),
-                                            IconButton(
-                                              icon: const Icon(Icons.edit,
-                                                  color: Colors.blue),
-                                              onPressed: () =>
-                                                  _handleEditInvoice(invoice),
-                                            ),
-                                            IconButton(
-                                              icon: const Icon(Icons.delete,
-                                                  color: Colors.red),
-                                              onPressed: () =>
-                                                  _handleDeleteInvoice(
-                                                      invoice.id,
-                                                      invoice['totalSum']),
-                                            ),
-                                          ],
-                                        ),
-                                      ],
-                                    ),
-                                    const SizedBox(height: 5),
-                                    Text('التاريخ: $formattedDate',
-                                        style: const TextStyle(fontSize: 14)),
-                                    Text('$formattedTime :الوقت ',
-                                        style: const TextStyle(fontSize: 14)),
-                                    SizedBox(height: 10.h),
-                                    _buildInvoiceProductsTable(
-                                      List<dynamic>.from(
-                                        invoiceData['products'] ?? [],
+                child: _isLoadingInvoices && _invoices.isEmpty
+                    ? Center(
+                        child: CircularProgressIndicator(
+                          color: Colors.orange.withOpacity(0.7),
+                        ),
+                      )
+                    : _invoices.isEmpty
+                        ? const Center(child: Text('لا توجد فواتير'))
+                        : RefreshIndicator(
+                            onRefresh: _refreshInvoices,
+                            color: Colors.orange,
+                            child: ListView.builder(
+                              controller: _invoiceScrollController,
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              itemCount: _invoices.length +
+                                  (_hasMoreInvoices || _isLoadingMoreInvoices
+                                      ? 1
+                                      : 0),
+                              itemBuilder: (context, index) {
+                                if (index >= _invoices.length) {
+                                  return Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Center(
+                                      child: CircularProgressIndicator(
+                                        color: Colors.orange.withOpacity(0.7),
                                       ),
                                     ),
-                                    Padding(
-                                      padding: const EdgeInsets.symmetric(
-                                          vertical: 10.0),
-                                      child: Row(
-                                        mainAxisAlignment: MainAxisAlignment.end,
-                                        children: [
-                                          Column(
-                                            crossAxisAlignment:
-                                                CrossAxisAlignment.end,
-                                            children: [
-
-                                              Row(
-                                                children: [
-                                                  Text(
-                                                    'الرصيد السابق: ${invoiceAmount(previousBalance)}',
-                                                    style: const TextStyle(
-                                                      fontSize: 14,
-                                                      fontWeight: FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                  SizedBox(width: 20.w,),
-                                                  Text(
-                                                    'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
-                                                    style: const TextStyle(
-                                                      fontSize: 14,
-                                                      fontWeight: FontWeight.bold,
-                                                    ),
-                                                  ),
-                                                ],
-                                              ),
-                                              Text(
-                                                'المدفوع: ${invoiceAmount(invoice['paidAmount'])}',
-                                                style: const TextStyle(
-                                                  fontSize: 16,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Colors.green,
-                                                ),
-                                              ),
-                                              Text(
-                                                'المتبقي عليكم: ${invoiceAmount(invoiceBalanceAfter(invoiceData))}',
-                                                style: const TextStyle(
-                                                  fontSize: 14,
-                                                  fontWeight: FontWeight.bold,
-                                                  color: Colors.redAccent,
-                                                ),
-                                              ),
-                                            ],
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        );
-                      },
-                    );
-                  },
-                ),
+                                  );
+                                }
+                                return _buildInvoiceCard(_invoices[index]);
+                              },
+                            ),
+                          ),
               ),
             ],
           ),
