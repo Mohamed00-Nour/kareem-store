@@ -136,16 +136,10 @@ class _EditProductPageState extends State<EditProductPage> {
                   _selectedDepartment = value;
                 });
               },
-              decoration: InputDecoration(
-                hintText: 'اختر القسم',
+              decoration: const InputDecoration(
+                hintText: 'اختر القسم (اختياري)',
                 border: InputBorder.none,
               ),
-              validator: (value) {
-                if (value == null || value.isEmpty) {
-                  return 'يرجى اختيار قسم';
-                }
-                return null;
-              },
             ),
             Align(
               alignment: Alignment.centerRight,

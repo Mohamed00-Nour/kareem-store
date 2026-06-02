@@ -12,6 +12,7 @@ import '../Services/return_invoice_save_service.dart';
 import '../Services/sales_invoice_update_service.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../Widgets/egypt_phone_field.dart';
+import '../EditProductPage.dart';
 import 'g_Nav.dart';
 import 'home_page.dart';
 
@@ -742,8 +743,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       QuerySnapshot querySnapshot =
       await FirebaseFirestore.instance.collection('products').get();
       setState(() {
-        _products.addAll(querySnapshot.docs
-            .map((doc) => Product.fromMap(doc.data() as Map<String, dynamic>)));
+        _products.addAll(querySnapshot.docs.map((doc) {
+          final data = Map<String, dynamic>.from(doc.data() as Map);
+          data['id'] = doc.id;
+          return Product.fromMap(data);
+        }));
         _isFetching = false;
       });
       print('the number of the products ' + _products.length.toString());
@@ -1342,12 +1346,116 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     });
   }
 
+  Future<String?> _resolveProductDocId(Product product) async {
+    if (product.id.isNotEmpty) {
+      final doc = await FirebaseFirestore.instance
+          .collection('products')
+          .doc(product.id)
+          .get();
+      if (doc.exists) return product.id;
+    }
+    final query = await FirebaseFirestore.instance
+        .collection('products')
+        .where('name', isEqualTo: product.name)
+        .limit(1)
+        .get();
+    if (query.docs.isEmpty) return null;
+    return query.docs.first.id;
+  }
+
+  Future<Product?> _refreshProductFromFirestore(
+    String productId, {
+    String? previousName,
+  }) async {
+    final doc = await FirebaseFirestore.instance
+        .collection('products')
+        .doc(productId)
+        .get();
+    if (!doc.exists) return null;
+
+    final data = Map<String, dynamic>.from(doc.data()!);
+    data['id'] = doc.id;
+    final updated = Product.fromMap(data);
+
+    if (!mounted) return updated;
+
+    setState(() {
+      final idx = _products.indexWhere(
+        (p) =>
+            p.id == productId ||
+            (previousName != null && p.name == previousName),
+      );
+      if (idx >= 0) {
+        _products[idx] = updated;
+      }
+
+      final namesToMatch = <String>{
+        updated.name,
+        if (previousName != null && previousName.isNotEmpty) previousName,
+      };
+      for (var i = 0; i < _addedProducts.length; i++) {
+        final lineName = _addedProducts[i]['product']?.toString() ?? '';
+        if (!namesToMatch.contains(lineName)) continue;
+        final line = Map<String, dynamic>.from(_addedProducts[i]);
+        if (lineName != updated.name) {
+          line['product'] = updated.name;
+        }
+        line['sellingPrice1'] = updated.sellingPrice1;
+        line['sellingPrice2'] = updated.sellingPrice2;
+        line['sellingPrice3'] = updated.sellingPrice3;
+        line['quantity'] = updated.quantity;
+        final amount = double.tryParse(line['amount'].toString()) ?? 0.0;
+        line['total'] = _lineTotalForEntry(line, amount);
+        _addedProducts[i] = line;
+        _dataModified = true;
+      }
+    });
+
+    return updated;
+  }
+
+  Future<Product?> _navigateToEditProduct(Product product) async {
+    final productId = await _resolveProductDocId(product);
+    if (productId == null) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تعذر العثور على المنتج')),
+        );
+      }
+      return null;
+    }
+
+    final previousName = product.name;
+    final snap = await FirebaseFirestore.instance
+        .collection('products')
+        .doc(productId)
+        .get();
+    if (!snap.exists || !mounted) return null;
+
+    await Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => EditProductPage(
+          productId: productId,
+          productData: snap.data()!,
+        ),
+      ),
+    );
+
+    if (!mounted) return null;
+    return _refreshProductFromFirestore(
+      productId,
+      previousName: previousName,
+    );
+  }
+
   void _showProductSheet({int? editIndex, Product? newProduct}) {
     final Product product = editIndex != null
         ? (_products.firstWhere(
             (p) => p.name == _addedProducts[editIndex]['product'],
             orElse: () => newProduct!))
         : newProduct!;
+
+    var sheetProduct = product;
 
     double amount = editIndex != null
         ? double.tryParse(_addedProducts[editIndex]['amount'].toString()) ?? 1.0
@@ -1436,12 +1544,46 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    // Product name
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(product.name,
-                          style: TextStyle(
-                              fontSize: 17.sp, fontWeight: FontWeight.bold)),
+                    // Product name + open full edit page
+                    Row(
+                      children: [
+                        Expanded(
+                          child: Align(
+                            alignment: Alignment.centerRight,
+                            child: Text(
+                              sheetProduct.name,
+                              style: TextStyle(
+                                fontSize: 17.sp,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                        ),
+                        TextButton.icon(
+                          onPressed: () async {
+                            final updated =
+                                await _navigateToEditProduct(sheetProduct);
+                            if (updated == null || !ctx.mounted) return;
+                            setSheet(() {
+                              sheetProduct = updated;
+                              sp1 = updated.sellingPrice1;
+                              sp2 = updated.sellingPrice2;
+                              sp3 = updated.sellingPrice3;
+                              sp1Ctrl.text =
+                                  sp1 > 0 ? sp1.toStringAsFixed(2) : '';
+                              sp2Ctrl.text =
+                                  sp2 > 0 ? sp2.toStringAsFixed(2) : '';
+                              sp3Ctrl.text =
+                                  sp3 > 0 ? sp3.toStringAsFixed(2) : '';
+                            });
+                          },
+                          icon: Icon(Icons.edit_outlined, size: 18.sp),
+                          label: Text(
+                            'تعديل المنتج',
+                            style: TextStyle(fontSize: 12.sp),
+                          ),
+                        ),
+                      ],
                     ),
                     SizedBox(height: 14.h),
 
@@ -1744,7 +1886,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 borderRadius: BorderRadius.circular(8.r),
                               ),
                               child: Text(
-                                product.quantity.toStringAsFixed(1),
+                                sheetProduct.quantity.toStringAsFixed(1),
                                 style: TextStyle(
                                   fontSize: 15.sp,
                                   fontWeight: FontWeight.bold,
@@ -1770,7 +1912,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                           imageFilter: ImageFilter.blur(
                                               sigmaX: 8, sigmaY: 8),
                                           child: Text(
-                                            product.costPrice
+                                            sheetProduct.costPrice
                                                 .toStringAsFixed(2),
                                             style: TextStyle(
                                               fontSize: 15.sp,
@@ -1780,7 +1922,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                           ),
                                         )
                                       : Text(
-                                          product.costPrice
+                                          sheetProduct.costPrice
                                               .toStringAsFixed(2),
                                           style: TextStyle(
                                             fontSize: 15.sp,
@@ -1849,7 +1991,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               return;
                             }
                             await _syncProductPricesToFirestore(
-                              product: product,
+                              product: sheetProduct,
                               sp1: sp1,
                               sp2: sp2,
                               sp3: sp3,
@@ -1862,13 +2004,13 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             double total = calcTotal(
                                 amount, discount, discountIsPercent, priceTier);
                             final entry = {
-                              'product': product.name,
+                              'product': sheetProduct.name,
                               'date': _selectedDate,
                               'amount': amount,
                               'sellingPrice1': sp1,
                               'sellingPrice2': sp2,
                               'sellingPrice3': sp3,
-                              'quantity': product.quantity,
+                              'quantity': sheetProduct.quantity,
                               'selectedPrice': priceTier == 0 ? customPrice : price,
                               'priceTier': priceTier,
                               'total': total,
