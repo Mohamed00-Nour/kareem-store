@@ -30,6 +30,13 @@ class _ProductListPageState extends State<ProductListPage> {
     return product['retail'] == true;
   }
 
+  double _productQuantity(Map<String, dynamic> product) {
+    final q = product['quantity'];
+    if (q is num) return q.toDouble();
+    if (q is String) return double.tryParse(q) ?? 0.0;
+    return 0.0;
+  }
+
   bool _matchesFilter(Map<String, dynamic> product) {
     switch (_filter) {
       case _ProductListFilter.retail:
@@ -41,7 +48,9 @@ class _ProductListPageState extends State<ProductListPage> {
             !_isRetail(product) &&
             product['quantity'] <= product['alertAmount'];
       case _ProductListFilter.all:
-        return !_isOnDemand(product) && !_isRetail(product);
+        if (_isRetail(product)) return false;
+        if (_isOnDemand(product)) return _productQuantity(product) != 0;
+        return true;
     }
   }
 
