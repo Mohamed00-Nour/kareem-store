@@ -9,6 +9,7 @@ import 'Data/DataEntryScreen.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/return_invoice_save_service.dart';
+import '../Services/invoice_stock_service.dart';
 import '../Services/sales_invoice_update_service.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../Widgets/egypt_phone_field.dart';
@@ -687,24 +688,25 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     }
   }
 
+  Map<String, ResolvedInvoiceProduct> get _productCatalog =>
+      InvoiceStockService.memoryCatalogFromMaps(
+        _products.map((p) => p.toMap()),
+      );
+
   Future<double> _calculateTotalCost() async {
-    double totalCost = 0.0;
-
-    for (var product in _addedProducts) {
-      QuerySnapshot query = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: product['product'])
-          .get();
-
-      if (query.docs.isNotEmpty) {
-        var productData = query.docs.first.data() as Map<String, dynamic>;
-        double costPrice = productData['costPrice'] ?? 0.0;
-        double quantity = double.tryParse(product['amount'].toString()) ?? 0.0;
-        totalCost += costPrice * quantity;
-      }
+    final seed = _productCatalog;
+    final needsFetch = _addedProducts.any((line) {
+      final name = InvoiceStockService.lineCatalogName(line);
+      return name.isNotEmpty && !seed.containsKey(name);
+    });
+    if (!needsFetch) {
+      return InvoiceStockService.computeCostTotal(_addedProducts, seed);
     }
-
-    return totalCost;
+    final catalog = await InvoiceStockService.resolveCatalog(
+      lines: _addedProducts,
+      seed: seed,
+    );
+    return InvoiceStockService.computeCostTotal(_addedProducts, catalog);
   }
 
   double _calculateTotalSum() {
@@ -922,6 +924,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           previousBalanceSnapshot: _clientBalance,
           totalSumBeforeDiscount: _calculateTotalSum(),
           calculateTotalCost: (_) => _calculateTotalCost(),
+          productCatalog: _productCatalog,
         );
       } else {
         final invoiceQuery = await FirebaseFirestore.instance
@@ -936,16 +939,24 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
               (invoiceQuery.docs.first['invoiceNumber'] as num).toInt() + 1;
         }
 
-        final totalCost = await _calculateTotalCost();
         final totalSum = _calculateTotalSum();
         final effectiveDiscountAmt = discountIsPercent
             ? totalSum * invoiceDiscount / 100
             : invoiceDiscount;
         final totalSumFinal = totalSum - effectiveDiscountAmt;
+
+        final catalog = _productCatalog;
+        final totals = await Future.wait<double>([
+          InvoiceStockService.computeCostTotalAsync(
+            _addedProducts,
+            seed: catalog,
+          ),
+          _fetchClientBalance(effectiveClient),
+        ]);
+        final totalCost = totals[0];
+        final existingBalance = totals[1];
         final profitMargin = totalSumFinal - totalCost;
         final balance = totalSumFinal - effectivePaid;
-
-        final existingBalance = await _fetchClientBalance(effectiveClient);
         final updatedBalance = existingBalance + balance;
 
         final invoiceData = <String, dynamic>{
@@ -972,36 +983,12 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         await docRef.update({'id': docRef.id});
         _lastInvoice = {...invoiceData, 'id': docRef.id};
 
-        for (final product in _addedProducts) {
-          final query = await FirebaseFirestore.instance
-              .collection('products')
-              .where('name', isEqualTo: product['product'])
-              .get();
-
-          if (query.docs.isNotEmpty) {
-            for (final doc in query.docs) {
-              final existingAmount = (doc['quantity'] as num).toDouble();
-              final decrementAmount =
-                  double.tryParse(product['amount'].toString()) ?? 0.0;
-              final newAmount = existingAmount - decrementAmount;
-
-              await FirebaseFirestore.instance
-                  .collection('products')
-                  .doc(doc.id)
-                  .update({'quantity': newAmount});
-
-              await FirebaseFirestore.instance
-                  .collection('products')
-                  .doc(doc.id)
-                  .collection('changes')
-                  .add({
-                'date': product['date'],
-                'amount': decrementAmount,
-                'type': 'decrease',
-              });
-            }
-          }
-        }
+        await InvoiceStockService.applyStockChanges(
+          lines: List<Map<String, dynamic>>.from(_addedProducts),
+          restore: false,
+          changeDate: _selectedDate,
+          seed: catalog,
+        );
 
         final clientDocRef = FirebaseFirestore.instance
             .collection('clients')
@@ -1038,22 +1025,22 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
         await FirebaseFirestore.instance.runTransaction((transaction) async {
           final boxSnapshot = await transaction.get(boxDocRef);
-
           if (boxSnapshot.exists) {
-            final currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
+            final currentBoxValue = invoiceNum(boxSnapshot.data()?['value']);
             transaction.update(
-                boxDocRef, {'value': currentBoxValue + effectivePaid});
+              boxDocRef,
+              {'value': currentBoxValue + effectivePaid},
+            );
           } else {
             transaction.set(boxDocRef, {'value': effectivePaid});
           }
-
-          await boxDocRef.collection('changes').add({
-            'date': FieldValue.serverTimestamp(),
-            'value': effectivePaid,
-            'type': 'addition',
-            'name': effectiveClient,
-            'invoiceNumber': newInvoiceNumber,
-          });
+        });
+        await boxDocRef.collection('changes').add({
+          'date': FieldValue.serverTimestamp(),
+          'value': effectivePaid,
+          'type': 'addition',
+          'name': effectiveClient,
+          'invoiceNumber': newInvoiceNumber,
         });
       }
 

@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import 'invoice_stock_service.dart';
+
 /// Persists a return invoice: restores stock, reverses profit/sales effect, updates client & box.
 class ReturnInvoiceSaveService {
   static Future<Map<String, dynamic>> save({
@@ -15,6 +17,7 @@ class ReturnInvoiceSaveService {
     required double totalSumBeforeDiscount,
     required Future<double> Function(List<Map<String, dynamic>> products)
         calculateTotalCost,
+    Map<String, ResolvedInvoiceProduct> productCatalog = const {},
   }) async {
     final totalCost = await calculateTotalCost(products);
     final effectiveDiscountAmt = discountIsPercent
@@ -59,34 +62,13 @@ class ReturnInvoiceSaveService {
         await FirebaseFirestore.instance.collection('returnInvoices').add(invoiceData);
     await docRef.update({'id': docRef.id});
 
-    for (final product in products) {
-      final query = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: product['product'])
-          .get();
-
-      for (final doc in query.docs) {
-        final existingAmount = (doc['quantity'] as num).toDouble();
-        final returnQty =
-            double.tryParse(product['amount']?.toString() ?? '') ?? 0.0;
-        final newAmount = existingAmount + returnQty;
-
-        await FirebaseFirestore.instance
-            .collection('products')
-            .doc(doc.id)
-            .update({'quantity': newAmount});
-
-        await FirebaseFirestore.instance
-            .collection('products')
-            .doc(doc.id)
-            .collection('changes')
-            .add({
-          'date': product['date'] ?? selectedDate,
-          'amount': returnQty,
-          'type': 'return',
-        });
-      }
-    }
+    await InvoiceStockService.applyStockChanges(
+      lines: products,
+      restore: true,
+      changeDate: selectedDate,
+      changeTypeWhenRestore: 'return',
+      seed: productCatalog,
+    );
 
     final clientDocRef =
         FirebaseFirestore.instance.collection('clients').doc(clientName);
@@ -128,14 +110,13 @@ class ReturnInvoiceSaveService {
       } else {
         transaction.set(boxDocRef, {'value': -paidAmount});
       }
-
-      await boxDocRef.collection('changes').add({
-        'date': FieldValue.serverTimestamp(),
-        'value': paidAmount,
-        'type': 'return',
-        'name': clientName,
-        'invoiceNumber': newInvoiceNumber,
-      });
+    });
+    await boxDocRef.collection('changes').add({
+      'date': FieldValue.serverTimestamp(),
+      'value': paidAmount,
+      'type': 'return',
+      'name': clientName,
+      'invoiceNumber': newInvoiceNumber,
     });
 
     return {...invoiceData, 'id': docRef.id};

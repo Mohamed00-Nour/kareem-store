@@ -1,64 +1,14 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'invoice_number_utils.dart';
+import 'invoice_stock_service.dart';
 import 'sales_invoice_actions_service.dart';
 
 /// Updates an existing sales invoice (stock, balances, box, client copy).
 class SalesInvoiceUpdateService {
   static Future<double> productCostTotal(
       List<Map<String, dynamic>> products) async {
-    double cost = 0.0;
-    for (final product in products) {
-      final name = product['product']?.toString() ?? '';
-      if (name.isEmpty) continue;
-      final amount = invoiceNum(product['amount']);
-      if (amount <= 0) continue;
-      final q = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: name)
-          .limit(1)
-          .get();
-      if (q.docs.isEmpty) continue;
-      final unitCost = (q.docs.first['costPrice'] as num?)?.toDouble() ?? 0;
-      cost += amount * unitCost;
-    }
-    return cost;
-  }
-
-  static Future<void> _adjustStock(
-    List<Map<String, dynamic>> products, {
-    required bool restore,
-    DateTime? changeDate,
-  }) async {
-    for (final product in products) {
-      final name = product['product']?.toString() ?? '';
-      if (name.isEmpty) continue;
-      final amount = invoiceNum(product['amount']);
-      if (amount <= 0) continue;
-
-      final q = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: name)
-          .get();
-
-      for (final doc in q.docs) {
-        final qty = (doc['quantity'] as num?)?.toDouble() ?? 0;
-        final newQty = restore ? qty + amount : qty - amount;
-        await FirebaseFirestore.instance
-            .collection('products')
-            .doc(doc.id)
-            .update({'quantity': newQty});
-        await FirebaseFirestore.instance
-            .collection('products')
-            .doc(doc.id)
-            .collection('changes')
-            .add({
-          'date': changeDate ?? DateTime.now(),
-          'amount': amount,
-          'type': restore ? 'increase' : 'decrease',
-        });
-      }
-    }
+    return InvoiceStockService.computeCostTotalAsync(products);
   }
 
   static Future<void> updateSalesInvoice({
@@ -84,14 +34,28 @@ class SalesInvoiceUpdateService {
     final oldRemaining = oldTotalSum - oldPaid;
     final invoiceNumber = originalInvoice['invoiceNumber'];
 
-    await _adjustStock(oldProducts, restore: true, changeDate: selectedDate);
-    await _adjustStock(newProducts, restore: false, changeDate: selectedDate);
+    final allLines = [...oldProducts, ...newProducts];
+    final catalog = await InvoiceStockService.resolveCatalog(lines: allLines);
+
+    await InvoiceStockService.applyStockChanges(
+      lines: oldProducts,
+      restore: true,
+      changeDate: selectedDate,
+      seed: catalog,
+    );
+    await InvoiceStockService.applyStockChanges(
+      lines: newProducts,
+      restore: false,
+      changeDate: selectedDate,
+      seed: catalog,
+    );
 
     final effectiveDiscountAmt = discountIsPercent
         ? totalSumBeforeDiscount * invoiceDiscount / 100
         : invoiceDiscount;
     final totalSumFinal = totalSumBeforeDiscount - effectiveDiscountAmt;
-    final totalCost = await productCostTotal(newProducts);
+    final totalCost =
+        InvoiceStockService.computeCostTotal(newProducts, catalog);
     final profitMargin = totalSumFinal - totalCost;
     final newBalance = totalSumFinal - paidAmount;
     final newRemaining = newBalance;
