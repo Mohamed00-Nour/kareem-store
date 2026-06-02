@@ -4,7 +4,7 @@ import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 
-/// Opens WhatsApp with image (+ optional caption) for a specific phone on Android.
+/// Opens WhatsApp with image(s) (+ optional caption) for a specific phone on Android.
 class WhatsappShareChannel {
   WhatsappShareChannel._();
 
@@ -14,9 +14,55 @@ class WhatsappShareChannel {
     required String phoneDigits,
     required String imagePath,
     String? caption,
+  }) =>
+      shareImages(
+        phoneDigits: phoneDigits,
+        imagePaths: [imagePath],
+        caption: caption,
+      );
+
+  static Future<bool> shareImages({
+    required String phoneDigits,
+    required List<String> imagePaths,
+    String? caption,
   }) async {
+    final paths =
+        imagePaths.where((p) => p.trim().isNotEmpty).toList(growable: false);
+    if (paths.isEmpty) return false;
+    if (paths.length == 1) {
+      return _shareSingle(phoneDigits, paths.first, caption);
+    }
+
     if (!Platform.isAndroid) {
-      return _shareImageFallback(imagePath, caption);
+      return _shareImagesFallback(paths, caption);
+    }
+
+    try {
+      final ok = await _channel.invokeMethod<bool>('shareImages', {
+            'phone': phoneDigits,
+            'paths': paths,
+            'text': caption ?? '',
+          }) ??
+          false;
+      if (ok) return true;
+    } on PlatformException catch (e) {
+      if (kDebugMode) {
+        debugPrint('WhatsappShareChannel: ${e.message}');
+      }
+    } catch (e) {
+      if (kDebugMode) debugPrint('WhatsappShareChannel: $e');
+    }
+
+    return _shareImagesFallback(paths, caption);
+  }
+
+  static Future<bool> _shareSingle(
+    String phoneDigits,
+    String imagePath,
+    String? caption,
+  ) async {
+    if (!Platform.isAndroid) {
+      return _shareImagesFallback([imagePath], caption);
     }
 
     try {
@@ -35,16 +81,16 @@ class WhatsappShareChannel {
       if (kDebugMode) debugPrint('WhatsappShareChannel: $e');
     }
 
-    return _shareImageFallback(imagePath, caption);
+    return _shareImagesFallback([imagePath], caption);
   }
 
-  static Future<bool> _shareImageFallback(
-    String imagePath,
+  static Future<bool> _shareImagesFallback(
+    List<String> imagePaths,
     String? caption,
   ) async {
     try {
       await Share.shareXFiles(
-        [XFile(imagePath)],
+        imagePaths.map((p) => XFile(p)).toList(),
         text: caption,
       );
       return true;

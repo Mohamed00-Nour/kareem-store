@@ -160,7 +160,7 @@ class WhatsappInvoiceShareService {
                   ),
                   title: const Text('صورة الفاتورة'),
                   subtitle: const Text(
-                      'إرسال تفاصيل الفاتورة كاملة كصورة في واتساب'),
+                      'إرسال تفاصيل الفاتورة كصورة (أو عدة صور إن كانت طويلة)'),
                   onTap: () async {
                     Navigator.pop(ctx);
                     await shareAsImage(
@@ -237,7 +237,7 @@ class WhatsappInvoiceShareService {
                   children: [
                     CircularProgressIndicator(),
                     SizedBox(height: 16),
-                    Text('جاري تجهيز صورة الفاتورة...'),
+                    Text('جاري تجهيز صور الفاتورة...'),
                   ],
                 ),
               ),
@@ -251,11 +251,12 @@ class WhatsappInvoiceShareService {
     try {
       final prepared =
           await InvoicePrintService.prepareForPrint(invoice, clientId: clientName);
-      final imageFile = await SalesInvoiceImageService.generatePng(prepared);
+      final imageFiles =
+          await SalesInvoiceImageService.generatePngPages(prepared);
       final caption = buildInvoiceMessage(prepared);
-      ok = await WhatsappShareChannel.shareImage(
+      ok = await WhatsappShareChannel.shareImages(
         phoneDigits: phone ?? '',
-        imagePath: imageFile.path,
+        imagePaths: imageFiles.map((f) => f.path).toList(),
         caption: caption,
       );
     } catch (e) {

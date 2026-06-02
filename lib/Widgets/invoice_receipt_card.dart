@@ -6,103 +6,182 @@ import '../Services/invoice_number_utils.dart';
 /// Full invoice layout captured as PNG for WhatsApp / sharing.
 class InvoiceReceiptCard extends StatelessWidget {
   final Map<String, dynamic> invoice;
+  final List<Map<String, dynamic>>? products;
   final double width;
   final String storeName;
   final String storeAddress;
   final String storePhone;
+  final bool showStoreHeader;
+  final bool showClientAndMeta;
+  final bool showCompactHeader;
+  final bool showSummary;
+  final bool showFooter;
+  final bool showQtyTotalRow;
+  final bool showNotes;
+  final double? qtySumOverride;
+  final String? pageIndicator;
+  /// Shown at the top of continuation pages (avoids bottom clipping in PNG capture).
+  final String? leadingContinuationBanner;
+  /// Extra space at the bottom so capture does not clip the last pixels.
+  final double captureBottomPadding;
+  /// Serial column starts at [productIndexOffset] + 1 (for multi-page images).
+  final int productIndexOffset;
 
   const InvoiceReceiptCard({
     super.key,
     required this.invoice,
+    this.products,
     this.width = 360,
     this.storeName = 'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
     this.storeAddress = 'كفر الزيات - طنطا - الغربية',
     this.storePhone = '01010573888',
+    this.showStoreHeader = true,
+    this.showClientAndMeta = true,
+    this.showCompactHeader = false,
+    this.showSummary = true,
+    this.showFooter = true,
+    this.showQtyTotalRow = true,
+    this.showNotes = true,
+    this.qtySumOverride,
+    this.pageIndicator,
+    this.leadingContinuationBanner,
+    this.captureBottomPadding = 0,
+    this.productIndexOffset = 0,
   });
+
+  List<Map<String, dynamic>> get _products =>
+      products ?? List<Map<String, dynamic>>.from(invoice['products'] ?? []);
 
   @override
   Widget build(BuildContext context) {
-    final products =
-        List<Map<String, dynamic>>.from(invoice['products'] ?? []);
+    final lineProducts = _products;
     final previousBalance = invoiceNum(invoice['previousBalance']);
     final totalSum = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
     final clientBalance = invoiceBalanceAfter(invoice);
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
-    final qtySum = products.fold<double>(
-      0,
-      (s, p) => s + invoiceNum(p['amount']),
-    );
+    final qtySum = qtySumOverride ??
+        lineProducts.fold<double>(
+          0,
+          (s, p) => s + invoiceNum(p['amount']),
+        );
 
     return Container(
       width: width,
       color: Colors.white,
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
+      padding: EdgeInsets.fromLTRB(10, 8, 10, 8 + captureBottomPadding),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Center(
-            child: Image.asset(
-              'assets/Magdy store.png',
-              width: width * 0.38,
-              fit: BoxFit.contain,
-              errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+          if (showStoreHeader) ...[
+            Center(
+              child: Image.asset(
+                'assets/Magdy store.png',
+                width: width * 0.38,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          const Center(
-            child: Text(
-              'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+            const SizedBox(height: 4),
+            Center(
+              child: Text(
+                storeName,
+                textAlign: TextAlign.center,
+                style:
+                    const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+              ),
             ),
-          ),
-          const SizedBox(height: 2),
-          const Center(
-            child: Text(
-              'كفر الزيات - طنطا - الغربية',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11, color: Colors.black54),
+            const SizedBox(height: 2),
+            Center(
+              child: Text(
+                storeAddress,
+                textAlign: TextAlign.center,
+                style: const TextStyle(fontSize: 11, color: Colors.black54),
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
-          const Center(
-            child: Text(
-              'فاتورة مبيعات',
-              style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+            const SizedBox(height: 6),
+            const Center(
+              child: Text(
+                'فاتورة مبيعات',
+                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+              ),
             ),
-          ),
-          const SizedBox(height: 4),
-          const Center(
-            child: Text(
-              'كريم حماد: 01068462105 - 01207968495',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11),
+            const SizedBox(height: 4),
+            const Center(
+              child: Text(
+                'كريم حماد: 01068462105 - 01207968495',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11),
+              ),
             ),
-          ),
-          const Center(
-            child: Text(
-              'مجدي حماد: 01010573888 - 01201820045',
-              textAlign: TextAlign.center,
-              style: TextStyle(fontSize: 11),
+            const Center(
+              child: Text(
+                'مجدي حماد: 01010573888 - 01201820045',
+                textAlign: TextAlign.center,
+                style: TextStyle(fontSize: 11),
+              ),
             ),
-          ),
-          const SizedBox(height: 8),
-          _metaTable(typeLabel, invoice['invoiceNumber']?.toString() ?? '', when),
-          const SizedBox(height: 6),
-          Center(
-            child: Text(
-              'اسم العميل : ${invoice['clientName']?.toString() ?? ''}',
-              style: const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+            const SizedBox(height: 8),
+          ],
+          if (showCompactHeader) ...[
+            Center(
+              child: Text(
+                'فاتورة مبيعات رقم ${invoice['invoiceNumber']?.toString() ?? ''}',
+                style:
+                    const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
+              ),
             ),
-          ),
-          const SizedBox(height: 6),
-          _productsTable(products, qtySum),
-          const SizedBox(height: 8),
-          _summaryTable(previousBalance, totalSum, paid, clientBalance),
-          if ((invoice['notes']?.toString() ?? '').trim().isNotEmpty) ...[
+            const SizedBox(height: 4),
+          ],
+          if (pageIndicator != null && pageIndicator!.isNotEmpty) ...[
+            Center(
+              child: Text(
+                pageIndicator!,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w600,
+                  color: Colors.black87,
+                ),
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (showClientAndMeta) ...[
+            _metaTable(
+              typeLabel,
+              invoice['invoiceNumber']?.toString() ?? '',
+              when,
+            ),
+            const SizedBox(height: 6),
+            Center(
+              child: Text(
+                'اسم العميل : ${invoice['clientName']?.toString() ?? ''}',
+                style:
+                    const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
+              ),
+            ),
+            const SizedBox(height: 6),
+          ],
+          if (leadingContinuationBanner != null &&
+              leadingContinuationBanner!.isNotEmpty) ...[
+            _continuationBannerBox(leadingContinuationBanner!),
+            const SizedBox(height: 8),
+          ],
+          if (lineProducts.isNotEmpty)
+            _productsTable(
+              lineProducts,
+              qtySum,
+              showTotalRow: showQtyTotalRow,
+              indexOffset: productIndexOffset,
+            ),
+          if (showSummary) ...[
+            const SizedBox(height: 8),
+            _summaryTable(previousBalance, totalSum, paid, clientBalance),
+          ],
+          if (showNotes &&
+              (invoice['notes']?.toString() ?? '').trim().isNotEmpty) ...[
             const SizedBox(height: 8),
             Text(
               'ملاحظات: ${invoice['notes']}',
@@ -110,27 +189,57 @@ class InvoiceReceiptCard extends StatelessWidget {
               style: const TextStyle(fontSize: 12),
             ),
           ],
-          const SizedBox(height: 10),
-          ...InvoiceAppFooter.resolveLines().map(
-            (line) => Padding(
-              padding: const EdgeInsets.only(top: 2),
-              child: Text(
-                line,
-                textAlign: TextAlign.center,
-                style: const TextStyle(
-                  fontSize: 10,
-                  color: Colors.black54,
-                  fontWeight: FontWeight.w500,
+          if (showFooter) ...[
+            const SizedBox(height: 10),
+            ...InvoiceAppFooter.resolveLines().map(
+              (line) => Padding(
+                padding: const EdgeInsets.only(top: 2),
+                child: Text(
+                  line,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(
+                    fontSize: 10,
+                    color: Colors.black54,
+                    fontWeight: FontWeight.w500,
+                  ),
                 ),
               ),
             ),
-          ),
+          ],
         ],
       ),
     );
   }
 
-  Widget _productsTable(List<Map<String, dynamic>> products, double qtySum) {
+  Widget _continuationBannerBox(String text) {
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(vertical: 10, horizontal: 8),
+      decoration: BoxDecoration(
+        color: const Color(0xFFFDF0E6),
+        border: Border.all(color: Colors.orange.shade400, width: 1.5),
+        borderRadius: BorderRadius.circular(6),
+      ),
+      child: Text(
+        text,
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        style: const TextStyle(
+          fontSize: 14,
+          height: 1.35,
+          fontWeight: FontWeight.bold,
+          color: Colors.deepOrange,
+        ),
+      ),
+    );
+  }
+
+  Widget _productsTable(
+    List<Map<String, dynamic>> products,
+    double qtySum, {
+    required bool showTotalRow,
+    int indexOffset = 0,
+  }) {
     final headers = ['الإجمالي', 'السعر', 'الكمية', 'اسم المنتج', 'م'];
     final headerCells = headers
         .map(
@@ -146,7 +255,7 @@ class InvoiceReceiptCard extends StatelessWidget {
         .toList();
 
     final productRows = products.asMap().entries.map((entry) {
-      final index = entry.key + 1;
+      final index = entry.key + 1 + indexOffset;
       final p = entry.value;
       final name = invoiceProductName(p);
       final qty = invoiceQty(p['amount']);
@@ -167,7 +276,7 @@ class InvoiceReceiptCard extends StatelessWidget {
       );
     }).toList();
 
-    Widget _cell(String text, {bool bold = false}) => Padding(
+    Widget cell(String text, {bool bold = false}) => Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
           child: Text(
             text,
@@ -179,16 +288,28 @@ class InvoiceReceiptCard extends StatelessWidget {
           ),
         );
 
-    final totalRow = TableRow(
-      decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
-      children: [
-        _cell(''),
-        _cell(''),
-        _cell(invoiceQty(qtySum), bold: true),
-        _cell('إجمالي الكميات', bold: true),
-        _cell(''),
-      ],
-    );
+    final rows = <TableRow>[
+      TableRow(
+        decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+        children: headerCells,
+      ),
+      ...productRows,
+    ];
+
+    if (showTotalRow) {
+      rows.add(
+        TableRow(
+          decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
+          children: [
+            cell(''),
+            cell(''),
+            cell(invoiceQty(qtySum), bold: true),
+            cell('إجمالي الكميات', bold: true),
+            cell(''),
+          ],
+        ),
+      );
+    }
 
     return Table(
       border: TableBorder.all(color: Colors.grey.shade400),
@@ -200,14 +321,7 @@ class InvoiceReceiptCard extends StatelessWidget {
         3: FlexColumnWidth(3.5),
         4: FlexColumnWidth(0.8),
       },
-      children: [
-        TableRow(
-          decoration: const BoxDecoration(color: Color(0xFFFDF0E6)),
-          children: headerCells,
-        ),
-        ...productRows,
-        totalRow,
-      ],
+      children: rows,
     );
   }
 
