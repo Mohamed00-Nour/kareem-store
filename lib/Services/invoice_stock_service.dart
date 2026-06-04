@@ -118,10 +118,13 @@ class InvoiceStockService {
     for (final line in lines) {
       final name = lineCatalogName(line);
       final resolved = catalog[name];
-      if (resolved == null) continue;
       final amount = invoiceNum(line['amount']);
       if (amount <= 0) continue;
-      total += resolved.costPrice * amount;
+      final unitCost = invoiceLineHasFrozenCost(line)
+          ? invoiceNum(line['costPrice'])
+          : (resolved?.costPrice ?? 0.0);
+      if (unitCost <= 0 && resolved == null) continue;
+      total += unitCost * amount;
     }
     return total;
   }

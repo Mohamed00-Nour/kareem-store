@@ -90,3 +90,29 @@ String invoiceCatalogProductName(dynamic product) {
       : Map<String, dynamic>.from(product);
   return map['product']?.toString().trim() ?? '';
 }
+
+/// True when [costPrice] was stored on the invoice line at sale time.
+bool invoiceLineHasFrozenCost(Map<String, dynamic> line) =>
+    line.containsKey('costPrice') && line['costPrice'] != null;
+
+/// Unit cost for reports: frozen line [costPrice], else optional catalog fallback.
+double invoiceLineUnitCost(
+  Map<String, dynamic> line, {
+  double? catalogUnitCost,
+}) {
+  if (invoiceLineHasFrozenCost(line)) {
+    return invoiceNum(line['costPrice']);
+  }
+  return catalogUnitCost ?? 0.0;
+}
+
+/// Line cost (unit × quantity) for profit reports.
+double invoiceLineTotalCost(
+  Map<String, dynamic> line, {
+  double? catalogUnitCost,
+}) {
+  final qty = invoiceNum(line['amount']);
+  if (qty <= 0) return 0.0;
+  return invoiceLineUnitCost(line, catalogUnitCost: catalogUnitCost) *
+      qty;
+}

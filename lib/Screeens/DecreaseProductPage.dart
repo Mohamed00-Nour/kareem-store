@@ -2070,6 +2070,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               'product': sheetProduct.name,
                               'date': _selectedDate,
                               'amount': amount,
+                              'costPrice': sheetProduct.costPrice,
                               'sellingPrice1': sp1,
                               'sellingPrice2': sp2,
                               'sellingPrice3': sp3,

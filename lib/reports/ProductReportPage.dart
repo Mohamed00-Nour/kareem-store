@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
+import '../Services/invoice_number_utils.dart';
+
 class ProductReportPage extends StatefulWidget {
   const ProductReportPage({super.key});
 
@@ -23,6 +25,7 @@ class _ProductReportPageState extends State<ProductReportPage> {
   bool _showProductSuggestions = false;
 
   _ProductStats? _stats;
+  bool _usedLegacyCostFallback = false;
 
   List<String> get _filteredProductNames {
     if (_searchQuery.isEmpty) return _productNames;
@@ -59,6 +62,7 @@ class _ProductReportPageState extends State<ProductReportPage> {
       _searchQuery = name;
       _showProductSuggestions = false;
       _stats = null;
+      _usedLegacyCostFallback = false;
     });
     _searchFocusNode.unfocus();
   }
@@ -69,6 +73,7 @@ class _ProductReportPageState extends State<ProductReportPage> {
       _searchQuery = '';
       _selectedProduct = null;
       _stats = null;
+      _usedLegacyCostFallback = false;
       _showProductSuggestions = false;
     });
   }
@@ -128,39 +133,45 @@ class _ProductReportPageState extends State<ProductReportPage> {
       double totalRevenue = 0;
       double totalCost = 0;
       int invoiceCount = 0;
+      var usedLegacyFallback = false;
 
-      // Fetch cost price once
+      // Fallback for old invoice lines without frozen costPrice on the line.
+      double catalogCost = 0;
       final productSnap = await FirebaseFirestore.instance
           .collection('products')
           .where('name', isEqualTo: _selectedProduct)
           .limit(1)
           .get();
-
-      double costPrice = 0;
       if (productSnap.docs.isNotEmpty) {
-        costPrice =
-            (productSnap.docs.first.data()['costPrice'] ?? 0.0).toDouble();
+        catalogCost = invoiceNum(productSnap.docs.first.data()['costPrice']);
       }
 
       for (final doc in invoicesSnap.docs) {
         final data = doc.data();
         final products = (data['products'] as List<dynamic>?) ?? [];
         for (final p in products) {
-          final pMap = p as Map<String, dynamic>;
-          if (pMap['product'] == _selectedProduct) {
-            final qty =
-                double.tryParse(pMap['amount']?.toString() ?? '0') ?? 0;
-            final revenue =
-                (pMap['total'] ?? 0.0).toDouble();
-            totalQuantity += qty;
-            totalRevenue += revenue;
-            totalCost += costPrice * qty;
-            invoiceCount++;
+          final pMap = Map<String, dynamic>.from(p as Map);
+          if (invoiceCatalogProductName(pMap) != _selectedProduct) continue;
+
+          final qty = invoiceNum(pMap['amount']);
+          final revenue = invoiceNum(pMap['total']);
+          if (!invoiceLineHasFrozenCost(pMap)) {
+            usedLegacyFallback = true;
           }
+          final lineCost = invoiceLineTotalCost(
+            pMap,
+            catalogUnitCost: catalogCost,
+          );
+
+          totalQuantity += qty;
+          totalRevenue += revenue;
+          totalCost += lineCost;
+          invoiceCount++;
         }
       }
 
       setState(() {
+        _usedLegacyCostFallback = usedLegacyFallback;
         _stats = _ProductStats(
           productName: _selectedProduct!,
           totalQuantitySold: totalQuantity,
@@ -247,6 +258,7 @@ class _ProductReportPageState extends State<ProductReportPage> {
                         _selectedProduct != _searchQuery) {
                       _selectedProduct = null;
                       _stats = null;
+                      _usedLegacyCostFallback = false;
                     }
                   });
                 },
@@ -390,6 +402,19 @@ class _ProductReportPageState extends State<ProductReportPage> {
               ),
               if (_stats != null) ...[
                 SizedBox(height: 20.h),
+                if (_usedLegacyCostFallback)
+                  Padding(
+                    padding: EdgeInsets.only(bottom: 10.h),
+                    child: Text(
+                      'تنبيه: بعض الفواتير القديمة لا تحتوي تكلفة محفوظة — '
+                      'تم استخدام التكلفة الحالية لتلك الأسطر فقط.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 12.sp,
+                        color: Colors.orange.shade800,
+                      ),
+                    ),
+                  ),
                 _ReportResultCard(stats: _stats!),
               ],
             ],
