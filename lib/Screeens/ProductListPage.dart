@@ -221,6 +221,194 @@ void initState() {
     );
   }
 
+  static const Color _tableBorderColor = Color(0xFF424242);
+  static const Color _tableHeaderFill = Color(0xFFE8E8E8);
+  static const Color _tableRowFillA = Color(0xFFFFFFFF);
+  static const Color _tableRowFillB = Color(0xFFF0F4F8);
+
+  TextStyle get _tableHeaderTextStyle => TextStyle(
+        fontSize: 12.sp,
+        fontWeight: FontWeight.bold,
+        color: Colors.black,
+      );
+
+  TextStyle get _tableCellTextStyle => TextStyle(
+        fontSize: 11.sp,
+        color: Colors.black,
+      );
+
+  TextStyle get _tableNameTextStyle => TextStyle(
+        fontSize: 9.5.sp,
+        color: Colors.black,
+        height: 1.15,
+      );
+
+  Widget _borderedCell(
+    Widget child, {
+    required int flex,
+    Color? fill,
+  }) {
+    return Expanded(
+      flex: flex,
+      child: Container(
+        decoration: BoxDecoration(
+          color: fill ?? Colors.white,
+          border: Border.all(color: _tableBorderColor, width: 1),
+        ),
+        alignment: Alignment.center,
+        padding: EdgeInsets.symmetric(horizontal: 3.w, vertical: 6.h),
+        child: child,
+      ),
+    );
+  }
+
+  Widget _tableHeaderRow() {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        _borderedCell(
+          Text('تعداد', textAlign: TextAlign.center, style: _tableHeaderTextStyle),
+          flex: 1,
+          fill: _tableHeaderFill,
+        ),
+        _borderedCell(
+          Text('الإسم', textAlign: TextAlign.center, style: _tableHeaderTextStyle),
+          flex: 4,
+          fill: _tableHeaderFill,
+        ),
+        if (_showCostPrice)
+          _borderedCell(
+            Text('التكلفة',
+                textAlign: TextAlign.center, style: _tableHeaderTextStyle),
+            flex: 2,
+            fill: _tableHeaderFill,
+          ),
+        _borderedCell(
+          Text('السعر', textAlign: TextAlign.center, style: _tableHeaderTextStyle),
+          flex: 2,
+          fill: _tableHeaderFill,
+        ),
+        _borderedCell(
+          Text('الكمية', textAlign: TextAlign.center, style: _tableHeaderTextStyle),
+          flex: 2,
+          fill: _tableHeaderFill,
+        ),
+      ],
+    );
+  }
+
+  Widget _tableDataRow({
+    required int serial,
+    required Map<String, dynamic> product,
+    required String productId,
+  }) {
+    final qty = _productQuantity(product);
+    final alert = invoiceNum(product['alertAmount']);
+    final lowStock = qty <= alert;
+    final rowFill = serial.isOdd ? _tableRowFillA : _tableRowFillB;
+
+    return Material(
+      color: rowFill,
+      child: InkWell(
+        onTap: () {
+          Navigator.of(context).push(
+            MaterialPageRoute(
+              builder: (context) => EditProductPage(
+                productId: productId,
+                productData: product,
+              ),
+            ),
+          );
+        },
+        onLongPress: () => _handleDeleteProduct(context, productId, product),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            _borderedCell(
+              Text(
+                '$serial',
+                textAlign: TextAlign.center,
+                style: _tableCellTextStyle.copyWith(fontWeight: FontWeight.w600),
+              ),
+              flex: 1,
+              fill: rowFill,
+            ),
+            _borderedCell(
+              Text(
+                product['name']?.toString() ?? '',
+                textAlign: TextAlign.center,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: _tableNameTextStyle,
+              ),
+              flex: 4,
+              fill: rowFill,
+            ),
+            if (_showCostPrice)
+              _borderedCell(
+                Text(
+                  invoiceAmount(product['costPrice']),
+                  textAlign: TextAlign.center,
+                  style: _tableCellTextStyle,
+                ),
+                flex: 2,
+                fill: rowFill,
+              ),
+            _borderedCell(
+              Text(
+                invoiceAmount(product['sellingPrice1']),
+                textAlign: TextAlign.center,
+                style: _tableCellTextStyle,
+              ),
+              flex: 2,
+              fill: rowFill,
+            ),
+            _borderedCell(
+              Text(
+                invoiceAmount(product['quantity']),
+                textAlign: TextAlign.center,
+                style: _tableCellTextStyle.copyWith(
+                  color: lowStock ? Colors.red.shade700 : Colors.black,
+                  fontWeight: lowStock ? FontWeight.bold : FontWeight.normal,
+                ),
+              ),
+              flex: 2,
+              fill: rowFill,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildBorderedProductsTable(List<QueryDocumentSnapshot> docs) {
+    return Padding(
+      padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 4.h),
+      child: Container(
+        color: Colors.white,
+        child: Column(
+          children: [
+            _tableHeaderRow(),
+            Expanded(
+              child: ListView.builder(
+                itemCount: docs.length,
+                itemBuilder: (context, index) {
+                  final doc = docs[index];
+                  final product = doc.data() as Map<String, dynamic>;
+                  return _tableDataRow(
+                    serial: index + 1,
+                    product: product,
+                    productId: doc.id,
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Widget _filterChip(String label, _ProductListFilter mode) {
     final selected = _filter == mode;
     return FilterChip(
@@ -304,47 +492,6 @@ void initState() {
               ),
             ),
           ),
-          Padding(
-            padding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
-            child: Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
-              children: [
-                Expanded(
-                  child: Text(
-                    'الكمية',
-                    style:
-                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                Expanded(
-                  child: Text(
-                    'السعر',
-                    style:
-                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-                if (_showCostPrice)
-                  Expanded(
-                    child: Text(
-                      'التكلفة',
-                      style: TextStyle(
-                          fontSize: 16.sp, fontWeight: FontWeight.bold),
-                      textAlign: TextAlign.center,
-                    ),
-                  ),
-                Expanded(
-                  child: Text(
-                    'الإسم',
-                    style:
-                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ],
-            ),
-          ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
               stream:
@@ -360,9 +507,10 @@ void initState() {
                 }
                 if (snapshot.hasError) {
                   return Center(child: Text('Error: ${snapshot.error}'));
-
                 }
+
                 if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                  return const Center(child: Text('لا توجد منتجات'));
                 }
 
                 final products = snapshot.data!.docs;
@@ -370,7 +518,8 @@ void initState() {
                     ? products
                     : products.where((doc) {
                         final product = doc.data() as Map<String, dynamic>;
-                        final productName = (product['name'] ?? '').toLowerCase();
+                        final productName =
+                            (product['name'] ?? '').toLowerCase();
                         return productName.contains(_searchQuery.toLowerCase());
                       }).toList();
 
@@ -379,71 +528,11 @@ void initState() {
                   return _matchesFilter(product);
                 }).toList();
 
-                return ListView.builder(
-                  itemCount: displayedProducts.length,
-                  itemBuilder: (context, index) {
-                    final doc = displayedProducts[index];
-                    final product = doc.data() as Map<String, dynamic>;
-                    final productId = doc.id;
-                    return Card(
-                      margin:
-                          EdgeInsets.symmetric(horizontal: 10.w, vertical: 8.h),
-                      elevation: 2,
-                      color: Colors.orange.withOpacity(0.8),
-                      child: ListTile(
-                        title: Row(
-                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                          children: [
-                            Expanded(
-                              child: Text(
-                                invoiceAmount(product['quantity']),
-                                style: TextStyle(
-                                  fontSize: 14.sp,
-                                  color: (product['quantity'] <=
-                                          product['alertAmount'])
-                                      ? Colors.red
-                                      : Colors.black.withOpacity(0.7),
-                                ),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                            Expanded(
-                              child: Text(
-                                invoiceAmount(product['sellingPrice1']),
-                                style: TextStyle(fontSize: 14.sp),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                            if (_showCostPrice)
-                              Expanded(
-                                child: Text(
-                                  invoiceAmount(product['costPrice']),
-                                  style: TextStyle(fontSize: 14.sp),
-                                  textAlign: TextAlign.center,
-                                ),
-                              ),
-                            Expanded(
-                              child: Text(
-                                product['name'] ?? 'No Name',
-                                style: TextStyle(fontSize: 14.sp),
-                                textAlign: TextAlign.center,
-                              ),
-                            ),
-                          ],
-                        ),
-                        onTap: () {
-                          Navigator.of(context).push(MaterialPageRoute(
-                            builder: (context) => EditProductPage(
-                              productId: productId,
-                              productData: product,
-                            ),
-                          ));
-                        },
-                        onLongPress: () => _handleDeleteProduct(context, productId, product),
-                      ),
-                    );
-                  },
-                );
+                if (displayedProducts.isEmpty) {
+                  return const Center(child: Text('لا توجد منتجات مطابقة'));
+                }
+
+                return _buildBorderedProductsTable(displayedProducts);
               },
             ),
           ),

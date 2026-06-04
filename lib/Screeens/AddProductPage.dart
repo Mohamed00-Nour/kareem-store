@@ -1,7 +1,7 @@
 ﻿import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'Data/DataEntryScreen.dart';
+import 'Data/quick_add_product_sheet.dart';
 import 'home_page.dart';
 import '../Buing Invoices/BuyingInvoiceListPage.dart';
 import '../Buing Invoices/BuyingInvoiceDetailPage.dart';
@@ -61,8 +61,13 @@ class _AddProductPageState extends State<AddProductPage> {
       await FirebaseFirestore.instance.collection('products').get();
       if (!mounted) return;
       setState(() {
-        _products.addAll(querySnapshot.docs
-            .map((doc) => Product.fromMap(doc.data() as Map<String, dynamic>)));
+        _products
+          ..clear()
+          ..addAll(querySnapshot.docs.map((doc) {
+            final data = Map<String, dynamic>.from(doc.data() as Map);
+            data['id'] = doc.id;
+            return Product.fromMap(data);
+          }));
         _isFetching = false;
       });
     } catch (e) {
@@ -393,6 +398,25 @@ class _AddProductPageState extends State<AddProductPage> {
     } catch (e) {
       debugPrint('Failed to sync product prices: $e');
     }
+  }
+
+  Future<void> _addNewProductInline({String? initialName}) async {
+    final result = await showQuickAddProductSheet(
+      context,
+      initialName: initialName,
+    );
+    if (result == null || !mounted) return;
+
+    final product = Product.fromMap(result);
+    setState(() {
+      final idx = _products.indexWhere((p) => p.id == product.id);
+      if (idx >= 0) {
+        _products[idx] = product;
+      } else {
+        _products.add(product);
+      }
+    });
+    _showProductSheet(newProduct: product);
   }
 
   // ─────────────────────────────────────────────
@@ -1513,13 +1537,9 @@ class _AddProductPageState extends State<AddProductPage> {
                   leading: Icon(Icons.add_box_outlined, size: 22.sp),
                   title: Text('اضافة منتج جديد',
                       style: TextStyle(fontSize: 15.sp)),
-                  onTap: () async {
+                  onTap: () {
                     Navigator.pop(context);
-                    await Navigator.push(
-                        context,
-                        MaterialPageRoute(
-                            builder: (_) => const DataEntryScreen()));
-                    await _fetchProducts();
+                    _addNewProductInline();
                   },
                 ),
                 ListTile(
@@ -1671,6 +1691,16 @@ class _AddProductPageState extends State<AddProductPage> {
                           color: Colors.blue.shade700, size: 30.sp),
                       onPressed: _showCheckoutSheet,
                       tooltip: 'حفظ الفاتورة',
+                    ),
+                    IconButton(
+                      icon: Icon(Icons.add_circle_outline,
+                          color: Colors.orange.shade800, size: 26.sp),
+                      onPressed: () => _addNewProductInline(
+                        initialName: _productController.text.trim().isEmpty
+                            ? null
+                            : _productController.text.trim(),
+                      ),
+                      tooltip: 'إضافة منتج جديد',
                     ),
                     Expanded(
                       child: Container(

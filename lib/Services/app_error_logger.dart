@@ -32,6 +32,7 @@ class AppErrorLogger {
         step: 'flutter_framework',
         severity: AppErrorSeverity.fatal,
         metadata: {
+          'summary': details.summary.toString(),
           if (details.library != null) 'library': details.library!,
           if (details.context != null) 'context': details.context.toString(),
         },

@@ -15,6 +15,9 @@ class ResolvedInvoiceProduct {
     required this.costPrice,
     required this.quantity,
   });
+
+  DocumentReference<Map<String, dynamic>> get ref =>
+      FirebaseFirestore.instance.collection('products').doc(id);
 }
 
 /// Fast stock adjustments and cost totals for invoice save (batch writes, few reads).
@@ -22,9 +25,19 @@ class InvoiceStockService {
   static const int _whereInChunk = 10;
   static const int _batchOpLimit = 450;
 
-  /// Catalog name on an invoice line (not [customProductName]).
   static String lineCatalogName(Map<String, dynamic> line) =>
       invoiceCatalogProductName(line);
+
+  static bool _catalogCoversLines(
+    Iterable<Map<String, dynamic>> lines,
+    Map<String, ResolvedInvoiceProduct> catalog,
+  ) {
+    for (final line in lines) {
+      final name = lineCatalogName(line);
+      if (name.isNotEmpty && !catalog.containsKey(name)) return false;
+    }
+    return true;
+  }
 
   static Map<String, ResolvedInvoiceProduct> memoryCatalogFromMaps(
     Iterable<Map<String, dynamic>> entries,
@@ -58,15 +71,22 @@ class InvoiceStockService {
     if (missing.isEmpty) return catalog;
 
     final names = missing.toList();
+    final chunkFutures = <Future<QuerySnapshot<Map<String, dynamic>>>>[];
     for (var i = 0; i < names.length; i += _whereInChunk) {
       final end = (i + _whereInChunk > names.length)
           ? names.length
           : i + _whereInChunk;
       final chunk = names.sublist(i, end);
-      final snap = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', whereIn: chunk)
-          .get();
+      chunkFutures.add(
+        FirebaseFirestore.instance
+            .collection('products')
+            .where('name', whereIn: chunk)
+            .get(),
+      );
+    }
+
+    final snapshots = await Future.wait(chunkFutures);
+    for (final snap in snapshots) {
       for (final doc in snap.docs) {
         final data = doc.data();
         final name = data['name']?.toString() ?? '';
@@ -80,6 +100,14 @@ class InvoiceStockService {
       }
     }
     return catalog;
+  }
+
+  static Future<Map<String, ResolvedInvoiceProduct>> resolveCatalogIfNeeded({
+    required Iterable<Map<String, dynamic>> lines,
+    Map<String, ResolvedInvoiceProduct> seed = const {},
+  }) async {
+    if (_catalogCoversLines(lines, seed)) return seed;
+    return resolveCatalog(lines: lines, seed: seed);
   }
 
   static double computeCostTotal(
@@ -102,7 +130,7 @@ class InvoiceStockService {
     List<Map<String, dynamic>> lines, {
     Map<String, ResolvedInvoiceProduct> seed = const {},
   }) async {
-    final catalog = await resolveCatalog(lines: lines, seed: seed);
+    final catalog = await resolveCatalogIfNeeded(lines: lines, seed: seed);
     return computeCostTotal(lines, catalog);
   }
 
@@ -112,34 +140,32 @@ class InvoiceStockService {
     required bool restore,
     DateTime? changeDate,
     Map<String, ResolvedInvoiceProduct> seed = const {},
+    Map<String, ResolvedInvoiceProduct>? catalog,
     String changeTypeWhenRestore = 'increase',
     String changeTypeWhenDecrease = 'decrease',
   }) async {
     if (lines.isEmpty) return;
 
-    final catalog = await resolveCatalog(lines: lines, seed: seed);
+    final resolved =
+        catalog ?? await resolveCatalogIfNeeded(lines: lines, seed: seed);
+
     final deltaByDocId = <String, double>{};
     final changeDateByDocId = <String, dynamic>{};
+    final refByDocId = <String, DocumentReference<Map<String, dynamic>>>{};
 
     for (final line in lines) {
       final name = lineCatalogName(line);
-      final resolved = catalog[name];
-      if (resolved == null) continue;
+      final product = resolved[name];
+      if (product == null) continue;
       final amount = invoiceNum(line['amount']);
       if (amount <= 0) continue;
-      deltaByDocId[resolved.id] = (deltaByDocId[resolved.id] ?? 0) + amount;
-      changeDateByDocId[resolved.id] =
+      deltaByDocId[product.id] = (deltaByDocId[product.id] ?? 0) + amount;
+      changeDateByDocId[product.id] =
           line['date'] ?? changeDate ?? DateTime.now();
+      refByDocId[product.id] = product.ref;
     }
 
     if (deltaByDocId.isEmpty) return;
-
-    final ids = deltaByDocId.keys.toList();
-    final snapshots = await Future.wait(
-      ids.map(
-        (id) => FirebaseFirestore.instance.collection('products').doc(id).get(),
-      ),
-    );
 
     var batch = FirebaseFirestore.instance.batch();
     var ops = 0;
@@ -152,19 +178,16 @@ class InvoiceStockService {
       ops = 0;
     }
 
-    for (var i = 0; i < ids.length; i++) {
-      final id = ids[i];
-      final snap = snapshots[i];
-      if (!snap.exists) continue;
-
-      final current = invoiceNum(snap.data()?['quantity']);
-      final delta = deltaByDocId[id]!;
-      final newQty = restore ? current + delta : current - delta;
+    for (final entry in deltaByDocId.entries) {
+      final id = entry.key;
+      final delta = entry.value;
+      final ref = refByDocId[id]!;
       final changeType =
           restore ? changeTypeWhenRestore : changeTypeWhenDecrease;
+      final increment = restore ? delta : -delta;
 
-      batch.update(snap.reference, {'quantity': newQty});
-      batch.set(snap.reference.collection('changes').doc(), {
+      batch.update(ref, {'quantity': FieldValue.increment(increment)});
+      batch.set(ref.collection('changes').doc(), {
         'date': changeDateByDocId[id],
         'amount': delta,
         'type': changeType,

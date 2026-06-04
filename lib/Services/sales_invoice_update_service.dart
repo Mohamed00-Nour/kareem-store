@@ -41,13 +41,13 @@ class SalesInvoiceUpdateService {
       lines: oldProducts,
       restore: true,
       changeDate: selectedDate,
-      seed: catalog,
+      catalog: catalog,
     );
     await InvoiceStockService.applyStockChanges(
       lines: newProducts,
       restore: false,
       changeDate: selectedDate,
-      seed: catalog,
+      catalog: catalog,
     );
 
     final effectiveDiscountAmt = discountIsPercent
