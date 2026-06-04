@@ -247,44 +247,52 @@ class _AddProductPageState extends State<AddProductPage> {
       }, SetOptions(merge: true));
 
       for (var product in _addedProducts) {
-        QuerySnapshot query = await FirebaseFirestore.instance
-            .collection('products')
-            .where('name', isEqualTo: product['product'])
-            .get();
-        if (query.docs.isNotEmpty) {
-          for (var doc in query.docs) {
-            double existingQty = (doc['quantity'] as num).toDouble();
-            double addedQty = (product['amount'] as num).toDouble();
-            Map<String, dynamic> updateData = {
-              'quantity': existingQty + addedQty
-            };
-            if (product['newCostPrice'] != null)
-              updateData['costPrice'] =
-                  (product['newCostPrice'] as num).toDouble();
-            if (product['newSellingPrice1'] != null)
-              updateData['sellingPrice1'] =
-                  (product['newSellingPrice1'] as num).toDouble();
-            if (product['newSellingPrice2'] != null)
-              updateData['sellingPrice2'] =
-                  (product['newSellingPrice2'] as num).toDouble();
-            if (product['newSellingPrice3'] != null)
-              updateData['sellingPrice3'] =
-                  (product['newSellingPrice3'] as num).toDouble();
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(doc.id)
-                .update(updateData);
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(doc.id)
-                .collection('changes')
-                .add({
-              'date': product['date'],
-              'amount': addedQty,
-              'type': 'increase',
-            });
-          }
+        final productId = product['productId']?.toString() ?? '';
+        DocumentSnapshot? productDoc;
+        if (productId.isNotEmpty) {
+          productDoc = await FirebaseFirestore.instance
+              .collection('products')
+              .doc(productId)
+              .get();
         }
+        if (productDoc == null || !productDoc.exists) {
+          final query = await FirebaseFirestore.instance
+              .collection('products')
+              .where('name', isEqualTo: product['product'])
+              .get();
+          if (query.docs.isEmpty) continue;
+          productDoc = query.docs.first;
+        }
+
+        final docRef = productDoc.reference;
+        final docData = productDoc.data() as Map<String, dynamic>;
+        double existingQty = (docData['quantity'] as num).toDouble();
+        double addedQty = (product['amount'] as num).toDouble();
+        Map<String, dynamic> updateData = {
+          'quantity': existingQty + addedQty,
+        };
+        if (product['newCostPrice'] != null) {
+          updateData['costPrice'] =
+              (product['newCostPrice'] as num).toDouble();
+        }
+        if (product['newSellingPrice1'] != null) {
+          updateData['sellingPrice1'] =
+              (product['newSellingPrice1'] as num).toDouble();
+        }
+        if (product['newSellingPrice2'] != null) {
+          updateData['sellingPrice2'] =
+              (product['newSellingPrice2'] as num).toDouble();
+        }
+        if (product['newSellingPrice3'] != null) {
+          updateData['sellingPrice3'] =
+              (product['newSellingPrice3'] as num).toDouble();
+        }
+        await docRef.update(updateData);
+        await docRef.collection('changes').add({
+          'date': product['date'],
+          'amount': addedQty,
+          'type': 'increase',
+        });
       }
 
       DocumentReference boxDocRef =
@@ -417,6 +425,178 @@ class _AddProductPageState extends State<AddProductPage> {
       }
     });
     _showProductSheet(newProduct: product);
+  }
+
+  String _normalizeProductName(String raw) {
+    return raw.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
+  }
+
+  Future<String?> _resolveLineProductDocId(Map<String, dynamic> line) async {
+    final productId = line['productId']?.toString() ?? '';
+    if (productId.isNotEmpty) {
+      final doc = await FirebaseFirestore.instance
+          .collection('products')
+          .doc(productId)
+          .get();
+      if (doc.exists) return productId;
+    }
+    final name = line['product']?.toString() ?? '';
+    if (name.isEmpty) return null;
+    final query = await FirebaseFirestore.instance
+        .collection('products')
+        .where('name', isEqualTo: name)
+        .limit(1)
+        .get();
+    if (query.docs.isEmpty) return null;
+    return query.docs.first.id;
+  }
+
+  Future<void> _showChangeLineProductNameDialog(int index) async {
+    final line = _addedProducts[index];
+    final oldName = line['product']?.toString() ?? '';
+
+    final newName = await showDialog<String>(
+      context: context,
+      builder: (ctx) {
+        final nameCtrl = TextEditingController(text: oldName);
+        return Directionality(
+          textDirection: TextDirection.rtl,
+          child: AlertDialog(
+            title: Text('تغيير اسم المنتج',
+                style:
+                    TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
+            content: SizedBox(
+              width: double.maxFinite,
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text('الاسم الحالي: $oldName',
+                      style:
+                          TextStyle(fontSize: 13.sp, color: Colors.black54)),
+                  SizedBox(height: 6.h),
+                  Text(
+                    'يتم تغيير الاسم فقط — التكلفة والأسعار والكمية تبقى كما هي',
+                    style: TextStyle(fontSize: 12.sp, color: Colors.black45),
+                  ),
+                  SizedBox(height: 12.h),
+                  TextField(
+                    controller: nameCtrl,
+                    textAlign: TextAlign.right,
+                    decoration: InputDecoration(
+                      labelText: 'الاسم الجديد',
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(8.r),
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(ctx),
+                child: Text('إلغاء', style: TextStyle(fontSize: 14.sp)),
+              ),
+              TextButton(
+                onPressed: () {
+                  final n = _normalizeProductName(nameCtrl.text);
+                  if (n.isEmpty) return;
+                  Navigator.pop(ctx, n);
+                },
+                child: Text('حفظ',
+                    style: TextStyle(
+                        fontSize: 14.sp,
+                        fontWeight: FontWeight.bold,
+                        color: Colors.orange.shade800)),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+
+    if (newName == null || !mounted) return;
+    if (newName == oldName) return;
+
+    for (var i = 0; i < _addedProducts.length; i++) {
+      if (i != index && _addedProducts[i]['product'] == newName) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+              content: Text('هذا المنتج موجود بالفعل في الفاتورة')),
+        );
+        return;
+      }
+    }
+
+    try {
+      final docId = await _resolveLineProductDocId(line);
+      if (docId != null) {
+        final nameTaken = await FirebaseFirestore.instance
+            .collection('products')
+            .where('name', isEqualTo: newName)
+            .limit(1)
+            .get();
+        if (nameTaken.docs.isNotEmpty && nameTaken.docs.first.id != docId) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('اسم المنتج مستخدم بالفعل في المخزون')),
+          );
+          return;
+        }
+        await FirebaseFirestore.instance
+            .collection('products')
+            .doc(docId)
+            .update({'name': newName});
+      } else {
+        final nameTaken = await FirebaseFirestore.instance
+            .collection('products')
+            .where('name', isEqualTo: newName)
+            .limit(1)
+            .get();
+        if (nameTaken.docs.isNotEmpty) {
+          if (!mounted) return;
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text('اسم المنتج مستخدم بالفعل في المخزون')),
+          );
+          return;
+        }
+      }
+
+      if (!mounted) return;
+      setState(() {
+        for (var i = 0; i < _addedProducts.length; i++) {
+          if (_addedProducts[i]['product'] != oldName) continue;
+          final updated = Map<String, dynamic>.from(_addedProducts[i]);
+          updated['product'] = newName;
+          if (docId != null) updated['productId'] = docId;
+          _addedProducts[i] = updated;
+        }
+
+        final catalogIdx = _products.indexWhere(
+          (p) =>
+              (docId != null && p.id == docId) ||
+              (docId == null && p.name == oldName),
+        );
+        if (catalogIdx >= 0) {
+          _products[catalogIdx].name = newName;
+          if (docId != null) _products[catalogIdx].id = docId;
+        }
+        _dataModified = true;
+      });
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تغيير اسم المنتج')),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ أثناء تغيير الاسم: $e')),
+      );
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -1877,6 +2057,8 @@ class _AddProductPageState extends State<AddProductPage> {
                               child: GestureDetector(
                               onTap: () =>
                                   _showProductSheet(editIndex: index),
+                              onLongPress: () =>
+                                  _showChangeLineProductNameDialog(index),
                               child: Container(
                                 margin: EdgeInsets.symmetric(
                                     horizontal: 8.w, vertical: 3.h),
