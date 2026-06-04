@@ -1,9 +1,11 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../EditProductPage.dart';
 import '../Services/invoice_number_utils.dart';
+import '../Services/products_list_pdf_service.dart';
 import 'TotalInventoryValuePage.dart';
 
 class ProductListPage extends StatefulWidget {
@@ -24,6 +26,7 @@ class _ProductListPageState extends State<ProductListPage> {
   bool _showCostPrice = true;
   String _userRole = 'user';
   bool _productActionInProgress = false;
+  bool _exportingPdf = false;
 
   bool _isOnDemand(Map<String, dynamic> product) {
     return product['onDemand'] == true;
@@ -42,6 +45,21 @@ class _ProductListPageState extends State<ProductListPage> {
 
   bool get _showingDamaged => _filter == _ProductListFilter.damaged;
 
+  String get _filterLabel {
+    switch (_filter) {
+      case _ProductListFilter.lowStock:
+        return 'النواقص';
+      case _ProductListFilter.onDemand:
+        return 'حسب الطلب';
+      case _ProductListFilter.retail:
+        return 'قطاعي';
+      case _ProductListFilter.damaged:
+        return 'منتجات تالفة';
+      case _ProductListFilter.all:
+        return 'الكل';
+    }
+  }
+
   bool _matchesFilter(Map<String, dynamic> product) {
     switch (_filter) {
       case _ProductListFilter.damaged:
@@ -58,6 +76,215 @@ class _ProductListPageState extends State<ProductListPage> {
         if (_isRetail(product)) return false;
         if (_isOnDemand(product)) return _productQuantity(product) != 0;
         return true;
+    }
+  }
+
+  void _showPdfExportOptions() {
+    void exportAndClose(
+      BuildContext sheetCtx, {
+      required bool includeCost,
+      required bool includePrice,
+    }) {
+      Navigator.pop(sheetCtx);
+      _exportAndSharePdf(
+        includeCost: includeCost,
+        includePrice: includePrice,
+      );
+    }
+
+    showModalBottomSheet<void>(
+      context: context,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16.r)),
+      ),
+      builder: (ctx) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: EdgeInsets.fromLTRB(16.w, 14.h, 16.w, 6.h),
+              child: Text(
+                'تصدير ومشاركة PDF',
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+            ),
+            Text(
+              'التصفية الحالية: $_filterLabel'
+                  '${_searchQuery.isNotEmpty ? ' • بحث: $_searchQuery' : ''}',
+              textAlign: TextAlign.center,
+              style: TextStyle(fontSize: 12.sp, color: Colors.black54),
+            ),
+            SizedBox(height: 4.h),
+            ListView(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              children: [
+                if (_isAdmin)
+                  ListTile(
+                    leading: Icon(Icons.picture_as_pdf,
+                        color: Colors.blue.shade700),
+                    title: const Text('PDF كامل'),
+                    subtitle: const Text('تكلفة + أسعار البيع + الكمية'),
+                    onTap: () => exportAndClose(
+                      ctx,
+                      includeCost: true,
+                      includePrice: true,
+                    ),
+                  ),
+                ListTile(
+                  leading: Icon(Icons.sell_outlined,
+                      color: Colors.green.shade700),
+                  title: const Text('PDF مع الأسعار'),
+                  subtitle: const Text('أسعار البيع والكمية — بدون التكلفة'),
+                  onTap: () => exportAndClose(
+                    ctx,
+                    includeCost: false,
+                    includePrice: true,
+                  ),
+                ),
+                if (_isAdmin)
+                  ListTile(
+                    leading: Icon(Icons.inventory_2_outlined,
+                        color: Colors.teal.shade700),
+                    title: const Text('PDF مع التكلفة فقط'),
+                    subtitle:
+                        const Text('التكلفة والكمية — بدون أسعار البيع'),
+                    onTap: () => exportAndClose(
+                      ctx,
+                      includeCost: true,
+                      includePrice: false,
+                    ),
+                  ),
+                ListTile(
+                  leading: Icon(Icons.picture_as_pdf_outlined,
+                      color: Colors.orange.shade800),
+                  title: const Text('PDF بدون أسعار'),
+                  subtitle: const Text('الاسم والكمية فقط — بدون تكلفة'),
+                  onTap: () => exportAndClose(
+                    ctx,
+                    includeCost: false,
+                    includePrice: false,
+                  ),
+                ),
+              ],
+            ),
+            SizedBox(height: 8.h),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<List<ProductListPdfRow>> _collectExportRows() async {
+    final rows = <ProductListPdfRow>[];
+
+    if (_showingDamaged) {
+      final snap = await FirebaseFirestore.instance
+          .collection(_damagedProductsCollection)
+          .get();
+      final docs = snap.docs.where((doc) {
+        final product = doc.data();
+        return _matchesSearch(product);
+      }).toList();
+      docs.sort((a, b) {
+        final aTs = a.data()['movedAt'];
+        final bTs = b.data()['movedAt'];
+        if (aTs is Timestamp && bTs is Timestamp) {
+          return bTs.compareTo(aTs);
+        }
+        return 0;
+      });
+      var serial = 1;
+      for (final doc in docs) {
+        final product = doc.data();
+        final moved = _formatMovedAt(product['movedAt']);
+        rows.add(ProductListPdfRow(
+          serial: serial++,
+          name: product['name']?.toString() ?? '',
+          costPrice: invoiceNum(product['costPrice']),
+          sellingPrice1: invoiceNum(product['sellingPrice1']),
+          quantity: _damagedQuantity(product),
+          subtitle: moved.isNotEmpty ? 'نقل: $moved' : null,
+        ));
+      }
+      return rows;
+    }
+
+    final snap =
+        await FirebaseFirestore.instance.collection('products').get();
+    final docs = snap.docs.where((doc) {
+      final product = doc.data();
+      return _matchesSearch(product) && _matchesFilter(product);
+    }).toList();
+    docs.sort((a, b) {
+      final aName = (a.data()['name'] ?? '').toString();
+      final bName = (b.data()['name'] ?? '').toString();
+      return aName.compareTo(bName);
+    });
+    var serial = 1;
+    for (final doc in docs) {
+      final product = doc.data();
+      rows.add(ProductListPdfRow(
+        serial: serial++,
+        name: product['name']?.toString() ?? '',
+        costPrice: invoiceNum(product['costPrice']),
+        sellingPrice1: invoiceNum(product['sellingPrice1']),
+        quantity: _productQuantity(product),
+      ));
+    }
+    return rows;
+  }
+
+  Future<void> _exportAndSharePdf({
+    required bool includeCost,
+    required bool includePrice,
+  }) async {
+    if (_exportingPdf) return;
+    if (includeCost && !_isAdmin) {
+      _showPermissionDeniedDialog();
+      return;
+    }
+
+    setState(() => _exportingPdf = true);
+    try {
+      final rows = await _collectExportRows();
+      if (rows.isEmpty) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('لا توجد منتجات للتصدير')),
+        );
+        return;
+      }
+
+      final listTitle =
+          _showingDamaged ? 'منتجات تالفة' : 'قائمة المخزن';
+      final modeLabel = ProductsListPdfService.exportModeLabel(
+        includeCost: includeCost,
+        includePrice: includePrice,
+      );
+      final file = await ProductsListPdfService.generate(
+        rows: rows,
+        listTitle: listTitle,
+        filterLabel: _filterLabel,
+        includeCost: includeCost,
+        includePrice: includePrice,
+      );
+
+      if (!mounted) return;
+      await Share.shareXFiles(
+        [XFile(file.path)],
+        text: '$listTitle — $_filterLabel — $modeLabel',
+      );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ أثناء التصدير: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _exportingPdf = false);
     }
   }
 
@@ -1115,14 +1342,14 @@ class _ProductListPageState extends State<ProductListPage> {
     return StreamBuilder<QuerySnapshot>(
       stream: FirebaseFirestore.instance.collection('products').snapshots(),
       builder: (context, snapshot) {
-        if (_productActionInProgress) {
-          return Center(
-            child: CircularProgressIndicator(
-              color: Colors.orange.withOpacity(0.8),
-            ),
-          );
-        }
-        if (snapshot.connectionState == ConnectionState.waiting) {
+                if (_productActionInProgress || _exportingPdf) {
+                  return Center(
+                    child: CircularProgressIndicator(
+                      color: Colors.orange.withOpacity(0.8),
+                    ),
+                  );
+                }
+                if (snapshot.connectionState == ConnectionState.waiting) {
           return Center(
             child: CircularProgressIndicator(
               color: Colors.orange.withOpacity(0.8),
@@ -1157,14 +1384,14 @@ class _ProductListPageState extends State<ProductListPage> {
           .collection(_damagedProductsCollection)
           .snapshots(),
       builder: (context, snapshot) {
-        if (_productActionInProgress) {
-          return Center(
-            child: CircularProgressIndicator(
-              color: Colors.orange.withOpacity(0.8),
-            ),
-          );
-        }
-        if (snapshot.connectionState == ConnectionState.waiting) {
+                if (_productActionInProgress || _exportingPdf) {
+                  return Center(
+                    child: CircularProgressIndicator(
+                      color: Colors.orange.withOpacity(0.8),
+                    ),
+                  );
+                }
+                if (snapshot.connectionState == ConnectionState.waiting) {
           return Center(
             child: CircularProgressIndicator(
               color: Colors.orange.withOpacity(0.8),
@@ -1215,6 +1442,20 @@ class _ProductListPageState extends State<ProductListPage> {
         ),
         backgroundColor: Colors.black.withOpacity(0.7),
         actions: [
+          IconButton(
+            icon: _exportingPdf
+                ? SizedBox(
+                    width: 22.w,
+                    height: 22.w,
+                    child: const CircularProgressIndicator(
+                      strokeWidth: 2,
+                      color: Colors.white,
+                    ),
+                  )
+                : const Icon(Icons.picture_as_pdf, color: Colors.white),
+            tooltip: 'تصدير PDF',
+            onPressed: _exportingPdf ? null : _showPdfExportOptions,
+          ),
           IconButton(
             icon: const Icon(Icons.more_vert, color: Colors.white),
             tooltip: 'المزيد',
