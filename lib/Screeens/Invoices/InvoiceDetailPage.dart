@@ -1,3 +1,4 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -24,8 +25,11 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
   bool _deleted = false;
   late bool _isSpecial;
   bool _togglingSpecial = false;
+  bool _reloadInProgress = false;
+  bool _notifyParentOnPop = false;
+  late Map<String, dynamic> _invoice;
 
-  Map<String, dynamic> get invoice => widget.invoice;
+  Map<String, dynamic> get invoice => _invoice;
 
   String get _rootInvoiceId =>
       invoice['id']?.toString() ?? invoice['invoiceId']?.toString() ?? '';
@@ -35,8 +39,35 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
   @override
   void initState() {
     super.initState();
-    _isSpecial = InvoiceSpecialService.isSpecial(widget.invoice);
+    _invoice = Map<String, dynamic>.from(widget.invoice);
+    _isSpecial = InvoiceSpecialService.isSpecial(_invoice);
     _loadUserRole();
+  }
+
+  Future<void> _reloadInvoiceFromFirestore() async {
+    if (_rootInvoiceId.isEmpty) return;
+    setState(() => _reloadInProgress = true);
+    try {
+      final doc = await FirebaseFirestore.instance
+          .collection(_sourceCollection)
+          .doc(_rootInvoiceId)
+          .get();
+      if (!doc.exists || !mounted) return;
+      final data = Map<String, dynamic>.from(doc.data()!);
+      data['id'] = doc.id;
+      data['_sourceCollection'] = _sourceCollection;
+      setState(() {
+        _invoice = data;
+        _isSpecial = InvoiceSpecialService.isSpecial(data);
+      });
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تعذر تحديث بيانات الفاتورة: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _reloadInProgress = false);
+    }
   }
 
   String get _sourceCollection =>
@@ -133,8 +164,17 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
       ),
     );
     if (changed == true && mounted) {
-      Navigator.pop(context, true);
+      await _reloadInvoiceFromFirestore();
+      if (!mounted) return;
+      setState(() => _notifyParentOnPop = true);
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم تحديث عرض الفاتورة')),
+      );
     }
+  }
+
+  void _popToParent() {
+    Navigator.pop(context, _notifyParentOnPop || _deleted);
   }
 
   Future<void> _delete() async {
@@ -213,10 +253,20 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
 
     final products = invoice['products'] as List<dynamic>? ?? [];
 
-    return Scaffold(
+    return PopScope(
+      canPop: false,
+      onPopInvokedWithResult: (didPop, result) {
+        if (!didPop) _popToParent();
+      },
+      child: Scaffold(
       appBar: AppBar(
+        leading: IconButton(
+          icon: const Icon(Icons.arrow_back, color: Colors.white),
+          onPressed: _popToParent,
+        ),
+        automaticallyImplyLeading: false,
         title: Text(
-          'رقم الفاتورة #${invoice['invoiceNumber']}',
+          '#${invoice['invoiceNumber']}',
           style: TextStyle(fontSize: 20.sp, color: Colors.white),
         ),
         backgroundColor: Colors.black.withOpacity(0.7),
@@ -248,48 +298,61 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
           ),
         ],
       ),
-      body: SingleChildScrollView(
-        child: Column(
-          children: [
-            Container(
-              color: Colors.white,
-              padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 15.h),
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-                  Center(
-                    child: Image.asset(
-                      'assets/images/boxes_11365317.png',
-                      width: 200.w,
-                      height: 80.h,
-                      fit: BoxFit.fill,
-                    ),
-                  ),
-                  SizedBox(height: 5.h),
-                  Center(
-                    child: Text(
-                      'فاتورة مبيعات',
-                      style: TextStyle(
-                        fontSize: 20.sp,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.black.withOpacity(0.7),
+      body: Stack(
+        children: [
+          SingleChildScrollView(
+            child: Column(
+              children: [
+                Container(
+                  color: Colors.white,
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 15.w, vertical: 15.h),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Center(
+                        child: Image.asset(
+                          'assets/images/boxes_11365317.png',
+                          width: 200.w,
+                          height: 80.h,
+                          fit: BoxFit.fill,
+                        ),
                       ),
-                    ),
+                      SizedBox(height: 5.h),
+                      Center(
+                        child: Text(
+                          'فاتورة مبيعات',
+                          style: TextStyle(
+                            fontSize: 20.sp,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.black.withOpacity(0.7),
+                          ),
+                        ),
+                      ),
+                      SizedBox(height: 8.h),
+                      _partyHeader(
+                        label: 'اسم العميل',
+                        name: _clientId,
+                      ),
+                      SizedBox(height: 10.h),
+                      InvoiceProductsTable(products: products),
+                      InvoiceTotalsFooter(invoice: invoice),
+                    ],
                   ),
-                  SizedBox(height: 8.h),
-                  _partyHeader(
-                    label: 'اسم العميل',
-                    name: _clientId,
-                  ),
-                  SizedBox(height: 10.h),
-                  InvoiceProductsTable(products: products),
-                  InvoiceTotalsFooter(invoice: invoice),
-                ],
+                ),
+              ],
+            ),
+          ),
+          if (_reloadInProgress)
+            Container(
+              color: Colors.black26,
+              child: const Center(
+                child: CircularProgressIndicator(color: Colors.orange),
               ),
             ),
-        
-              
-        ]),)
+        ],
+      ),
+    ),
     );
   }
 
