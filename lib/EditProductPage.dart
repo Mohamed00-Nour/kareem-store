@@ -31,6 +31,7 @@ class _EditProductPageState extends State<EditProductPage> {
   String? _selectedDepartment;
   bool _onDemand = false;
   bool _retail = false;
+  bool _isSaving = false;
 
   @override
   void initState() {
@@ -84,8 +85,15 @@ class _EditProductPageState extends State<EditProductPage> {
   }
 
   Future<void> _saveProduct() async {
-    if (_formKey.currentState!.validate()) {
-      await FirebaseFirestore.instance.collection('products').doc(widget.productId).update({
+    if (_isSaving || !_formKey.currentState!.validate()) return;
+
+    setState(() => _isSaving = true);
+
+    try {
+      await FirebaseFirestore.instance
+          .collection('products')
+          .doc(widget.productId)
+          .update({
         'name': _nameController.text,
         'sellingPrice1': double.parse(_sellingPrice1Controller.text),
         'sellingPrice2': double.parse(_sellingPrice2Controller.text),
@@ -93,15 +101,24 @@ class _EditProductPageState extends State<EditProductPage> {
         'costPrice': double.parse(_costPriceController.text),
         'quantity': double.parse(_quantityController.text),
         'alertAmount': double.parse(_alertAmountController.text),
-        'image': _imageController.text.isNotEmpty ? _imageController.text : null,
+        'image':
+            _imageController.text.isNotEmpty ? _imageController.text : null,
         'randomNumber': int.parse(_randomNumberController.text),
         'department': _selectedDepartment,
         'onDemand': _onDemand,
         'retail': _retail,
       });
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تم حفظ البيانات بنجاح')),
+        const SnackBar(content: Text('تم حفظ البيانات بنجاح')),
       );
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('فشل الحفظ: $e')),
+      );
+    } finally {
+      if (mounted) setState(() => _isSaving = false);
     }
   }
 
@@ -246,64 +263,111 @@ class _EditProductPageState extends State<EditProductPage> {
         title: Text('تعديل المنتج', style: TextStyle(fontSize: 20.sp, color: Colors.white)),
         backgroundColor: Colors.black.withOpacity(0.7),
       ),
-      body: Padding(
-        padding: EdgeInsets.symmetric(horizontal: 0.w, vertical: 5.h),
-        child: Form(
-          key: _formKey,
-          child: ListView(
-            children: [
-              _buildCard('اسم المنتج', _nameController, TextInputType.text),
-              Row(
+      body: Stack(
+        children: [
+          Padding(
+            padding: EdgeInsets.symmetric(horizontal: 0.w, vertical: 5.h),
+            child: Form(
+              key: _formKey,
+              child: ListView(
                 children: [
-                  Expanded(child: _buildCard('سعر بيع 1', _sellingPrice1Controller, TextInputType.number)),
-                  Expanded(child: _buildCard('سعر بيع 2', _sellingPrice2Controller, TextInputType.number)),
-                  Expanded(child: _buildCard('سعر ببع 3', _sellingPrice3Controller, TextInputType.number)),
+                  _buildCard('اسم المنتج', _nameController, TextInputType.text),
+                  Row(
+                    children: [
+                      Expanded(
+                          child: _buildCard('سعر بيع 1',
+                              _sellingPrice1Controller, TextInputType.number)),
+                      Expanded(
+                          child: _buildCard('سعر بيع 2',
+                              _sellingPrice2Controller, TextInputType.number)),
+                      Expanded(
+                          child: _buildCard('سعر ببع 3',
+                              _sellingPrice3Controller, TextInputType.number)),
+                    ],
+                  ),
+                  _buildCard('سعر التكلفة', _costPriceController,
+                      TextInputType.number),
+                  Row(
+                    children: [
+                      Expanded(
+                          child: _buildCard('الكمية الحالية',
+                              _quantityController, TextInputType.number)),
+                      Expanded(
+                          child: _buildCard('الكمية التنبيهية',
+                              _alertAmountController, TextInputType.number)),
+                    ],
+                  ),
+                  _buildCard('الصورة', _imageController, TextInputType.text,
+                      isOptional: true),
+                  _buildDepartmentDropdown(),
+                  _buildProductOptionsCard(),
+                  SizedBox(height: 20.h),
+                  Center(
+                    child: ElevatedButton(
+                      onPressed: _isSaving ? null : _saveProduct,
+                      style: ElevatedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8.0),
+                        ),
+                        backgroundColor: Colors.black.withOpacity(0.7),
+                      ),
+                      child: _isSaving
+                          ? SizedBox(
+                              width: 22.w,
+                              height: 22.w,
+                              child: const CircularProgressIndicator(
+                                strokeWidth: 2,
+                                color: Colors.white,
+                              ),
+                            )
+                          : Text(
+                              'حفظ',
+                              style: TextStyle(
+                                  fontSize: 16.sp, color: Colors.white),
+                            ),
+                    ),
+                  ),
+                  Center(
+                    child: ElevatedButton(
+                      onPressed: _isSaving ? null : _navigateToProductChanges,
+                      style: ElevatedButton.styleFrom(
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(8.0),
+                        ),
+                        backgroundColor: Colors.black.withOpacity(0.7),
+                      ),
+                      child: Text(
+                        'عرض التغييرات',
+                        style: TextStyle(fontSize: 16.sp, color: Colors.white),
+                      ),
+                    ),
+                  ),
                 ],
               ),
-              _buildCard('سعر التكلفة', _costPriceController, TextInputType.number),
-              Row(
-                children: [
-                  Expanded(child: _buildCard('الكمية الحالية', _quantityController, TextInputType.number)),
-                  Expanded(child: _buildCard('الكمية التنبيهية', _alertAmountController, TextInputType.number)),
-                ],
-              ),
-              _buildCard('الصورة', _imageController, TextInputType.text, isOptional: true),
-              _buildDepartmentDropdown(),
-              _buildProductOptionsCard(),
-              SizedBox(height: 20.h),
-              Center(
-                child: ElevatedButton(
-                  onPressed: _saveProduct,
-                  style: ElevatedButton.styleFrom(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8.0),
-                    ),
-                    backgroundColor: Colors.black.withOpacity(0.7),
-                  ),
-                  child: Text(
-                    'حفظ',
-                    style: TextStyle(fontSize: 16.sp, color: Colors.white),
-                  ),
-                ),
-              ),
-              Center(
-                child: ElevatedButton(
-                  onPressed: _navigateToProductChanges,
-                  style: ElevatedButton.styleFrom(
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(8.0),
-                    ),
-                    backgroundColor: Colors.black.withOpacity(0.7),
-                  ),
-                  child: Text(
-                    'عرض التغييرات',
-                    style: TextStyle(fontSize: 16.sp, color: Colors.white),
-                  ),
-                ),
-              ),
-            ],
+            ),
           ),
-        ),
+          if (_isSaving)
+            Container(
+              color: Colors.black.withOpacity(0.45),
+              child: Center(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const CircularProgressIndicator(color: Colors.white),
+                    SizedBox(height: 12.h),
+                    Text(
+                      'جاري الحفظ...',
+                      style: TextStyle(
+                        color: Colors.white,
+                        fontSize: 16.sp,
+                        fontWeight: FontWeight.w600,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+        ],
       ),
     );
   }
