@@ -748,6 +748,78 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     });
   }
 
+  Future<void> _confirmRemoveInvoiceLine(int index) async {
+    if (index < 0 || index >= _addedProducts.length) return;
+    final productName = invoiceProductName(_addedProducts[index]);
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('حذف الصنف'),
+        content: Text('هل تريد حذف "$productName" من الفاتورة؟'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('حذف', style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    setState(() {
+      _addedProducts.removeAt(index);
+      _dataModified = true;
+    });
+  }
+
+  void _moveInvoiceLineUp(int index) {
+    if (index <= 0) return;
+    _reorderAddedProducts(index, index - 1);
+  }
+
+  void _moveInvoiceLineDown(int index) {
+    if (index >= _addedProducts.length - 1) return;
+    _reorderAddedProducts(index, index + 2);
+  }
+
+  void _showReorderInvoiceLineSheet(int index) {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.arrow_upward),
+              title: const Text('تحريك لأعلى'),
+              enabled: index > 0,
+              onTap: index > 0
+                  ? () {
+                      Navigator.pop(sheetContext);
+                      _moveInvoiceLineUp(index);
+                    }
+                  : null,
+            ),
+            ListTile(
+              leading: const Icon(Icons.arrow_downward),
+              title: const Text('تحريك لأسفل'),
+              enabled: index < _addedProducts.length - 1,
+              onTap: index < _addedProducts.length - 1
+                  ? () {
+                      Navigator.pop(sheetContext);
+                      _moveInvoiceLineDown(index);
+                    }
+                  : null,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _fetchProducts() async {
     try {
       QuerySnapshot querySnapshot =
@@ -3650,127 +3722,147 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             return Material(
                               key: ValueKey(p['lineId'] ?? index),
                               color: Colors.transparent,
-                              child: GestureDetector(
-                              onTap: () =>
-                                  _showProductSheet(editIndex: index),
                               child: Padding(
                                 padding: EdgeInsets.symmetric(
                                     horizontal: 6.w, vertical: 2.h),
                                 child: Row(
                                   children: [
-                                    _invoiceValueCell(
-                                      width: _invoiceSerialColWidth,
-                                      compact: true,
-                                      child: Text(
-                                        '${index + 1}',
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          fontSize: 9.sp,
-                                          fontWeight: FontWeight.w600,
-                                        ),
-                                      ),
-                                    ),
                                     Expanded(
-                                      flex: 4,
-                                      child: _invoiceValueCell(
-                                      flex: 1,
-                                      alignment: Alignment.centerRight,
-                                      expanded: false,
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
-                                        crossAxisAlignment:
-                                            CrossAxisAlignment.end,
-                                        children: [
-                                          Text(
-                                            invoiceProductName(p),
-                                            textAlign: TextAlign.right,
-                                            style: TextStyle(
-                                              fontSize: 10.sp,
-                                              height: 1.2,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                            maxLines: 3,
-                                            overflow: TextOverflow.ellipsis,
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    ),
-                                    _invoiceValueCell(
-                                      width: _invoicePriceColWidth,
-                                      tight: true,
-                                      child: Text(
-                                        invoiceAmount(price),
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          fontSize: 11.sp,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.black87,
-                                        ),
-                                      ),
-                                    ),
-                                    _invoiceValueCell(
-                                      width: _invoiceQtyColWidth,
-                                      tight: true,
-                                      backgroundColor:
-                                          Colors.teal.withOpacity(0.08),
+                                      child: GestureDetector(
+                                      behavior: HitTestBehavior.opaque,
                                       onTap: () =>
-                                          _incrementInvoiceLineQuantity(
-                                              index),
-                                      child: Text(
-                                        invoiceQty(amount),
-                                        textAlign: TextAlign.center,
-                                        style: TextStyle(
-                                          fontSize: 11.sp,
-                                          fontWeight: FontWeight.bold,
-                                          color: Colors.teal.shade700,
-                                        ),
-                                      ),
-                                    ),
-                                    _invoiceValueCell(
-                                      width: _invoiceTotalColWidth,
-                                      tight: true,
-                                      child: Column(
-                                        mainAxisSize: MainAxisSize.min,
+                                          _showProductSheet(editIndex: index),
+                                      onLongPress: () =>
+                                          _confirmRemoveInvoiceLine(index),
+                                      child: Row(
                                         children: [
-                                          Text(
-                                            invoiceAmount(total),
-                                            textAlign: TextAlign.center,
-                                            style: TextStyle(
-                                              fontSize: 11.sp,
-                                              fontWeight: FontWeight.bold,
-                                              color: hasDiscount
-                                                  ? Colors.orange.shade700
-                                                  : Colors.black87,
-                                            ),
-                                          ),
-                                          if (hasDiscount)
-                                            Text(
-                                              '- ${p['discount']}${p['discountIsPercent'] == true ? '%' : ' ج.م'}',
+                                          _invoiceValueCell(
+                                            width: _invoiceSerialColWidth,
+                                            compact: true,
+                                            child: Text(
+                                              '${index + 1}',
                                               textAlign: TextAlign.center,
                                               style: TextStyle(
                                                 fontSize: 9.sp,
-                                                color: Colors.orange.shade600,
+                                                fontWeight: FontWeight.w600,
                                               ),
                                             ),
+                                          ),
+                                          Expanded(
+                                            flex: 4,
+                                            child: _invoiceValueCell(
+                                              flex: 1,
+                                              alignment:
+                                                  Alignment.centerRight,
+                                              expanded: false,
+                                              child: Column(
+                                                mainAxisSize: MainAxisSize.min,
+                                                crossAxisAlignment:
+                                                    CrossAxisAlignment.end,
+                                                children: [
+                                                  Text(
+                                                    invoiceProductName(p),
+                                                    textAlign: TextAlign.right,
+                                                    style: TextStyle(
+                                                      fontSize: 10.sp,
+                                                      height: 1.2,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                    maxLines: 3,
+                                                    overflow:
+                                                        TextOverflow.ellipsis,
+                                                  ),
+                                                ],
+                                              ),
+                                            ),
+                                          ),
+                                          _invoiceValueCell(
+                                            width: _invoicePriceColWidth,
+                                            tight: true,
+                                            child: Text(
+                                              invoiceAmount(price),
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                fontSize: 11.sp,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.black87,
+                                              ),
+                                            ),
+                                          ),
+                                          _invoiceValueCell(
+                                            width: _invoiceQtyColWidth,
+                                            tight: true,
+                                            backgroundColor: Colors.teal
+                                                .withOpacity(0.08),
+                                            onTap: () =>
+                                                _incrementInvoiceLineQuantity(
+                                                    index),
+                                            child: Text(
+                                              invoiceQty(amount),
+                                              textAlign: TextAlign.center,
+                                              style: TextStyle(
+                                                fontSize: 11.sp,
+                                                fontWeight: FontWeight.bold,
+                                                color: Colors.teal.shade700,
+                                              ),
+                                            ),
+                                          ),
+                                          _invoiceValueCell(
+                                            width: _invoiceTotalColWidth,
+                                            tight: true,
+                                            child: Column(
+                                              mainAxisSize: MainAxisSize.min,
+                                              children: [
+                                                Text(
+                                                  invoiceAmount(total),
+                                                  textAlign: TextAlign.center,
+                                                  style: TextStyle(
+                                                    fontSize: 11.sp,
+                                                    fontWeight: FontWeight.bold,
+                                                    color: hasDiscount
+                                                        ? Colors.orange.shade700
+                                                        : Colors.black87,
+                                                  ),
+                                                ),
+                                                if (hasDiscount)
+                                                  Text(
+                                                    '- ${p['discount']}${p['discountIsPercent'] == true ? '%' : ' ج.م'}',
+                                                    textAlign: TextAlign.center,
+                                                    style: TextStyle(
+                                                      fontSize: 9.sp,
+                                                      color: Colors
+                                                          .orange.shade600,
+                                                    ),
+                                                  ),
+                                              ],
+                                            ),
+                                          ),
                                         ],
                                       ),
                                     ),
+                                    ),
                                     ReorderableDragStartListener(
                                       index: index,
-                                      child: SizedBox(
-                                        width: _invoiceDragColWidth.w,
-                                        child: Icon(
-                                          Icons.drag_handle,
-                                          color: Colors.grey.shade400,
-                                          size: 16.sp,
+                                      child: GestureDetector(
+                                        behavior: HitTestBehavior.opaque,
+                                        onTap: () =>
+                                            _showReorderInvoiceLineSheet(
+                                                index),
+                                        child: SizedBox(
+                                          width: _invoiceDragColWidth.w,
+                                          height: 36.h,
+                                          child: Icon(
+                                            Icons.drag_handle,
+                                            color: Colors.grey.shade600,
+                                            size: 18.sp,
+                                          ),
                                         ),
                                       ),
                                     ),
                                   ],
                                 ),
                               ),
-                            ),
                             );
                           },
                         ),
