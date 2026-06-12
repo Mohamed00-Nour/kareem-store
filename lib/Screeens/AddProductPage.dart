@@ -6,6 +6,7 @@ import 'home_page.dart';
 import '../Buing Invoices/BuyingInvoiceListPage.dart';
 import '../Buing Invoices/BuyingInvoiceDetailPage.dart';
 import '../Services/invoice_number_utils.dart';
+import '../Services/supplier_invoice_balance_sync_service.dart';
 
 void _selectAllField(TextEditingController controller) {
   final text = controller.text;
@@ -242,16 +243,13 @@ class _AddProductPageState extends State<AddProductPage> {
         'invoiceId': docRef.id,
       });
 
-      DocumentSnapshot supplierSnapshot = await supplierDocRef.get();
-      double existingBalance = supplierSnapshot.exists
-          ? ((supplierSnapshot.data() as Map<String, dynamic>)['totalBalance'] ??
-                  0.0)
-              .toDouble()
-          : 0.0;
-      await supplierDocRef.set({
-        'name': workingSupplier.name,
-        'totalBalance': existingBalance - balance,
-      }, SetOptions(merge: true));
+      await supplierDocRef.set(
+        {'name': workingSupplier.name},
+        SetOptions(merge: true),
+      );
+      await SupplierInvoiceBalanceSyncService.syncForSupplier(
+        workingSupplier.id,
+      );
 
       for (var product in _addedProducts) {
         final productId = product['productId']?.toString() ?? '';

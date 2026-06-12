@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Widgets/invoice_display_widgets.dart';
 import 'SupplierBalanceHistoryPage.dart';
 
@@ -99,6 +100,17 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     super.initState();
     _loadUserRole();
     _fetchAllProds();
+    _syncSupplierInvoiceBalances();
+  }
+
+  Future<void> _syncSupplierInvoiceBalances() async {
+    try {
+      await SupplierInvoiceBalanceSyncService.syncForSupplier(
+          widget.supplierId);
+      if (mounted) setState(() {});
+    } catch (_) {
+      // Non-blocking backfill on open.
+    }
   }
 
 
@@ -139,11 +151,6 @@ Future<void> _saveBalance() async {
     // Try different possible field names for supplier name
     final supplierName = supplierSnapshot['name'];
 
-    final newBalance = currentBalance + enteredBalance;
-
-    // Update supplier balance
-    await supplierDoc.update({'totalBalance': newBalance});
-
     // Add to supplier's balance history
     await supplierDoc.collection('balanceHistory').add({
       'enteredBalance': enteredBalance,
@@ -175,6 +182,8 @@ Future<void> _saveBalance() async {
         'invoiceNumber': null, // No invoice number for balance entries
       });
     });
+
+    await SupplierInvoiceBalanceSyncService.syncForSupplier(widget.supplierId);
 
     if (mounted) Navigator.of(context).pop();
 
@@ -478,44 +487,8 @@ Future<void> _saveBalance() async {
                                       'products': updatedProducts,
                                       'totalSum': newTotalSum,
                                     });
-                                    // Recalculate supplier balance
-                                    final supplierDoc =
-                                        FirebaseFirestore.instance
-                                            .collection('suppliers')
-                                            .doc(widget.supplierId);
-                                    final allInv = await supplierDoc
-                                        .collection('buying invoices')
-                                        .get();
-                                    double totalRemaining =
-                                        allInv.docs.fold(
-                                            0.0,
-                                            (s, d) =>
-                                                s +
-                                                ((d['totalSum'] as num)
-                                                        .toDouble() -
-                                                    (d['paidAmount']
-                                                            as num)
-                                                        .toDouble()));
-                                    final balHist = await supplierDoc
-                                        .collection('balanceHistory')
-                                        .get();
-                                    double totalPaid = balHist.docs
-                                        .fold(
-                                            0.0,
-                                            (s, d) =>
-                                                s +
-                                                ((d['enteredBalance']
-                                                        is String)
-                                                    ? double.tryParse(
-                                                            d['enteredBalance']) ??
-                                                        0.0
-                                                    : (d['enteredBalance']
-                                                            as num)
-                                                        .toDouble()));
-                                    await supplierDoc.update({
-                                      'totalBalance':
-                                          totalPaid - totalRemaining
-                                    });
+                                    await SupplierInvoiceBalanceSyncService
+                                        .syncForSupplier(widget.supplierId);
 
                                     ScaffoldMessenger.of(context)
                                         .showSnackBar(const SnackBar(
@@ -829,10 +802,6 @@ Future<void> _saveBalance() async {
   }
 
   try {
-    final supplierDoc = FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(widget.supplierId);
-
     final invoiceDoc = await FirebaseFirestore.instance
         .collection('suppliers')
         .doc(widget.supplierId)
@@ -883,17 +852,7 @@ Future<void> _saveBalance() async {
         .doc(invoiceId)
         .delete();
 
-    final totalSum =
-        (invoiceDoc.data()?['totalSum'] as num?)?.toDouble() ?? 0.0;
-    final paidAmount =
-        (invoiceDoc.data()?['paidAmount'] as num?)?.toDouble() ?? 0.0;
-    final invoiceRemaining = totalSum - paidAmount;
-
-    final supplierSnapshot = await supplierDoc.get();
-    final currentBalance = supplierSnapshot['totalBalance'] ?? 0.0;
-    final updatedBalance = currentBalance + invoiceRemaining;
-
-    await supplierDoc.update({'totalBalance': updatedBalance});
+    await SupplierInvoiceBalanceSyncService.syncForSupplier(widget.supplierId);
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('تم حذف الفاتورة بنجاح')),
@@ -1015,35 +974,8 @@ Future<void> _editProduct(String invoiceId, int productIndex, Map<String, dynami
                   }
                 }
 
-                // Recalculate the supplier's balance
-                final supplierDoc = FirebaseFirestore.instance
-                    .collection('suppliers')
-                    .doc(widget.supplierId);
-
-                final invoicesSnapshot = await supplierDoc
-                    .collection('buying invoices')
-                    .get();
-
-                double totalRemaining = invoicesSnapshot.docs.fold(0.0, (sum, doc) {
-                  final totalSum = (doc['totalSum'] as num).toDouble();
-                  final paidAmount = (doc['paidAmount'] as num).toDouble();
-                  return sum + (totalSum - paidAmount);
-                });
-
-                final balanceHistorySnapshot = await supplierDoc
-                    .collection('balanceHistory')
-                    .get();
-
-                double totalPaid = balanceHistorySnapshot.docs.fold(0.0, (sum, doc) {
-                  return sum +
-                      ((doc['enteredBalance'] is String)
-                          ? double.tryParse(doc['enteredBalance']) ?? 0.0
-                          : (doc['enteredBalance'] as num).toDouble());
-                });
-
-                final newBalance = totalPaid - totalRemaining;
-
-                await supplierDoc.update({'totalBalance': newBalance});
+                await SupplierInvoiceBalanceSyncService.syncForSupplier(
+                    widget.supplierId);
 
                 ScaffoldMessenger.of(context).showSnackBar(
                   const SnackBar(content: Text('تم تعديل المنتج بنجاح')),

@@ -60,6 +60,11 @@ double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
   return invoiceNum(invoice['balance']);
 }
 
+/// Synced supplier running balance — same [balance] on all buying invoices.
+double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
+  return invoiceNum(invoice['balance']);
+}
+
 /// Running balance after this invoice (المتبقي عليكم / للمورد).
 double invoiceBalanceAfter(Map<String, dynamic> invoice) {
   final previous = invoiceNum(invoice['previousBalance']);

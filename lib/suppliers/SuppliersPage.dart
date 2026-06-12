@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart' hide TextDirection;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
+import '../Services/supplier_invoice_balance_sync_service.dart';
 import 'SupplierListPage.dart';
 import 'SupplierInvoicesPage.dart';
 
@@ -93,6 +94,19 @@ class SuppliersPage extends StatelessWidget {
                             'totalBalance': totalBalance,
                           });
                           await ref.update({'id': ref.id});
+                          if (opening != 0) {
+                            await FirebaseFirestore.instance
+                                .collection('supplier_vouchers')
+                                .add({
+                              'supplierId': ref.id,
+                              'supplierName': name,
+                              'direction': 'له',
+                              'amount': opening.abs(),
+                              'description': 'رصيد افتتاحي',
+                              'date': Timestamp.now(),
+                              'timestamp': FieldValue.serverTimestamp(),
+                            });
+                          }
                           if (ctx.mounted) Navigator.pop(ctx);
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
@@ -1122,17 +1136,6 @@ class _SupplierOpeningBalancesPageState
                                   double.tryParse(amountCtrl.text) ?? 0.0;
                               if (amount == 0) return;
 
-                              // Calculate new balance
-                              double delta =
-                                  direction == 'عليه' ? amount : -amount;
-                              double newBalance = currentBalance + delta;
-
-                              // Update supplier balance
-                              await FirebaseFirestore.instance
-                                  .collection('suppliers')
-                                  .doc(supplierId)
-                                  .update({'totalBalance': newBalance});
-
                               // Record voucher
                               await FirebaseFirestore.instance
                                   .collection('supplier_vouchers')
@@ -1147,6 +1150,9 @@ class _SupplierOpeningBalancesPageState
                                 'paymentMethod': paymentMethod,
                                 'timestamp': FieldValue.serverTimestamp(),
                               });
+
+                              await SupplierInvoiceBalanceSyncService
+                                  .syncForSupplier(supplierId);
 
                               if (ctx.mounted) Navigator.pop(ctx);
                               if (context.mounted) {
