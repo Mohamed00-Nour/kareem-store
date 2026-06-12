@@ -71,10 +71,10 @@ class DailyInvoicesPdfService {
         ),
       );
     } else {
-      for (final data in invoices) {
+      for (final raw in invoices) {
         _addInvoicePage(
           pdf: pdf,
-          data: data,
+          data: invoiceForPdfExport(raw),
           periodStr: periodStr,
           nowStr: nowStr,
           salesInvoiceFooter: settings.salesInvoiceFooter,
@@ -108,8 +108,7 @@ class DailyInvoicesPdfService {
     final totalSum = _num(data['totalSum']);
     final paid = _num(data['paidAmount']);
     final previous = _num(data['previousBalance']);
-    final balance = invoiceBalanceAfter(data);
-    final profit = _num(data['profitMargin']);
+    final balance = invoiceClientRemainingOwed(data);
     final invoiceNumber = data['invoiceNumber']?.toString() ?? '-';
     final clientName = data['clientName']?.toString() ?? '';
 
@@ -196,8 +195,6 @@ class DailyInvoicesPdfService {
                   bold: true),
               rtl('المدفوع: ${invoiceAmount(paid)} ج.م'),
               rtl('المتبقي عليكم: ${invoiceAmount(balance)} ج.م'),
-              if (profit != 0)
-                rtl('هامش الربح: ${invoiceAmount(profit)} ج.م', fontSize: 9),
               if ((data['notes']?.toString() ?? '').isNotEmpty) ...[
                 pw.SizedBox(height: 6),
                 rtl('ملاحظات: ${data['notes']}'),

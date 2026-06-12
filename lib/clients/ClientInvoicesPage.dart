@@ -12,8 +12,10 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Screeens/DecreaseProductPage.dart';
+import '../Services/client_invoice_balance_sync_service.dart';
 import '../Services/client_statement_pdf_service.dart';
 import '../Services/invoice_number_utils.dart';
+import '../Services/sales_invoice_actions_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 
@@ -330,6 +332,8 @@ Future<void> _saveBalance() async {
     });
 
     _balanceController.clear();
+
+    await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
 
     ScaffoldMessenger.of(context).showSnackBar(
       const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
@@ -831,50 +835,8 @@ Future<void> _saveBalance() async {
                                       'totalSum': newTotalSum,
                                     });
 
-                                    // Recalculate client balance
-                                    final allInv =
-                                        await FirebaseFirestore
-                                            .instance
-                                            .collection('clients')
-                                            .doc(widget.clientId)
-                                            .collection('invoices')
-                                            .get();
-                                    double totalInv = allInv.docs
-                                        .fold(0.0, (s, d) {
-                                      return s +
-                                          ((d['totalSum'] is String)
-                                              ? double.tryParse(
-                                                      d['totalSum']) ??
-                                                  0.0
-                                              : (d['totalSum'] as num)
-                                                  .toDouble());
-                                    });
-                                    final balHist =
-                                        await FirebaseFirestore
-                                            .instance
-                                            .collection('clients')
-                                            .doc(widget.clientId)
-                                            .collection(
-                                                'balanceHistory')
-                                            .get();
-                                    double totalPaid = balHist.docs
-                                        .fold(0.0, (s, d) {
-                                      return s +
-                                          ((d['enteredBalance']
-                                                  is String)
-                                              ? double.tryParse(d[
-                                                      'enteredBalance']) ??
-                                                  0.0
-                                              : (d['enteredBalance']
-                                                      as num)
-                                                  .toDouble());
-                                    });
-                                    await FirebaseFirestore.instance
-                                        .collection('clients')
-                                        .doc(widget.clientId)
-                                        .update({
-                                      'balance': totalInv - totalPaid
-                                    });
+                                    await ClientInvoiceBalanceSyncService
+                                        .syncForClient(widget.clientId);
 
                                     ScaffoldMessenger.of(context)
                                         .showSnackBar(const SnackBar(
@@ -921,26 +883,10 @@ Future<void> _saveBalance() async {
   Future<Map<String, dynamic>> _invoicePayloadForEdit(
       DocumentSnapshot invoice) async {
     final invoiceData = invoice.data() as Map<String, dynamic>;
-    final rootId = invoiceData['invoiceId']?.toString();
-    var payload = Map<String, dynamic>.from(invoiceData);
-    payload['_clientSubDocId'] = invoice.id;
-
-    if (rootId != null && rootId.isNotEmpty) {
-      final rootSnap = await FirebaseFirestore.instance
-          .collection('invoices')
-          .doc(rootId)
-          .get();
-      if (rootSnap.exists) {
-        payload = {
-          ...rootSnap.data()!,
-          'id': rootId,
-          '_clientSubDocId': invoice.id,
-        };
-      } else {
-        payload['id'] = rootId;
-      }
-    }
-    return payload;
+    return SalesInvoiceActionsService.buildEditPayload(
+      invoiceData,
+      clientSubDocId: invoice.id,
+    );
   }
 
   Future<void> _showEditInvoiceDialog(DocumentSnapshot invoice) async {
@@ -995,9 +941,6 @@ Future<void> _saveBalance() async {
     }
 
     try {
-      final clientDoc =
-          FirebaseFirestore.instance.collection('clients').doc(widget.clientId);
-
       // Fetch the invoice to get the products
       final invoiceDoc = await FirebaseFirestore.instance
           .collection('clients')
@@ -1053,12 +996,7 @@ Future<void> _saveBalance() async {
           .doc(invoiceId)
           .delete();
 
-      // Update the client's balance
-      final clientSnapshot = await clientDoc.get();
-      final currentBalance = clientSnapshot['balance'] ?? 0.0;
-      final updatedBalance = currentBalance - totalCost;
-
-      await clientDoc.update({'balance': updatedBalance});
+      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم حذف الفاتورة بنجاح')),
@@ -1419,6 +1357,16 @@ Future<void> _saveBalance() async {
     _fetchAllProds();
     _invoiceScrollController.addListener(_onInvoiceScroll);
     _fetchInvoices(reset: true);
+    _syncClientInvoiceBalances();
+  }
+
+  Future<void> _syncClientInvoiceBalances() async {
+    try {
+      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+      if (mounted) await _refreshInvoices();
+    } catch (_) {
+      // Non-blocking backfill on open.
+    }
   }
 
   @override
@@ -1440,9 +1388,8 @@ Future<void> _saveBalance() async {
     final formattedDate = invoiceDate.toString().split(' ')[0];
     final formattedTime = intl.DateFormat('hh:mm a').format(invoiceDate);
 
-    final previousBalance = invoiceData.containsKey('previousBalance')
-        ? (double.tryParse(invoiceData['previousBalance'].toString()) ?? 0.0)
-        : 0.0;
+    final previousBalance = invoiceNum(invoiceData['previousBalance']);
+    final remainingOwed = invoiceClientRemainingOwed(invoiceData);
 
     final totalSum = invoiceData.containsKey('totalSum')
         ? (double.tryParse(invoiceData['totalSum'].toString()) ?? 0.0)
@@ -1540,7 +1487,7 @@ Future<void> _saveBalance() async {
                         ),
                       ),
                       Text(
-                        'المتبقي عليكم: ${invoiceAmount(invoiceBalanceAfter(invoiceData))}',
+                        'المتبقي عليكم: ${invoiceAmount(remainingOwed)}',
                         style: const TextStyle(
                           fontSize: 14,
                           fontWeight: FontWeight.bold,

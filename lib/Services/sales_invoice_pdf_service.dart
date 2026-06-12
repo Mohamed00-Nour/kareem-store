@@ -12,7 +12,8 @@ import 'invoice_number_utils.dart';
 import 'printer_settings_service.dart';
 
 class SalesInvoicePdfService {
-  static Future<File> generate(Map<String, dynamic> invoice) async {
+  static Future<File> generate(Map<String, dynamic> rawInvoice) async {
+    final invoice = invoiceForPdfExport(rawInvoice);
     final settings = await PrinterSettingsService.load();
     final amiriRegular =
         pw.Font.ttf((await rootBundle.load('fonts/Amiri-Regular.ttf'))
@@ -49,7 +50,7 @@ class SalesInvoicePdfService {
     final paid = (invoice['paidAmount'] as num?)?.toDouble() ?? 0.0;
     final previous =
         (invoice['previousBalance'] as num?)?.toDouble() ?? 0.0;
-    final balance = invoiceBalanceAfter(invoice);
+    final balance = invoiceClientRemainingOwed(invoice);
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
     final qtySum = products.fold<double>(

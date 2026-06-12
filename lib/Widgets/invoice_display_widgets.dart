@@ -185,7 +185,9 @@ class InvoiceTotalsFooter extends StatelessWidget {
     final previous = invoiceNum(invoice['previousBalance']);
     final total = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
-    final remaining = invoiceBalanceAfter(invoice);
+    final remaining = invoiceIsSupplierPurchase(invoice)
+        ? invoiceBalanceAfter(invoice)
+        : invoiceClientRemainingOwed(invoice);
     final remainingLabel = invoiceIsSupplierPurchase(invoice)
         ? 'المتبقي للمورد'
         : 'المتبقي عليكم';

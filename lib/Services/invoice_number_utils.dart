@@ -55,6 +55,11 @@ double invoiceUnpaidAmount(Map<String, dynamic> invoice) {
   return invoiceNum(invoice['totalSum']) - invoiceNum(invoice['paidAmount']);
 }
 
+/// Synced client total owed — same [balance] on all invoices (المتبقي عليكم).
+double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
+  return invoiceNum(invoice['balance']);
+}
+
 /// Running balance after this invoice (المتبقي عليكم / للمورد).
 double invoiceBalanceAfter(Map<String, dynamic> invoice) {
   final previous = invoiceNum(invoice['previousBalance']);
@@ -104,6 +109,13 @@ double invoiceLineUnitCost(
     return invoiceNum(line['costPrice']);
   }
   return catalogUnitCost ?? 0.0;
+}
+
+/// Strips internal profit fields before customer-facing PDF export.
+Map<String, dynamic> invoiceForPdfExport(Map<String, dynamic> raw) {
+  final out = Map<String, dynamic>.from(raw);
+  out.remove('profitMargin');
+  return out;
 }
 
 /// Line cost (unit × quantity) for profit reports.

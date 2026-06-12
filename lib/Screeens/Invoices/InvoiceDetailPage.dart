@@ -32,7 +32,7 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
   Map<String, dynamic> get invoice => _invoice;
 
   String get _rootInvoiceId =>
-      invoice['id']?.toString() ?? invoice['invoiceId']?.toString() ?? '';
+      SalesInvoiceActionsService.rootInvoiceIdFrom(invoice);
 
   String get _clientId => invoice['clientName']?.toString() ?? '';
 
@@ -154,8 +154,10 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
       return;
     }
 
-    final editPayload = Map<String, dynamic>.from(invoice);
-    editPayload['id'] = _rootInvoiceId;
+    final editPayload = await SalesInvoiceActionsService.buildEditPayload(
+      invoice,
+      clientSubDocId: invoice['_clientSubDocId']?.toString(),
+    );
 
     final changed = await Navigator.push<bool>(
       context,

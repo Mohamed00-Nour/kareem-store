@@ -167,8 +167,6 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
       }
 
       final newInvoiceBalance = newTotalSum - newPaid;
-      final oldTotalSum = _num(widget.invoiceData['totalSum']);
-      final oldPaid = _num(widget.invoiceData['paidAmount']);
 
       await FirebaseFirestore.instance
           .collection('clients')
@@ -188,15 +186,7 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
         'balance': newInvoiceBalance,
       });
 
-      final clientDoc =
-          FirebaseFirestore.instance.collection('clients').doc(widget.clientId);
-      final clientSnap = await clientDoc.get();
-      final currentBalance =
-          clientSnap.exists ? _num(clientSnap['balance']) : 0.0;
-      final oldRemaining = oldTotalSum - oldPaid;
-      await clientDoc.update({
-        'balance': currentBalance - oldRemaining + newInvoiceBalance,
-      });
+      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
 
       if (!mounted) return;
       FocusScope.of(context).unfocus();
@@ -318,11 +308,13 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
                             final paid = double.tryParse(
                                     value.text.replaceAll(',', '.')) ??
                                 0.0;
-                            final preview = Map<String, dynamic>.from(
+                            final currentTotal = invoiceNum(
+                                widget.invoiceData['balance']);
+                            final oldUnpaid = invoiceUnpaidAmount(
                                 widget.invoiceData);
-                            preview['totalSum'] = invoiceTotal;
-                            preview['paidAmount'] = paid;
-                            final remaining = invoiceBalanceAfter(preview);
+                            final newUnpaid = invoiceTotal - paid;
+                            final remaining =
+                                currentTotal - oldUnpaid + newUnpaid;
                             return Text(
                               remaining.toStringAsFixed(2),
                               style: TextStyle(

@@ -58,7 +58,7 @@ class InvoiceReceiptCard extends StatelessWidget {
     final previousBalance = invoiceNum(invoice['previousBalance']);
     final totalSum = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
-    final clientBalance = invoiceBalanceAfter(invoice);
+    final clientBalance = invoiceClientRemainingOwed(invoice);
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
     final qtySum = qtySumOverride ??

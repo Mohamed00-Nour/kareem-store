@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'invoice_number_utils.dart';
+import 'invoice_special_service.dart';
 import 'invoice_stock_service.dart';
 import 'sales_invoice_actions_service.dart';
 
@@ -24,7 +25,10 @@ class SalesInvoiceUpdateService {
     required double invoiceDiscount,
     required bool discountIsPercent,
     required double totalSumBeforeDiscount,
+    String? sourceCollection,
   }) async {
+    final collection = sourceCollection ??
+        InvoiceSpecialService.sourceCollection(originalInvoice);
     final oldProducts = List<Map<String, dynamic>>.from(
       (originalInvoice['products'] as List?) ?? [],
     );
@@ -35,7 +39,8 @@ class SalesInvoiceUpdateService {
     final invoiceNumber = originalInvoice['invoiceNumber'];
 
     final allLines = [...oldProducts, ...newProducts];
-    final catalog = await InvoiceStockService.resolveCatalog(lines: allLines);
+    final catalog =
+        await InvoiceStockService.resolveCatalogVerified(lines: allLines);
 
     await InvoiceStockService.applyStockChanges(
       lines: oldProducts,
@@ -77,10 +82,13 @@ class SalesInvoiceUpdateService {
         'isSpecial': originalInvoice['isSpecial'] == true,
     };
 
-    await FirebaseFirestore.instance
-        .collection('invoices')
-        .doc(rootInvoiceId)
-        .update(rootUpdate);
+    final rootRef =
+        FirebaseFirestore.instance.collection(collection).doc(rootInvoiceId);
+    final rootSnap = await rootRef.get();
+    if (!rootSnap.exists) {
+      throw StateError('الفاتورة غير موجودة في قاعدة البيانات');
+    }
+    await rootRef.update(rootUpdate);
 
     final clientSubFields = <String, dynamic>{
       'invoiceId': rootInvoiceId,
@@ -116,7 +124,16 @@ class SalesInvoiceUpdateService {
 
     if (oldClient == clientName) {
       if (oldSubRef != null) {
-        await oldSubRef.update(clientSubFields);
+        final subSnap = await oldSubRef.get();
+        if (subSnap.exists) {
+          await oldSubRef.update(clientSubFields);
+        } else {
+          await FirebaseFirestore.instance
+              .collection('clients')
+              .doc(clientName)
+              .collection('invoices')
+              .add(clientSubFields);
+        }
       } else {
         await FirebaseFirestore.instance
             .collection('clients')
@@ -125,7 +142,7 @@ class SalesInvoiceUpdateService {
             .add(clientSubFields);
       }
     } else {
-      if (oldSubRef != null) {
+      if (oldSubRef != null && (await oldSubRef.get()).exists) {
         await oldSubRef.delete();
       }
       await FirebaseFirestore.instance

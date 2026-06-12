@@ -110,6 +110,46 @@ class InvoiceStockService {
     return resolveCatalog(lines: lines, seed: seed);
   }
 
+  /// Like [resolveCatalogIfNeeded] but confirms each product document exists.
+  /// Re-queries by name when a cached id points to a missing document.
+  static Future<Map<String, ResolvedInvoiceProduct>> resolveCatalogVerified({
+    required Iterable<Map<String, dynamic>> lines,
+    Map<String, ResolvedInvoiceProduct> seed = const {},
+  }) async {
+    final catalog = await resolveCatalogIfNeeded(lines: lines, seed: seed);
+    final verified = <String, ResolvedInvoiceProduct>{};
+    final names = <String>{};
+    for (final line in lines) {
+      final name = lineCatalogName(line);
+      if (name.isNotEmpty) names.add(name);
+    }
+
+    for (final name in names) {
+      var product = catalog[name];
+      if (product != null && !(await product.ref.get()).exists) {
+        product = null;
+      }
+      if (product == null) {
+        final snap = await FirebaseFirestore.instance
+            .collection('products')
+            .where('name', isEqualTo: name)
+            .limit(1)
+            .get();
+        if (snap.docs.isEmpty) continue;
+        final doc = snap.docs.first;
+        final data = doc.data();
+        product = ResolvedInvoiceProduct(
+          id: doc.id,
+          name: name,
+          costPrice: invoiceNum(data['costPrice']),
+          quantity: invoiceNum(data['quantity']),
+        );
+      }
+      verified[name] = product;
+    }
+    return verified;
+  }
+
   static double computeCostTotal(
     List<Map<String, dynamic>> lines,
     Map<String, ResolvedInvoiceProduct> catalog,
@@ -149,8 +189,10 @@ class InvoiceStockService {
   }) async {
     if (lines.isEmpty) return;
 
-    final resolved =
-        catalog ?? await resolveCatalogIfNeeded(lines: lines, seed: seed);
+    final resolved = await resolveCatalogVerified(
+      lines: lines,
+      seed: catalog ?? seed,
+    );
 
     final deltaByDocId = <String, double>{};
     final changeDateByDocId = <String, dynamic>{};

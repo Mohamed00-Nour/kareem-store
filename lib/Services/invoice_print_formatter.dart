@@ -188,7 +188,7 @@ class InvoicePrintFormatter {
     final previous = _num(invoice['previousBalance']);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final balance = invoiceBalanceAfter(invoice);
+    final balance = invoiceClientRemainingOwed(invoice);
 
     line(_summaryRow(cols.width, labels.previousBalance, previous));
     line(_summaryRow(cols.width, 'إجمالي ف.', totalSum));
@@ -308,7 +308,7 @@ class InvoicePrintFormatter {
     final previous = _num(invoice['previousBalance']);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final balance = invoiceBalanceAfter(invoice);
+    final balance = invoiceClientRemainingOwed(invoice);
 
     final summaryTable = <List<String>>[
       [_formatMoney(previous), labels.previousBalance],

@@ -28,8 +28,13 @@ class _ProductListPageState extends State<ProductListPage> {
   bool _productActionInProgress = false;
   bool _exportingPdf = false;
 
-  bool _isOnDemand(Map<String, dynamic> product) {
+  bool _isMarkedOnDemand(Map<String, dynamic> product) {
     return product['onDemand'] == true;
+  }
+
+  /// Marked حسب الطلب with no stock → on-demand tab only.
+  bool _showsInOnDemandTab(Map<String, dynamic> product) {
+    return _isMarkedOnDemand(product) && _productQuantity(product) <= 0;
   }
 
   bool _isRetail(Map<String, dynamic> product) {
@@ -67,14 +72,16 @@ class _ProductListPageState extends State<ProductListPage> {
       case _ProductListFilter.retail:
         return _isRetail(product);
       case _ProductListFilter.onDemand:
-        return _isOnDemand(product);
+        return _showsInOnDemandTab(product);
       case _ProductListFilter.lowStock:
-        return !_isOnDemand(product) &&
-            !_isRetail(product) &&
-            product['quantity'] <= product['alertAmount'];
+        return !_isRetail(product) &&
+            !_showsInOnDemandTab(product) &&
+            _productQuantity(product) <= invoiceNum(product['alertAmount']);
       case _ProductListFilter.all:
         if (_isRetail(product)) return false;
-        if (_isOnDemand(product)) return _productQuantity(product) != 0;
+        if (_isMarkedOnDemand(product)) {
+          return _productQuantity(product) > 0;
+        }
         return true;
     }
   }

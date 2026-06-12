@@ -346,7 +346,7 @@ class ClientStatementPdfService {
           (data['paidAmount'] as num?)?.toDouble() ?? 0.0;
       final previous =
           (data['previousBalance'] as num?)?.toDouble() ?? 0.0;
-      final remaining = invoiceBalanceAfter(data);
+      final remaining = invoiceClientRemainingOwed(data);
       final invoiceNumber = data['invoiceNumber']?.toString() ?? '-';
 
       pw.Widget h(String t) => pw.Padding(

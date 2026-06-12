@@ -16,7 +16,7 @@ class WhatsappInvoiceShareService {
     final total = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
     final previousBalance = _num(invoice['previousBalance']);
-    final clientBalance = invoiceBalanceAfter(invoice);
+    final clientBalance = invoiceClientRemainingOwed(invoice);
 
     final buffer = StringBuffer();
     if (clientName.isNotEmpty) {

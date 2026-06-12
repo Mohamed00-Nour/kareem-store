@@ -6,10 +6,12 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'Invoices/All_invoices.dart';
 import 'Invoices/InvoiceDetailPage.dart';
 import 'Data/quick_add_product_sheet.dart';
+import '../Services/client_invoice_balance_sync_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/return_invoice_save_service.dart';
 import '../Services/invoice_stock_service.dart';
+import '../Services/sales_invoice_actions_service.dart';
 import '../Services/sales_invoice_update_service.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../Widgets/egypt_phone_field.dart';
@@ -85,6 +87,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   Map<String, dynamic>? _lastInvoice;
   String? _editingRootInvoiceId;
   String? _editingClientSubDocId;
+  String _editingSourceCollection = 'invoices';
   Map<String, dynamic>? _originalInvoice;
   dynamic _editingInvoiceNumber;
   String _editingPaymentMethod = 'نقداً';
@@ -641,9 +644,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   }
 
   void _applyInvoiceToEdit(Map<String, dynamic> inv) {
-    _editingRootInvoiceId =
-        inv['id']?.toString() ?? inv['invoiceId']?.toString();
+    _editingRootInvoiceId = SalesInvoiceActionsService.rootInvoiceIdFrom(inv);
     _editingClientSubDocId = inv['_clientSubDocId']?.toString();
+    _editingSourceCollection = inv['_sourceCollection']?.toString() ?? 'invoices';
     _originalInvoice = Map<String, dynamic>.from(inv);
     _editingInvoiceNumber = inv['invoiceNumber'];
 
@@ -902,6 +905,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           invoiceDiscount: invoiceDiscount,
           discountIsPercent: discountIsPercent,
           totalSumBeforeDiscount: totalSumBeforeDiscount,
+          sourceCollection: _editingSourceCollection,
         );
 
         final effectiveDiscountAmt = discountIsPercent
@@ -1018,6 +1022,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             existingBalance: existingBalance,
           ),
         ]);
+      }
+
+      if (effectiveClient.isNotEmpty) {
+        await ClientInvoiceBalanceSyncService.syncForClient(effectiveClient);
       }
 
       setState(() {

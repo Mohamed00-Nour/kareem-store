@@ -168,6 +168,7 @@ import 'package:pdf/pdf.dart' hide TextDirection;
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../DeletedClientsPage.dart';
+import '../Services/party_rename_service.dart';
 import '../Widgets/egypt_phone_field.dart';
 import 'ClientInvoicesPage.dart';
 
@@ -384,6 +385,117 @@ class _MenuItem {
     this.iconColor,
     this.customIcon,
   });
+}
+
+/// Shared card for client / supplier list grids (two per row).
+class _PartyInfoCard extends StatelessWidget {
+  final String name;
+  final double balance;
+  final String phone;
+  final bool isClient;
+  final VoidCallback onTap;
+  final VoidCallback onLongPress;
+
+  const _PartyInfoCard({
+    required this.name,
+    required this.balance,
+    required this.phone,
+    required this.isClient,
+    required this.onTap,
+    required this.onLongPress,
+  });
+
+  @override
+  Widget build(BuildContext context) {
+    final balanceColor = balance > 0
+        ? Colors.red.shade700
+        : balance < 0
+            ? Colors.green.shade700
+            : Colors.black87;
+
+    return Card(
+      elevation: 3,
+      color: Colors.orange.withOpacity(0.75),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+      child: InkWell(
+        onTap: onTap,
+        onLongPress: onLongPress,
+        borderRadius: BorderRadius.circular(12),
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+          child: Column(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(
+                isClient ? Icons.person_outline : Icons.store_outlined,
+                size: 32,
+                color: Colors.black.withOpacity(0.65),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                name,
+                textAlign: TextAlign.center,
+                maxLines: 2,
+                overflow: TextOverflow.ellipsis,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.bold,
+                ),
+              ),
+              const SizedBox(height: 8),
+              Text(
+                'الرصيد',
+                style: TextStyle(
+                  fontSize: 12,
+                  color: Colors.black.withOpacity(0.55),
+                ),
+              ),
+              Text(
+                balance.toStringAsFixed(2),
+                style: TextStyle(
+                  fontSize: 16,
+                  fontWeight: FontWeight.bold,
+                  color: balanceColor,
+                ),
+              ),
+              if (phone.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Row(
+                  mainAxisAlignment: MainAxisAlignment.center,
+                  children: [
+                    Icon(Icons.phone,
+                        size: 14, color: Colors.black.withOpacity(0.5)),
+                    const SizedBox(width: 4),
+                    Flexible(
+                      child: Text(
+                        phone,
+                        textAlign: TextAlign.center,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 11,
+                          color: Colors.black.withOpacity(0.6),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+              const SizedBox(height: 4),
+              Text(
+                'اضغط للفواتير • اضغط مطولاً للخيارات',
+                textAlign: TextAlign.center,
+                style: TextStyle(
+                  fontSize: 9,
+                  color: Colors.black.withOpacity(0.45),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
 }
 
 // ─── Opening Balances Page ───────────────────────────────────────────────────
@@ -2742,6 +2854,111 @@ class _ClientListPageState extends State<_ClientListPage> {
     );
   }
 
+  void _showClientOptionsSheet(String clientId, String currentName) {
+    showModalBottomSheet(
+      context: context,
+      builder: (sheetContext) => SafeArea(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            ListTile(
+              leading: const Icon(Icons.edit_outlined),
+              title: const Text('تغيير الاسم'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showRenameClientDialog(clientId, currentName);
+              },
+            ),
+            ListTile(
+              leading: const Icon(Icons.delete_outline, color: Colors.red),
+              title: const Text('حذف من القائمة'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showDeleteConfirmationDialog(clientId);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  void _showRenameClientDialog(String clientId, String currentName) {
+    final controller = TextEditingController(text: currentName);
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('تغيير اسم العميل'),
+        content: TextField(
+          controller: controller,
+          autofocus: true,
+          decoration: const InputDecoration(
+            labelText: 'الاسم الجديد',
+            border: OutlineInputBorder(),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () {
+              final newName = controller.text.trim();
+              Navigator.pop(dialogContext);
+              if (newName.isEmpty || newName == currentName) return;
+              _performClientRename(clientId, newName);
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _performClientRename(String oldClientId, String newName) async {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Center(
+        child: CircularProgressIndicator(
+          color: Colors.orange.withOpacity(0.7),
+        ),
+      ),
+    );
+
+    try {
+      await PartyRenameService.renameClient(
+        oldClientId: oldClientId,
+        newName: newName,
+      );
+
+      if (_deletedClientsBox?.containsKey(oldClientId) ?? false) {
+        _deletedClientsBox!.put(newName, newName);
+        _deletedClientsBox!.delete(oldClientId);
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('تم تغيير اسم العميل إلى "$newName"')),
+      );
+      setState(() {});
+    } on PartyRenameException catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(e.message)),
+      );
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('فشل تغيير الاسم: $e')),
+      );
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -2839,33 +3056,45 @@ class _ClientListPageState extends State<_ClientListPage> {
                         !_deletedClientsBox!.containsKey(client.id))
                     .toList();
 
-                return ListView.builder(
+                if (visibleClients.isEmpty) {
+                  return const Center(child: Text('لا يوجد عملاء'));
+                }
+
+                return GridView.builder(
+                  padding: const EdgeInsets.all(10),
+                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: 2,
+                    crossAxisSpacing: 10,
+                    mainAxisSpacing: 10,
+                    childAspectRatio: 0.92,
+                  ),
                   itemCount: visibleClients.length,
                   itemBuilder: (context, index) {
                     final client = visibleClients[index];
-                    return Card(
-                      elevation: 2,
-                      color: Colors.orange.withOpacity(0.7),
-                      margin: const EdgeInsets.all(10.0),
-                      child: ListTile(
-                        title: Center(
-                            child: Text(client['clientName'] ?? '')),
-                        subtitle: Center(
-                            child: Text(
-                                'الرصيد: ${(client['balance'] ?? 0.0).toDouble().toStringAsFixed(2)}')),
-                        onTap: () {
-                          Navigator.push(
-                            context,
-                            MaterialPageRoute(
-                              builder: (context) => ClientInvoicesPage(
-                                  clientId: client.id),
-                            ),
-                          );
-                        },
-                        onLongPress: () {
-                          _showDeleteConfirmationDialog(client.id);
-                        },
-                      ),
+                    final data = client.data() as Map<String, dynamic>;
+                    final name =
+                        data['clientName']?.toString() ?? client.id;
+                    final balance =
+                        (data['balance'] ?? 0.0).toDouble();
+                    final phone = data['phone']?.toString() ?? '';
+
+                    return _PartyInfoCard(
+                      name: name,
+                      balance: balance,
+                      phone: phone,
+                      isClient: true,
+                      onTap: () {
+                        Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (context) =>
+                                ClientInvoicesPage(clientId: client.id),
+                          ),
+                        );
+                      },
+                      onLongPress: () {
+                        _showClientOptionsSheet(client.id, name);
+                      },
                     );
                   },
                 );

@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import 'invoice_number_utils.dart';
+import 'invoice_special_service.dart';
 
 /// Delete / lookup sales invoices in [invoices] and client subcollections.
 class SalesInvoiceActionsService {
@@ -29,6 +30,47 @@ class SalesInvoiceActionsService {
       }
     }
     return null;
+  }
+
+  /// Root invoice id (prefers [invoiceId] over embedded [id]).
+  static String rootInvoiceIdFrom(Map<String, dynamic> invoice) {
+    final fromField = invoice['invoiceId']?.toString().trim() ?? '';
+    if (fromField.isNotEmpty) return fromField;
+    return invoice['id']?.toString().trim() ?? '';
+  }
+
+  /// Loads the authoritative root invoice for edit mode.
+  static Future<Map<String, dynamic>> buildEditPayload(
+    Map<String, dynamic> invoice, {
+    String? clientSubDocId,
+  }) async {
+    final collection = InvoiceSpecialService.sourceCollection(invoice);
+    final rootId = rootInvoiceIdFrom(invoice);
+
+    var payload = Map<String, dynamic>.from(invoice);
+    payload['_sourceCollection'] = collection;
+    if (clientSubDocId != null && clientSubDocId.isNotEmpty) {
+      payload['_clientSubDocId'] = clientSubDocId;
+    }
+    if (rootId.isEmpty) return payload;
+
+    final rootSnap = await FirebaseFirestore.instance
+        .collection(collection)
+        .doc(rootId)
+        .get();
+    if (rootSnap.exists) {
+      payload = {
+        ...rootSnap.data()!,
+        'id': rootId,
+        '_sourceCollection': collection,
+        if (clientSubDocId != null && clientSubDocId.isNotEmpty)
+          '_clientSubDocId': clientSubDocId,
+      };
+    } else {
+      payload['id'] = rootId;
+      payload['_sourceCollection'] = collection;
+    }
+    return payload;
   }
 
   /// Deletes root invoice, matching client copy, restores stock, updates balance.

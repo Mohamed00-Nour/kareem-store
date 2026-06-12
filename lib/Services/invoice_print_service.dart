@@ -202,7 +202,6 @@ class InvoicePrintService {
         invoice['previousBalance'] == null) {
       invoice['previousBalance'] = 0.0;
     }
-    invoice['balance'] = invoiceBalanceAfter(invoice);
 
     return invoice;
   }
