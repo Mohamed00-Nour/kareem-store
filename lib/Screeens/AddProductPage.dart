@@ -1982,9 +1982,11 @@ class _AddProductPageState extends State<AddProductPage> {
                                   if (val.text.isEmpty) {
                                     return const Iterable<Product>.empty();
                                   }
-                                  return _products.where((p) => p.name
-                                      .toLowerCase()
-                                      .contains(val.text.toLowerCase()));
+                                  return _products.where((p) =>
+                                      !p.retail &&
+                                      p.name
+                                          .toLowerCase()
+                                          .contains(val.text.toLowerCase()));
                                 },
                                 displayStringForOption: (p) => p.name,
                                 fieldViewBuilder: (ctx, ctrl, focus, _) {
@@ -2327,6 +2329,7 @@ class Product {
   double quantity;
   int alertAmount;
   String? image;
+  bool retail;
 
   Product({
     required this.id,
@@ -2339,6 +2342,7 @@ class Product {
     required this.quantity,
     required this.alertAmount,
     this.image,
+    this.retail = false,
   });
 
   Map<String, dynamic> toMap() {
@@ -2353,6 +2357,7 @@ class Product {
       'quantity': quantity,
       'alertAmount': alertAmount,
       'image': image,
+      'retail': retail,
     };
   }
 
@@ -2368,6 +2373,7 @@ class Product {
       quantity: (map['quantity'] as num?)?.toDouble() ?? 0.0,
       alertAmount: (map['alertAmount'] ?? 0).toInt(),
       image: map['image'],
+      retail: map['retail'] == true,
     );
   }
 }
