@@ -368,6 +368,19 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                     'phone': phone,
                                     'id': newName,
                                   }, SetOptions(merge: true));
+                                  if (balance != 0) {
+                                    await FirebaseFirestore.instance
+                                        .collection('clients')
+                                        .doc(newName)
+                                        .collection('balanceHistory')
+                                        .add({
+                                      'enteredBalance': balance,
+                                      'balanceBefore': 0.0,
+                                      'type': 'opening',
+                                      'timestamp':
+                                          FieldValue.serverTimestamp(),
+                                    });
+                                  }
 
                                   if (!ctx.mounted) return;
                                   setSheet(() {

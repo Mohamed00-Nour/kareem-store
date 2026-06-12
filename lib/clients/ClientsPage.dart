@@ -254,6 +254,18 @@ class ClientsPage extends StatelessWidget {
                     .collection('clients')
                     .doc(name)
                     .set(data, SetOptions(merge: true));
+                if (balance != 0) {
+                  await FirebaseFirestore.instance
+                      .collection('clients')
+                      .doc(name)
+                      .collection('balanceHistory')
+                      .add({
+                    'enteredBalance': balance,
+                    'balanceBefore': 0.0,
+                    'type': 'opening',
+                    'timestamp': FieldValue.serverTimestamp(),
+                  });
+                }
                 if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('حفظ',

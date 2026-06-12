@@ -96,7 +96,12 @@ class ClientInvoiceBalanceSyncService {
           }
           break;
         case _BalanceEventKind.manualPayment:
-          running -= invoiceNum(event.data['enteredBalance']);
+          final entryType = event.data['type']?.toString();
+          if (entryType == 'opening') {
+            running += invoiceNum(event.data['enteredBalance']);
+          } else {
+            running -= invoiceNum(event.data['enteredBalance']);
+          }
           break;
       }
     }

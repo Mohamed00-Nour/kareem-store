@@ -106,6 +106,12 @@ class SuppliersPage extends StatelessWidget {
                               'date': Timestamp.now(),
                               'timestamp': FieldValue.serverTimestamp(),
                             });
+                            await ref.collection('balanceHistory').add({
+                              'enteredBalance': opening.abs(),
+                              'balanceBefore': 0.0,
+                              'type': 'opening',
+                              'timestamp': FieldValue.serverTimestamp(),
+                            });
                           }
                           if (ctx.mounted) Navigator.pop(ctx);
                           if (context.mounted) {
