@@ -80,13 +80,17 @@ class SuppliersPage extends StatelessWidget {
 
                         setDialogState(() => isSaving = true);
                         try {
-                          final balance =
+                          final opening =
                               double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
+                          // Opening balance = amount we owe the supplier → له (negative).
+                          final totalBalance = opening == 0
+                              ? 0.0
+                              : -opening.abs();
                           final ref = await FirebaseFirestore.instance
                               .collection('suppliers')
                               .add({
                             'name': name,
-                            'totalBalance': balance,
+                            'totalBalance': totalBalance,
                           });
                           await ref.update({'id': ref.id});
                           if (ctx.mounted) Navigator.pop(ctx);
