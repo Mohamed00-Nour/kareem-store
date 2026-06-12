@@ -146,6 +146,8 @@ class _AddProductPageState extends State<AddProductPage> {
     Supplier? supplier,
     double? paidAmount,
     String notes = '',
+    double invoiceDiscount = 0.0,
+    bool discountIsPercent = true,
   }) async {
     final Supplier? effectiveSupplier = supplier ?? _selectedSupplier;
     final double effectivePaid = paidAmount ?? 0.0;
@@ -199,7 +201,11 @@ class _AddProductPageState extends State<AddProductPage> {
           ? invoiceQuery.docs.first['invoiceNumber'] + 1
           : 1;
 
-      double totalSum = _calculateTotalSum();
+      final totalBeforeDiscount = _calculateTotalSum();
+      final effectiveDiscountAmt = discountIsPercent
+          ? totalBeforeDiscount * invoiceDiscount / 100
+          : invoiceDiscount;
+      final totalSum = totalBeforeDiscount - effectiveDiscountAmt;
       double balance = totalSum - effectivePaid;
 
       Map<String, dynamic> invoiceData = {
@@ -209,6 +215,7 @@ class _AddProductPageState extends State<AddProductPage> {
         'totalSum': totalSum,
         'paidAmount': effectivePaid,
         'balance': balance,
+        'invoiceDiscount': effectiveDiscountAmt,
         'notes': notes,
         'previousBalance': _supplierBalance,
         'products': _addedProducts
@@ -1128,7 +1135,12 @@ class _AddProductPageState extends State<AddProductPage> {
     double? checkoutSupplierBalance =
         checkoutSupplier != null ? _supplierBalance : null;
     bool loadingCheckoutSupplierBalance = false;
-    final paidCtrl = TextEditingController();
+    double invoiceDiscount = 0.0;
+    bool discountIsPercent = true;
+    final paidCtrl = TextEditingController(
+      text: _calculateTotalSum().toStringAsFixed(2),
+    );
+    final discountCtrl = TextEditingController();
     final notesCtrl = TextEditingController();
     final newSupplierCtrl = TextEditingController();
     final supplierSearchCtrl = TextEditingController();
@@ -1170,8 +1182,20 @@ class _AddProductPageState extends State<AddProductPage> {
           }
 
           double totalSum = _calculateTotalSum();
+          double effectiveDiscountAmt = discountIsPercent
+              ? totalSum * invoiceDiscount / 100
+              : invoiceDiscount;
+          double totalAfterDiscount = totalSum - effectiveDiscountAmt;
           double paid = double.tryParse(paidCtrl.text) ?? 0.0;
-          double remaining = paid - totalSum;
+          double remaining = paid - totalAfterDiscount;
+
+          void syncPaidToTotal() {
+            final sum = _calculateTotalSum();
+            final disc = discountIsPercent
+                ? sum * invoiceDiscount / 100
+                : invoiceDiscount;
+            paidCtrl.text = (sum - disc).toStringAsFixed(2);
+          }
 
           return Directionality(
             textDirection: TextDirection.rtl,
@@ -1201,12 +1225,64 @@ class _AddProductPageState extends State<AddProductPage> {
                               border: Border.all(color: Colors.grey.shade300),
                               borderRadius: BorderRadius.circular(8.r),
                             ),
-                            child: Text(totalSum.toStringAsFixed(2),
+                            child: Text(totalAfterDiscount.toStringAsFixed(2),
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                     fontSize: 18.sp,
                                     fontWeight: FontWeight.bold,
                                     color: Colors.red)),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 8.h),
+                    Row(
+                      children: [
+                        Text('الخصم',
+                            style: TextStyle(
+                                fontSize: 13.sp,
+                                fontWeight: FontWeight.bold)),
+                        SizedBox(width: 8.w),
+                        SizedBox(
+                          width: 80.w,
+                          child: TextField(
+                            controller: discountCtrl,
+                            textAlign: TextAlign.center,
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
+                            decoration: InputDecoration(
+                              hintText: '0',
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8.r)),
+                              contentPadding: EdgeInsets.symmetric(
+                                  vertical: 8.h, horizontal: 6.w),
+                            ),
+                            onTap: () => _selectAllField(discountCtrl),
+                            onChanged: (v) => setSheet(() {
+                              invoiceDiscount = double.tryParse(v) ?? 0.0;
+                              syncPaidToTotal();
+                            }),
+                          ),
+                        ),
+                        SizedBox(width: 6.w),
+                        GestureDetector(
+                          onTap: () => setSheet(() {
+                            discountIsPercent = !discountIsPercent;
+                            syncPaidToTotal();
+                          }),
+                          child: Container(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 10.w, vertical: 9.h),
+                            decoration: BoxDecoration(
+                              color: discountIsPercent
+                                  ? Colors.orange.shade100
+                                  : Colors.grey.shade200,
+                              borderRadius: BorderRadius.circular(8.r),
+                            ),
+                            child: Text('%',
+                                style: TextStyle(
+                                    fontSize: 14.sp,
+                                    fontWeight: FontWeight.bold)),
                           ),
                         ),
                       ],
@@ -1544,7 +1620,7 @@ class _AddProductPageState extends State<AddProductPage> {
                       Builder(
                         builder: (_) {
                           final balanceBefore = checkoutSupplierBalance ?? 0.0;
-                          final invoiceUnpaid = totalSum - paid;
+                          final invoiceUnpaid = totalAfterDiscount - paid;
                           final balanceAfter = balanceBefore - invoiceUnpaid;
                           TextStyle balanceStyle(double amount) => TextStyle(
                                 fontSize: 13.sp,
@@ -1662,6 +1738,8 @@ class _AddProductPageState extends State<AddProductPage> {
                             final double paidAmount =
                                 double.tryParse(paidCtrl.text) ?? 0.0;
                             final String savedNotes = notesCtrl.text;
+                            final double savedDiscount = invoiceDiscount;
+                            final bool savedDiscountIsPercent = discountIsPercent;
                             Navigator.pop(ctx);
                             setState(() => _selectedSupplier = finalSupplier);
                             await _fetchAndSetSupplierBalance(finalSupplier!.name);
@@ -1669,6 +1747,8 @@ class _AddProductPageState extends State<AddProductPage> {
                               supplier: finalSupplier,
                               paidAmount: paidAmount,
                               notes: savedNotes,
+                              invoiceDiscount: savedDiscount,
+                              discountIsPercent: savedDiscountIsPercent,
                             );
                           },
                           child: Text('متابعة',
