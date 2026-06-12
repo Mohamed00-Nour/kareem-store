@@ -17,6 +17,15 @@ class EgyptPhoneField extends StatelessWidget {
   });
 
   /// Digits only for WhatsApp (e.g. 201012345678).
+  /// Stored WhatsApp digits (e.g. 201012345678) → local part for the input field.
+  static String toLocalPartForInput(String storedDigits) {
+    final digits = storedDigits.replaceAll(RegExp(r'\D'), '');
+    if (digits.startsWith('20') && digits.length > 2) {
+      return digits.substring(2);
+    }
+    return digits;
+  }
+
   static String toWhatsappDigits(String localPart) {
     var digits = localPart.replaceAll(RegExp(r'\D'), '');
     if (digits.isEmpty) return '';

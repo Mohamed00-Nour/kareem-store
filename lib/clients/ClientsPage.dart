@@ -2866,7 +2866,11 @@ class _ClientListPageState extends State<_ClientListPage> {
     );
   }
 
-  void _showClientOptionsSheet(String clientId, String currentName) {
+  void _showClientOptionsSheet(
+    String clientId,
+    String currentName,
+    String currentPhone,
+  ) {
     showModalBottomSheet(
       context: context,
       builder: (sheetContext) => SafeArea(
@@ -2882,6 +2886,14 @@ class _ClientListPageState extends State<_ClientListPage> {
               },
             ),
             ListTile(
+              leading: const Icon(Icons.phone_outlined),
+              title: const Text('تغيير رقم الهاتف'),
+              onTap: () {
+                Navigator.pop(sheetContext);
+                _showEditClientPhoneDialog(clientId, currentPhone);
+              },
+            ),
+            ListTile(
               leading: const Icon(Icons.delete_outline, color: Colors.red),
               title: const Text('حذف من القائمة'),
               onTap: () {
@@ -2893,6 +2905,99 @@ class _ClientListPageState extends State<_ClientListPage> {
         ),
       ),
     );
+  }
+
+  void _showEditClientPhoneDialog(String clientId, String currentPhone) {
+    final controller = TextEditingController(
+      text: EgyptPhoneField.toLocalPartForInput(currentPhone),
+    );
+    showDialog(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: const Text('تغيير رقم الهاتف'),
+        content: EgyptPhoneField(
+          controller: controller,
+          labelText: 'رقم الهاتف (واتساب)',
+          hintText: '1xxxxxxxxx (اتركه فارغاً للحذف)',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () {
+              final phoneLocal = controller.text.trim();
+              if (phoneLocal.isNotEmpty &&
+                  !EgyptPhoneField.isValidLocalPart(phoneLocal)) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(
+                    content: Text(
+                      'رقم الهاتف غير صحيح. اتركه فارغاً أو أدخل رقماً صالحاً',
+                    ),
+                  ),
+                );
+                return;
+              }
+              Navigator.pop(dialogContext);
+              _performClientPhoneUpdate(clientId, phoneLocal, currentPhone);
+            },
+            child: const Text('حفظ'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _performClientPhoneUpdate(
+    String clientId,
+    String phoneLocal,
+    String previousPhone,
+  ) async {
+    final newDigits = phoneLocal.isEmpty
+        ? ''
+        : EgyptPhoneField.toWhatsappDigits(phoneLocal);
+    final oldDigits = previousPhone.replaceAll(RegExp(r'\D'), '');
+    if (newDigits == oldDigits) return;
+
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (_) => Center(
+        child: CircularProgressIndicator(
+          color: Colors.orange.withOpacity(0.7),
+        ),
+      ),
+    );
+
+    try {
+      final clientRef =
+          FirebaseFirestore.instance.collection('clients').doc(clientId);
+      if (newDigits.isEmpty) {
+        await clientRef.update({'phone': FieldValue.delete()});
+      } else {
+        await clientRef.update({'phone': newDigits});
+      }
+
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            newDigits.isEmpty
+                ? 'تم حذف رقم الهاتف'
+                : 'تم تحديث رقم الهاتف بنجاح',
+          ),
+        ),
+      );
+      setState(() {});
+    } catch (e) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('فشل تحديث رقم الهاتف: $e')),
+      );
+    }
   }
 
   void _showRenameClientDialog(String clientId, String currentName) {
@@ -3105,7 +3210,7 @@ class _ClientListPageState extends State<_ClientListPage> {
                         );
                       },
                       onLongPress: () {
-                        _showClientOptionsSheet(client.id, name);
+                        _showClientOptionsSheet(client.id, name, phone);
                       },
                     );
                   },
