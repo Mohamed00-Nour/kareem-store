@@ -12,6 +12,7 @@ import 'Data/DataEntryScreen.dart';
 import 'PrinterSettingsPage.dart';
 import 'Invoices/SpecialInvoicesPage.dart';
 import '../expenses/ExpensesPage.dart';
+import 'ChangeCredentialsPage.dart';
 
 class HomePage extends StatelessWidget {
   /// When false, back is handled by [GNavPage] (return to home tab, then exit).
@@ -134,6 +135,18 @@ class HomePage extends StatelessWidget {
         appBar: AppBar(
           backgroundColor: Colors.black.withOpacity(0.7),
           centerTitle: false,
+          actions: [
+            IconButton(
+              icon: const Icon(Icons.manage_accounts, color: Colors.white),
+              tooltip: 'تغيير بيانات الحساب',
+              onPressed: () {
+                Navigator.push(
+                  context,
+                  MaterialPageRoute(builder: (context) => const ChangeCredentialsPage()),
+                );
+              },
+            ),
+          ],
           title: Directionality(
             textDirection: TextDirection.ltr,
             child: Row(
