@@ -1,4 +1,4 @@
-﻿import 'dart:ui' show ImageFilter;
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -2314,14 +2314,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           final bool paidLessThanTotal =
               isCash && paid + 0.001 < totalAfterDiscount;
 
-          void syncPaidForPaymentMethod() {
+          void syncPaidForPaymentMethod({bool forceClearDeferred = false}) {
             if (paymentMethod == 'نقداً') {
               final sum = _calculateTotalSum();
               final disc = discountIsPercent
                   ? sum * invoiceDiscount / 100
                   : invoiceDiscount;
               paidCtrl.text = (sum - disc).toStringAsFixed(2);
-            } else if (paymentMethod == 'آجل') {
+            } else if (forceClearDeferred && paymentMethod == 'آجل') {
               paidCtrl.clear();
             }
           }
@@ -2358,7 +2358,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       MaterialTapTargetSize.shrinkWrap,
                                   onChanged: (v) => setSheet(() {
                                     paymentMethod = v!;
-                                    syncPaidForPaymentMethod();
+                                    syncPaidForPaymentMethod(forceClearDeferred: true);
                                   }),
                                 ),
                                 Text(m,
