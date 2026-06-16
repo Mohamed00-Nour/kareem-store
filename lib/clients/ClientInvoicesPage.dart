@@ -1,4 +1,4 @@
-﻿library client_invoices_page;
+library client_invoices_page;
 
 import 'dart:ui' as ui;
 
@@ -1484,6 +1484,14 @@ Future<void> _saveBalance() async {
                           fontSize: 16,
                           fontWeight: FontWeight.bold,
                           color: Colors.green,
+                        ),
+                      ),
+                      Text(
+                        'المتبقي من الفاتورة: ${invoiceAmount(totalSum - invoiceNum(invoice['paidAmount']))}',
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.orange,
                         ),
                       ),
                       Text(

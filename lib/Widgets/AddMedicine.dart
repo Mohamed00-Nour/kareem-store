@@ -81,9 +81,7 @@ class _AddMedicineState extends State<AddMedicine> {
 
   @override
   Widget build(BuildContext context) {
-    return ScreenUtilInit(
-      designSize: const Size(360, 690),
-      builder: (context, child) => Padding(
+    return Padding(
         padding: EdgeInsets.symmetric(vertical: 15.h, horizontal: 25.w),
         child: Form(
           key: _formKey,
@@ -160,7 +158,6 @@ class _AddMedicineState extends State<AddMedicine> {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 }

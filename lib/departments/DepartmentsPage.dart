@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../Widgets/app_responsive.dart';
 import 'InventoryValueByDepartmentPage.dart';
 import 'DepartmentProductsPage.dart';
 
@@ -48,7 +49,7 @@ class DepartmentsPage extends StatelessWidget {
             padding: EdgeInsets.all(10.w),
             child: GridView.builder(
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
+                crossAxisCount: AppResponsive.gridColumns(context),
                 crossAxisSpacing: 10.w,
                 mainAxisSpacing: 10.h,
               ),

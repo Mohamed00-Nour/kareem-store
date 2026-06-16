@@ -111,14 +111,14 @@ class InvoiceReceiptCard extends StatelessWidget {
             const SizedBox(height: 4),
             const Center(
               child: Text(
-                'كريم حماد: 01068462105 - 01207968495',
+                'مجدي حماد: 01010573888 - 01201820045',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 11),
               ),
             ),
             const Center(
               child: Text(
-                'مجدي حماد: 01010573888 - 01201820045',
+                'كريم حماد: 01068462105 - 01207968495',
                 textAlign: TextAlign.center,
                 style: TextStyle(fontSize: 11),
               ),
@@ -372,6 +372,7 @@ class InvoiceReceiptCard extends StatelessWidget {
         _summaryTableRow('الرصيد السابق', invoiceAmount(previousBalance)),
         _summaryTableRow('إجمالي ف.', invoiceAmount(totalSum), bold: true),
         _summaryTableRow('المدفوع', invoiceAmount(paid)),
+        _summaryTableRow('المتبقي من الفاتورة', invoiceAmount(totalSum - paid)),
         _summaryTableRow(
             'الرصيد الحالي (عليكم)', invoiceAmount(balance), bold: true),
       ],

@@ -60,38 +60,32 @@ class _SplashScreenState extends State<SplashScreen>
 
   @override
   Widget build(BuildContext context) {
-    return ScreenUtilInit(
-      designSize: const Size(360, 690),
-      builder: (context, child) =>
-          Scaffold(
-            backgroundColor: const Color(0xffeeeced),
-            body: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Center(
-                  child: ScaleTransition(
-                    scale: _animation,
-                    child: Image.asset(
-                      'assets/images/tools_7307974.png',
-                      width: 160.w,
-                      height: 160.h,
-                    ),
-                  ),
-                ),
-                Center(
-                  child: ScaleTransition(
-                    scale: _animation,
-                    child: Text(
-                      'أبو مجدي للحدايد والعدد',
-                      style: TextStyle(
-                        fontSize: 24,
-                      ),
-                    ),
-                  ),
-                ),
-              ],
+    return Scaffold(
+      backgroundColor: const Color(0xffeeeced),
+      body: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Center(
+            child: ScaleTransition(
+              scale: _animation,
+              child: Image.asset(
+                'assets/images/tools_7307974.png',
+                width: 160.w,
+                height: 160.h,
+              ),
             ),
           ),
+          Center(
+            child: ScaleTransition(
+              scale: _animation,
+              child: Text(
+                'أبو مجدي للحدايد والعدد',
+                style: TextStyle(fontSize: 24.sp),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

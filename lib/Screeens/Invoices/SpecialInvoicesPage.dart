@@ -268,7 +268,7 @@ class _SpecialInvoiceGridCard extends StatelessWidget {
               _amountRow('إجمالي الفاتورة', total),
               _amountRow('المدفوع', paid, valueColor: Colors.green.shade700),
               _amountRow(
-                'الباقي من الفاتورة',
+                'المتبقي من الفاتورة',
                 invoiceRemainder,
                 valueColor: invoiceRemainder > 0
                     ? Colors.orange.shade800

@@ -67,8 +67,8 @@ class _CardWidgetState extends State<CardWidget> with SingleTickerProviderStateM
             borderRadius: BorderRadius.circular(15.0.r),
           ),
           child: Container(
-            width: 0.3.sw,
-            height: 0.3.sw,
+            width: double.infinity,
+            height: double.infinity,
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.7),
               borderRadius: BorderRadius.circular(15.0.r),
@@ -77,12 +77,18 @@ class _CardWidgetState extends State<CardWidget> with SingleTickerProviderStateM
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
                 Image.asset(widget.imagePath, width: 40.w, height: 40.h),
-                SizedBox(height: 10.h),
-                Text(
-                  widget.text,
-                  style: TextStyle(
-                    fontSize: 17.sp,
-                    color: Colors.black.withOpacity(0.7),
+                SizedBox(height: 8.h),
+                Padding(
+                  padding: EdgeInsets.symmetric(horizontal: 4.w),
+                  child: Text(
+                    widget.text,
+                    textAlign: TextAlign.center,
+                    maxLines: 2,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: 15.sp,
+                      color: Colors.black.withOpacity(0.7),
+                    ),
                   ),
                 ),
               ],

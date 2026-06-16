@@ -301,9 +301,7 @@ class _ExpensesDetailsState extends State<ExpensesDetails> {
       color: Colors.black.withOpacity(0.7),
     );
 
-    return ScreenUtilInit(
-      designSize: const Size(360, 690),
-      builder: (context, child) => Scaffold(
+    return Scaffold(
         appBar: AppBar(
           title: const Text('تفاصيل النثريات'),
         ),
@@ -485,7 +483,6 @@ class _ExpensesDetailsState extends State<ExpensesDetails> {
             ),
           ),
         ),
-      ),
-    );
+      );
   }
 }

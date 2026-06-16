@@ -13,9 +13,7 @@ class EmployeeDetails extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return ScreenUtilInit(
-      designSize: const Size(360, 690),
-      builder: (context, child) => Scaffold(
+    return Scaffold(
         appBar: AppBar(
           title: Text(employee.name, style: TextStyle(fontSize: 20.sp)),
         ),
@@ -73,7 +71,6 @@ class EmployeeDetails extends StatelessWidget {
             ],
           ),
         ),
-      ),
-    );
+      );
   }
 }

@@ -427,6 +427,7 @@ class ClientStatementPdfService {
                 rtl('إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
                     bold: true),
                 rtl('المدفوع: ${invoiceAmount(paid)}'),
+                rtl('المتبقي من الفاتورة: ${invoiceAmount(totalSum - paid)}'),
                 rtl('المتبقي عليكم: ${invoiceAmount(remaining)}'),
                 if ((data['notes']?.toString() ?? '').isNotEmpty) ...[
                   pw.SizedBox(height: 6),

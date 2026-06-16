@@ -292,6 +292,41 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
                   const SizedBox(width: 16),
                   Expanded(
                     child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        const Text(
+                          'المتبقي من الفاتورة',
+                          style: TextStyle(
+                            fontWeight: FontWeight.bold,
+                            fontSize: 14,
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        ValueListenableBuilder<TextEditingValue>(
+                          valueListenable: paidCtrl,
+                          builder: (_, value, __) {
+                            final paid = double.tryParse(
+                                    value.text.replaceAll(',', '.')) ??
+                                0.0;
+                            final remainingInvoice = invoiceTotal - paid;
+                            return Text(
+                              remainingInvoice.toStringAsFixed(2),
+                              style: TextStyle(
+                                fontSize: 18,
+                                fontWeight: FontWeight.bold,
+                                color: remainingInvoice > 0
+                                    ? Colors.orange.shade800
+                                    : Colors.black87,
+                              ),
+                            );
+                          },
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(width: 16),
+                  Expanded(
+                    child: Column(
                       crossAxisAlignment: CrossAxisAlignment.end,
                       children: [
                         const Text(

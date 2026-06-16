@@ -6,6 +6,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../Widgets/app_responsive.dart';
 import '../Screeens/Invoices/InvoiceDetailPage.dart';
 import '../Services/daily_invoices_pdf_service.dart';
 import '../Services/invoice_print_service.dart';
@@ -454,7 +455,7 @@ class _TodayInvoicesPageState extends State<TodayInvoicesPage> {
                   padding: EdgeInsets.symmetric(horizontal: 12.w),
                   sliver: SliverGrid(
                     gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                      crossAxisCount: 2,
+                      crossAxisCount: AppResponsive.gridColumns(context),
                       crossAxisSpacing: 10.w,
                       mainAxisSpacing: 10.h,
                       childAspectRatio: 0.72,

@@ -2,6 +2,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'Data/quick_add_product_sheet.dart';
+import '../Widgets/app_bar_navigation.dart';
 import 'home_page.dart';
 import '../Buing Invoices/BuyingInvoiceListPage.dart';
 import '../Buing Invoices/BuyingInvoiceDetailPage.dart';
@@ -1877,7 +1878,9 @@ class _AddProductPageState extends State<AddProductPage> {
     double totalQty = _addedProducts.fold(
         0.0, (s, p) => s + (p['amount'] as num).toDouble());
 
-    return WillPopScope(
+    return DesktopBackShortcuts(
+      confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
+      child: WillPopScope(
       onWillPop: () => HomePage.confirmNavigateBack(context),
       child: Directionality(
         textDirection: TextDirection.rtl,
@@ -1887,6 +1890,11 @@ class _AddProductPageState extends State<AddProductPage> {
           endDrawer: _buildDrawer(),
           appBar: AppBar(
           backgroundColor: Colors.black.withOpacity(0.7),
+          leading: AppBarNavLeading(
+            openDrawer: () => _scaffoldKey.currentState?.openEndDrawer(),
+            confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
+          ),
+          automaticallyImplyLeading: false,
           title: Text('المشتريات',
               style: TextStyle(
                   color: Colors.white,
@@ -1897,6 +1905,7 @@ class _AddProductPageState extends State<AddProductPage> {
           actions: [
             IconButton(
               icon: Icon(Icons.menu, color: Colors.white, size: 26.sp),
+              tooltip: 'القائمة',
               onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
             ),
           ],
@@ -2279,6 +2288,7 @@ class _AddProductPageState extends State<AddProductPage> {
               ),
           ],
         ),
+      ),
       ),
       ),
     );

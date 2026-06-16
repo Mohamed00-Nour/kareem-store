@@ -169,6 +169,7 @@ class SalesInvoicePdfService {
                   '${settings.labels.previousBalance} : ${invoiceAmount(previous)}'),
               rtl('إجمالي ف. : ${invoiceAmount(totalSum)}', bold: true),
               rtl('${settings.labels.paid} : ${invoiceAmount(paid)}'),
+              rtl('المتبقي من الفاتورة : ${invoiceAmount(totalSum - paid)}'),
               rtl('الرصيد الحالي (عليكم) : ${invoiceAmount(balance)}',
                   bold: true),
               if ((invoice['notes']?.toString() ?? '').isNotEmpty)

@@ -228,6 +228,14 @@ class InvoiceTotalsFooter extends StatelessWidget {
                 ),
               ),
               Text(
+                'المتبقي من الفاتورة: ${invoiceAmount(total - paid)}',
+                style: TextStyle(
+                  fontSize: 14.sp,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange,
+                ),
+              ),
+              Text(
                 '$remainingLabel: ${invoiceAmount(remaining)}',
                 style: TextStyle(
                   fontSize: 14.sp,

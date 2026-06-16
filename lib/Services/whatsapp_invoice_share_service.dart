@@ -26,6 +26,7 @@ class WhatsappInvoiceShareService {
     buffer.writeln('التاريخ $dateStr');
     buffer.writeln('بإجمالي ${invoiceAmount(total)} ج.م');
     buffer.writeln('المدفوع ${invoiceAmount(paid)} ج.م');
+    buffer.writeln('المتبقي من الفاتورة ${invoiceAmount(total - paid)} ج.م');
     buffer.writeln('الرصيد الحالي عليكم ${invoiceAmount(clientBalance)} ج.م');
     return buffer.toString().trim();
   }

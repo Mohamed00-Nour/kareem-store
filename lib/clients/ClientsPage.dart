@@ -170,6 +170,7 @@ import 'package:share_plus/share_plus.dart';
 import '../DeletedClientsPage.dart';
 import '../Services/party_rename_service.dart';
 import '../Widgets/egypt_phone_field.dart';
+import '../Widgets/app_responsive.dart';
 import 'ClientInvoicesPage.dart';
 
 // ─── Main Menu Page ──────────────────────────────────────────────────────────
@@ -3179,8 +3180,8 @@ class _ClientListPageState extends State<_ClientListPage> {
 
                 return GridView.builder(
                   padding: const EdgeInsets.all(10),
-                  gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: 2,
+                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                    crossAxisCount: AppResponsive.gridColumns(context),
                     crossAxisSpacing: 10,
                     mainAxisSpacing: 10,
                     childAspectRatio: 0.92,

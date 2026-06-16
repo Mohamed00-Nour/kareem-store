@@ -194,6 +194,7 @@ class DailyInvoicesPdfService {
               rtl('إجمالي الفاتورة: ${invoiceAmount(totalSum)} ج.م',
                   bold: true),
               rtl('المدفوع: ${invoiceAmount(paid)} ج.م'),
+              rtl('المتبقي من الفاتورة: ${invoiceAmount(totalSum - paid)} ج.م'),
               rtl('المتبقي عليكم: ${invoiceAmount(balance)} ج.م'),
               if ((data['notes']?.toString() ?? '').isNotEmpty) ...[
                 pw.SizedBox(height: 6),

@@ -383,9 +383,7 @@ class _EmployeeListState extends State<EmployeeList> {
 
   @override
   Widget build(BuildContext context) {
-    return ScreenUtilInit(
-      designSize: const Size(360, 690),
-      builder: (context, child) => Scaffold(
+    return Scaffold(
         appBar: AppBar(
           title: Text('الموظفين', style: TextStyle(color: Colors.white, fontSize: 20.sp)),
           backgroundColor: Colors.black.withOpacity(0.7),
@@ -454,7 +452,6 @@ class _EmployeeListState extends State<EmployeeList> {
           child: Icon(Icons.add, size: 24.sp),
           backgroundColor: Colors.orange.withOpacity(0.8),
         ),
-      ),
-    );
+      );
   }
 }

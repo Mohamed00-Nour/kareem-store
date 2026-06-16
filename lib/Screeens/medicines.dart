@@ -35,9 +35,7 @@ class _MedicineWidgetState extends State<MedicineWidget> {
 
   @override
   Widget build(BuildContext context) {
-    return ScreenUtilInit(
-      designSize: const Size(360, 690),
-      builder: (context, child) => Scaffold(
+    return Scaffold(
         backgroundColor: const Color(0xffeeeced),
         appBar: AppBar(
           backgroundColor: const Color(0xffeeeced),
@@ -132,7 +130,6 @@ class _MedicineWidgetState extends State<MedicineWidget> {
             ),
           ],
         ),
-      ),
-    );
+      );
   }
 }

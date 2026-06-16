@@ -193,6 +193,7 @@ class InvoicePrintFormatter {
     line(_summaryRow(cols.width, labels.previousBalance, previous));
     line(_summaryRow(cols.width, 'إجمالي ف.', totalSum));
     line(_summaryRow(cols.width, labels.paid, paid));
+    line(_summaryRow(cols.width, 'المتبقي من الفاتورة', totalSum - paid));
     line(_summaryRow(
       cols.width,
       'الرصيد الحالي (عليكم)',
@@ -237,8 +238,8 @@ class InvoicePrintFormatter {
       'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
       'كفر الزيات - طنطا - الغربية',
       title,
-      'كريم حماد: 01068462105 - 01207968495',
       'مجدي حماد: 01010573888 - 01201820045',
+      'كريم حماد: 01068462105 - 01207968495',
     ];
 
     final metaTable = <List<String>>[
@@ -314,6 +315,7 @@ class InvoicePrintFormatter {
       [_formatMoney(previous), labels.previousBalance],
       [_formatMoney(totalSum), 'إجمالي ف.'],
       [_formatMoney(paid), labels.paid],
+      [_formatMoney(totalSum - paid), 'المتبقي من الفاتورة'],
       [_formatMoney(balance), 'الرصيد الحالي (عليكم)'],
     ];
 

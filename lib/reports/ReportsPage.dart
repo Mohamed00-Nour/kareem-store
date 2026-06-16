@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../Widgets/app_responsive.dart';
 import 'SalesReportPage.dart';
 import 'ProductReportPage.dart';
 import 'BestProductsReportPage.dart';
@@ -87,7 +88,7 @@ class ReportsPage extends StatelessWidget {
           child: GridView.builder(
             itemCount: cards.length,
             gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-              crossAxisCount: 2,
+              crossAxisCount: AppResponsive.gridColumns(context),
               crossAxisSpacing: 12.w,
               mainAxisSpacing: 12.h,
               childAspectRatio: 1.0,

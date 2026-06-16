@@ -349,11 +349,6 @@ Future<void> _saveData() async {
 
   @override
   Widget build(BuildContext context) {
-    ScreenUtil.init(context,
-        designSize: const Size(360, 690),
-        minTextAdapt: true,
-        splitScreenMode: true);
-
     return Scaffold(
       appBar: AppBar(
         title: Text('إدخال البيانات',

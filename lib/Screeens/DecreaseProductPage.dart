@@ -17,6 +17,7 @@ import '../Services/whatsapp_invoice_share_service.dart';
 import '../Widgets/egypt_phone_field.dart';
 import '../EditProductPage.dart';
 import 'g_Nav.dart';
+import '../Widgets/app_bar_navigation.dart';
 import 'home_page.dart';
 
 class DecreaseProductPage extends StatefulWidget {
@@ -3458,7 +3459,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     double totalQty = _addedProducts.fold(
         0.0, (s, p) => s + (double.tryParse(p['amount'].toString()) ?? 0.0));
 
-    return WillPopScope(
+    return DesktopBackShortcuts(
+      confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
+      child: WillPopScope(
       onWillPop: () => HomePage.confirmNavigateBack(context),
       child: Directionality(
         textDirection: TextDirection.rtl,
@@ -3468,6 +3471,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           drawer: _buildDrawer(),
           appBar: AppBar(
           backgroundColor: Colors.black.withOpacity(0.7),
+          leading: AppBarNavLeading(
+            openDrawer: () => _scaffoldKey.currentState?.openDrawer(),
+            confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
+          ),
           title: Text(_pageTitle,
               style: TextStyle(
                   color: Colors.white,
@@ -3475,7 +3482,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                   fontWeight: FontWeight.bold)),
           centerTitle: true,
           iconTheme: const IconThemeData(color: Colors.white),
+          automaticallyImplyLeading: false,
           actions: [
+            if (Navigator.canPop(context))
+              IconButton(
+                icon: Icon(Icons.menu, color: Colors.white, size: 24.sp),
+                tooltip: 'القائمة',
+                onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+              ),
             IconButton(
               icon: Icon(Icons.calendar_today_outlined,
                   color: Colors.white, size: 22.sp),
@@ -3949,6 +3963,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
               ),
           ],
         ),
+      ),
       ),
       ),
     );

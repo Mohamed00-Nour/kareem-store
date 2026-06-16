@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../Services/FirebaseService.dart';
+import '../Widgets/app_responsive.dart';
 import 'PreviousMonthSummaryScreen.dart';
 
 class MonthsListScreen extends StatelessWidget {
@@ -27,7 +28,7 @@ class MonthsListScreen extends StatelessWidget {
             final months = snapshot.data!;
             return GridView.builder(
               gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                crossAxisCount: 2,
+                crossAxisCount: AppResponsive.gridColumns(context),
                 crossAxisSpacing: 10.w,
                 mainAxisSpacing: 10.h,
                 childAspectRatio: 2,

@@ -25,6 +25,7 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   bool _showProductSuggestions = false;
+  bool _suppressSearchChange = false;
   bool _loadingProducts = true;
 
   List<String> _productNames = [];
@@ -51,7 +52,10 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
     _fetchProductNames();
     _searchFocusNode.addListener(() {
       if (!_searchFocusNode.hasFocus) {
-        setState(() => _showProductSuggestions = false);
+        Future.delayed(const Duration(milliseconds: 200), () {
+          if (!mounted || _searchFocusNode.hasFocus) return;
+          setState(() => _showProductSuggestions = false);
+        });
       } else if (_searchQuery.isNotEmpty) {
         setState(() => _showProductSuggestions = true);
       }
@@ -81,12 +85,14 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
   }
 
   void _selectProduct(String name) {
+    _suppressSearchChange = true;
     setState(() {
       _selectedProduct = name;
       _searchController.text = name;
       _searchQuery = name;
       _showProductSuggestions = false;
     });
+    _suppressSearchChange = false;
     _searchFocusNode.unfocus();
   }
 
@@ -293,6 +299,7 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
                       }
                     },
                     onChanged: (v) {
+                      if (_suppressSearchChange) return;
                       setState(() {
                         _searchQuery = v.trim();
                         _showProductSuggestions = _searchQuery.isNotEmpty;
@@ -349,26 +356,35 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
                               itemBuilder: (context, index) {
                                 final name = _filteredProductNames[index];
                                 final selected = name == _selectedProduct;
-                                return ListTile(
-                                  dense: true,
-                                  title: Text(
-                                    name,
-                                    textDirection: TextDirection.rtl,
-                                    style: TextStyle(
-                                      fontSize: 14.sp,
-                                      fontWeight: selected
-                                          ? FontWeight.bold
-                                          : FontWeight.normal,
-                                      color: selected
-                                          ? Colors.orange.shade800
-                                          : Colors.black87,
+                                return Material(
+                                  color: selected
+                                      ? Colors.orange.withOpacity(0.08)
+                                      : Colors.transparent,
+                                  child: InkWell(
+                                    onTapDown: (_) => _selectProduct(name),
+                                    onTap: () => _selectProduct(name),
+                                    child: ListTile(
+                                      dense: true,
+                                      title: Text(
+                                        name,
+                                        textDirection: TextDirection.rtl,
+                                        style: TextStyle(
+                                          fontSize: 14.sp,
+                                          fontWeight: selected
+                                              ? FontWeight.bold
+                                              : FontWeight.normal,
+                                          color: selected
+                                              ? Colors.orange.shade800
+                                              : Colors.black87,
+                                        ),
+                                      ),
+                                      trailing: selected
+                                          ? Icon(Icons.check_circle,
+                                              color: Colors.orange,
+                                              size: 20.sp)
+                                          : null,
                                     ),
                                   ),
-                                  trailing: selected
-                                      ? Icon(Icons.check_circle,
-                                          color: Colors.orange, size: 20.sp)
-                                      : null,
-                                  onTap: () => _selectProduct(name),
                                 );
                               },
                             ),
