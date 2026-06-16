@@ -945,6 +945,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     double invoiceDiscount = 0.0,
     bool discountIsPercent = true,
   }) async {
+    if (_isSaving) return;
     final String effectiveClient =
         (clientName ?? _clientNameController.text).trim();
     final double effectivePaid =
@@ -2765,59 +2766,73 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             padding:
                                 EdgeInsets.symmetric(vertical: 12.h),
                           ),
-                          onPressed: () async {
-                            if (checkoutClient.trim().isEmpty) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content:
-                                          Text('يجب ادخال اسم العميل')));
-                              return;
-                            }
-                            if (!await _clientExists(checkoutClient.trim())) {
-                              setSheet(() => checkoutClientNotFound = true);
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text('هذا العميل غير موجود'),
-                                ),
-                              );
-                              return;
-                            }
-                            final paidAmount =
-                                double.tryParse(paidCtrl.text) ?? 0.0;
-                            if (paymentMethod == 'نقداً' &&
-                                paidAmount + 0.001 < totalAfterDiscount) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                const SnackBar(
-                                  content: Text(
-                                      'المبلغ المدفوع أصغر من الإجمالي'),
-                                ),
-                              );
-                              return;
-                            }
-                            Navigator.pop(ctx);
-                            final bal = await _fetchClientBalance(
-                              checkoutClient.trim(),
-                            );
-                            if (!mounted) return;
-                            setState(() {
-                              _clientBalance = bal;
-                            });
-                            _clientNameController.text =
-                                checkoutClient.trim();
-                            _saveData(
-                              clientName: checkoutClient.trim(),
-                              paidAmount: paidAmount,
-                              paymentMethod: paymentMethod,
-                              notes: notes,
-                              invoiceDiscount: invoiceDiscount,
-                              discountIsPercent: discountIsPercent,
-                            );
-                          },
-                          child: Text('متابعة',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 15.sp,
-                                  fontWeight: FontWeight.bold)),
+                          onPressed: _isSaving
+                              ? null
+                              : () async {
+                                  if (checkoutClient.trim().isEmpty) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                            content:
+                                                Text('يجب ادخال اسم العميل')));
+                                    return;
+                                  }
+                                  if (!await _clientExists(checkoutClient.trim())) {
+                                    setSheet(() => checkoutClientNotFound = true);
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text('هذا العميل غير موجود'),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  final paidAmount =
+                                      double.tryParse(paidCtrl.text) ?? 0.0;
+                                  if (paymentMethod == 'نقداً' &&
+                                      paidAmount + 0.001 < totalAfterDiscount) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            'المبلغ المدفوع أصغر من الإجمالي'),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  setSheet(() {
+                                    _isSaving = true;
+                                  });
+                                  Navigator.pop(ctx);
+                                  final bal = await _fetchClientBalance(
+                                    checkoutClient.trim(),
+                                  );
+                                  if (!mounted) return;
+                                  setState(() {
+                                    _clientBalance = bal;
+                                  });
+                                  _clientNameController.text =
+                                      checkoutClient.trim();
+                                  _saveData(
+                                    clientName: checkoutClient.trim(),
+                                    paidAmount: paidAmount,
+                                    paymentMethod: paymentMethod,
+                                    notes: notes,
+                                    invoiceDiscount: invoiceDiscount,
+                                    discountIsPercent: discountIsPercent,
+                                  );
+                                },
+                          child: _isSaving
+                              ? SizedBox(
+                                  width: 20.w,
+                                  height: 20.w,
+                                  child: const CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text('متابعة',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15.sp,
+                                      fontWeight: FontWeight.bold)),
                         ),
                       ),
                     ]),

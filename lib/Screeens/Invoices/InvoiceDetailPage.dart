@@ -93,6 +93,7 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
       setState(() {
         _isSpecial = next;
         invoice['isSpecial'] = next;
+        _notifyParentOnPop = true;
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(

@@ -155,6 +155,7 @@ class _AddProductPageState extends State<AddProductPage> {
     double invoiceDiscount = 0.0,
     bool discountIsPercent = true,
   }) async {
+    if (_isSaving) return;
     final Supplier? effectiveSupplier = supplier ?? _selectedSupplier;
     final double effectivePaid = paidAmount ?? 0.0;
 
@@ -1924,49 +1925,63 @@ class _AddProductPageState extends State<AddProductPage> {
                                 borderRadius: BorderRadius.circular(8.r)),
                             padding: EdgeInsets.symmetric(vertical: 12.h),
                           ),
-                          onPressed: () async {
-                            Supplier? finalSupplier = checkoutSupplier;
-                            if (addingNewSupplier) {
-                              final name = newSupplierCtrl.text.trim();
-                              if (name.isEmpty) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                    const SnackBar(
-                                        content:
-                                            Text('يرجى إدخال اسم المورد')));
-                                return;
-                              }
-                              finalSupplier = Supplier(id: '', name: name);
-                            }
-                            if (finalSupplier == null) {
-                              ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('يجب اختيار المورد')));
-                              return;
-                            }
-                            // Read controller values BEFORE pop disposes them
-                            final double paidAmount =
-                                double.tryParse(paidCtrl.text) ?? 0.0;
-                            final String savedNotes = notesCtrl.text;
-                            final double savedDiscount = invoiceDiscount;
-                            final bool savedDiscountIsPercent =
-                                discountIsPercent;
-                            Navigator.pop(ctx);
-                            setState(() => _selectedSupplier = finalSupplier);
-                            await _fetchAndSetSupplierBalance(
-                                finalSupplier!.name);
-                            _saveData(
-                              supplier: finalSupplier,
-                              paidAmount: paidAmount,
-                              notes: savedNotes,
-                              invoiceDiscount: savedDiscount,
-                              discountIsPercent: savedDiscountIsPercent,
-                            );
-                          },
-                          child: Text('متابعة',
-                              style: TextStyle(
-                                  color: Colors.white,
-                                  fontSize: 15.sp,
-                                  fontWeight: FontWeight.bold)),
+                          onPressed: _isSaving
+                              ? null
+                              : () async {
+                                  Supplier? finalSupplier = checkoutSupplier;
+                                  if (addingNewSupplier) {
+                                    final name = newSupplierCtrl.text.trim();
+                                    if (name.isEmpty) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                          const SnackBar(
+                                              content:
+                                                  Text('يرجى إدخال اسم المورد')));
+                                      return;
+                                    }
+                                    finalSupplier = Supplier(id: '', name: name);
+                                  }
+                                  if (finalSupplier == null) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                            content: Text('يجب اختيار المورد')));
+                                    return;
+                                  }
+                                  // Read controller values BEFORE pop disposes them
+                                  final double paidAmount =
+                                      double.tryParse(paidCtrl.text) ?? 0.0;
+                                  final String savedNotes = notesCtrl.text;
+                                  final double savedDiscount = invoiceDiscount;
+                                  final bool savedDiscountIsPercent =
+                                      discountIsPercent;
+                                  setSheet(() {
+                                    _isSaving = true;
+                                  });
+                                  Navigator.pop(ctx);
+                                  setState(() => _selectedSupplier = finalSupplier);
+                                  await _fetchAndSetSupplierBalance(
+                                      finalSupplier!.name);
+                                  _saveData(
+                                    supplier: finalSupplier,
+                                    paidAmount: paidAmount,
+                                    notes: savedNotes,
+                                    invoiceDiscount: savedDiscount,
+                                    discountIsPercent: savedDiscountIsPercent,
+                                  );
+                                },
+                          child: _isSaving
+                              ? SizedBox(
+                                  width: 20.w,
+                                  height: 20.w,
+                                  child: const CircularProgressIndicator(
+                                    strokeWidth: 2,
+                                    color: Colors.white,
+                                  ),
+                                )
+                              : Text('متابعة',
+                                  style: TextStyle(
+                                      color: Colors.white,
+                                      fontSize: 15.sp,
+                                      fontWeight: FontWeight.bold)),
                         ),
                       ),
                     ]),
