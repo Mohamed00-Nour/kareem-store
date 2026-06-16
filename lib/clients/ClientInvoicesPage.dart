@@ -320,15 +320,15 @@ Future<void> _saveBalance() async {
       } else {
         transaction.set(boxDocRef, {'value': enteredBalance});
       }
+    });
 
-      // Add change to the subcollection
-      await boxDocRef.collection('changes').add({
-        'date': FieldValue.serverTimestamp(),
-        'value': enteredBalance,
-        'type': 'addition',
-        'name': clientName,
-        'invoiceNumber': null, // No invoice number for balance entries
-      });
+    // Add change to the subcollection
+    await boxDocRef.collection('changes').add({
+      'date': FieldValue.serverTimestamp(),
+      'value': enteredBalance,
+      'type': 'addition',
+      'name': clientName,
+      'invoiceNumber': null, // No invoice number for balance entries
     });
 
     _balanceController.clear();

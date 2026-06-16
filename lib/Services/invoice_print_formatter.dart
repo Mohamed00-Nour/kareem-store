@@ -86,9 +86,10 @@ class InvoicePrintFormatter {
     for (final part in _headerLines(settings)) {
       line(_center(part, cols.width));
     }
-    final title = invoice['invoiceType']?.toString() == 'return'
-        ? 'فاتورة مرتجع'
-        : labels.invoiceTitle;
+    final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
+    final title = isBuying
+        ? 'فاتورة مشتريات'
+        : (invoice['invoiceType']?.toString() == 'return' ? 'فاتورة مرتجع' : labels.invoiceTitle);
     line(_center(title, cols.width));
     line(sep);
 
@@ -109,9 +110,12 @@ class InvoicePrintFormatter {
     ));
     line(sep);
 
-    // ── Customer (one line) ──
+    // ── Customer / Supplier (one line) ──
     final clientName = invoice['clientName']?.toString().trim() ?? '';
-    if (clientName.isNotEmpty) {
+    final supplierName = invoice['supplierName']?.toString().trim() ?? '';
+    if (isBuying && supplierName.isNotEmpty) {
+      line(_center('اسم المورد : $supplierName', cols.width));
+    } else if (clientName.isNotEmpty) {
       line(_center('اسم العميل : $clientName', cols.width));
     }
 
@@ -149,8 +153,8 @@ class InvoicePrintFormatter {
       final qtyStr = _formatQty(_num(map['amount']));
       qtySum += _num(map['amount']);
       textRowIndex++;
-      final price = _formatMoneyCompact(_num(map['selectedPrice']));
-      final total = _formatMoneyCompact(_num(map['total']));
+      final price = _formatMoneyCompact(_num(map['selectedPrice'] ?? map['cost']));
+      final total = _formatMoneyCompact(_num(map['total'] ?? map['totalCost']));
 
       _writeProductRow(
         line,
@@ -188,7 +192,10 @@ class InvoicePrintFormatter {
     final previous = _num(invoice['previousBalance']);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final balance = invoiceClientRemainingOwed(invoice);
+    final balance = isBuying
+        ? invoiceSupplierRemainingOwed(invoice)
+        : invoiceClientRemainingOwed(invoice);
+    final balanceLabel = isBuying ? 'الرصيد الحالي (للمورد)' : 'الرصيد الحالي (عليكم)';
 
     line(_summaryRow(cols.width, labels.previousBalance, previous));
     line(_summaryRow(cols.width, 'إجمالي ف.', totalSum));
@@ -196,7 +203,7 @@ class InvoicePrintFormatter {
     line(_summaryRow(cols.width, 'المتبقي من الفاتورة', totalSum - paid));
     line(_summaryRow(
       cols.width,
-      'الرصيد الحالي (عليكم)',
+      balanceLabel,
       balance,
     ));
 
@@ -230,9 +237,10 @@ class InvoicePrintFormatter {
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
     final invoiceNo = invoice['invoiceNumber']?.toString() ?? '';
-    final title = invoice['invoiceType']?.toString() == 'return'
-        ? 'فاتورة مرتجع'
-        : labels.invoiceTitle;
+    final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
+    final title = isBuying
+        ? 'فاتورة مشتريات'
+        : (invoice['invoiceType']?.toString() == 'return' ? 'فاتورة مرتجع' : labels.invoiceTitle);
 
     final centered = <String>[
       'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
@@ -249,7 +257,10 @@ class InvoicePrintFormatter {
 
     final body = <String>[];
     final clientName = invoice['clientName']?.toString().trim() ?? '';
-    if (clientName.isNotEmpty) {
+    final supplierName = invoice['supplierName']?.toString().trim() ?? '';
+    if (isBuying && supplierName.isNotEmpty) {
+      body.add(_center('اسم المورد : $supplierName', cols.width));
+    } else if (clientName.isNotEmpty) {
       body.add(_center('اسم العميل : $clientName', cols.width));
     }
     if (settings.showCustomerAddressAndPhone) {
@@ -299,8 +310,8 @@ class InvoicePrintFormatter {
           rowNum: '$rowIndex',
           product: name,
           qty: _formatQty(_num(map['amount'])),
-          price: _formatMoney(_num(map['selectedPrice'])),
-          total: _formatMoney(_num(map['total'])),
+          price: _formatMoney(_num(map['selectedPrice'] ?? map['cost'])),
+          total: _formatMoney(_num(map['total'] ?? map['totalCost'])),
           extraLines: extras,
         ),
       );
@@ -309,14 +320,17 @@ class InvoicePrintFormatter {
     final previous = _num(invoice['previousBalance']);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final balance = invoiceClientRemainingOwed(invoice);
+    final balance = isBuying
+        ? invoiceSupplierRemainingOwed(invoice)
+        : invoiceClientRemainingOwed(invoice);
+    final balanceLabel = isBuying ? 'الرصيد الحالي (للمورد)' : 'الرصيد الحالي (عليكم)';
 
     final summaryTable = <List<String>>[
       [_formatMoney(previous), labels.previousBalance],
       [_formatMoney(totalSum), 'إجمالي ف.'],
       [_formatMoney(paid), labels.paid],
       [_formatMoney(totalSum - paid), 'المتبقي من الفاتورة'],
-      [_formatMoney(balance), 'الرصيد الحالي (عليكم)'],
+      [_formatMoney(balance), balanceLabel],
     ];
 
     final trailing = <String>[];

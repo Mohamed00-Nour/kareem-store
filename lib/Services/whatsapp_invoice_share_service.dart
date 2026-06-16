@@ -11,23 +11,37 @@ import 'whatsapp_share_channel.dart';
 class WhatsappInvoiceShareService {
   static String buildInvoiceMessage(Map<String, dynamic> invoice) {
     final clientName = invoice['clientName']?.toString().trim() ?? '';
+    final supplierName = invoice['supplierName']?.toString().trim() ?? '';
+    final isSupplier = supplierName.isNotEmpty && clientName.isEmpty;
+    final name = isSupplier ? supplierName : clientName;
+
     final invoiceNumber = invoice['invoiceNumber']?.toString() ?? '';
     final dateStr = _formatDate(invoice['date']);
     final total = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
     final previousBalance = _num(invoice['previousBalance']);
-    final clientBalance = invoiceClientRemainingOwed(invoice);
+    final balance = isSupplier
+        ? invoiceSupplierRemainingOwed(invoice)
+        : invoiceClientRemainingOwed(invoice);
 
     final buffer = StringBuffer();
-    if (clientName.isNotEmpty) {
-      buffer.writeln(clientName);
+    if (name.isNotEmpty) {
+      buffer.writeln(name);
     }
-    buffer.writeln('عليكم فاتورة آجل رقم $invoiceNumber');
+    if (isSupplier) {
+      buffer.writeln('فاتورة مشتريات رقم $invoiceNumber');
+    } else {
+      buffer.writeln('عليكم فاتورة آجل رقم $invoiceNumber');
+    }
     buffer.writeln('التاريخ $dateStr');
     buffer.writeln('بإجمالي ${invoiceAmount(total)} ج.م');
     buffer.writeln('المدفوع ${invoiceAmount(paid)} ج.م');
     buffer.writeln('المتبقي من الفاتورة ${invoiceAmount(total - paid)} ج.م');
-    buffer.writeln('الرصيد الحالي عليكم ${invoiceAmount(clientBalance)} ج.م');
+    if (isSupplier) {
+      buffer.writeln('الرصيد الحالي للمورد ${invoiceAmount(balance)} ج.م');
+    } else {
+      buffer.writeln('الرصيد الحالي عليكم ${invoiceAmount(balance)} ج.م');
+    }
     return buffer.toString().trim();
   }
 
@@ -102,11 +116,13 @@ class WhatsappInvoiceShareService {
     required Map<String, dynamic> invoice,
     VoidCallback? onShareSuccess,
   }) async {
+    final supplierName = invoice['supplierName']?.toString().trim() ?? '';
     final clientName = invoice['clientName']?.toString().trim() ?? '';
-    if (clientName.isEmpty) {
+    final name = supplierName.isNotEmpty && clientName.isEmpty ? supplierName : clientName;
+    if (name.isEmpty) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('اسم العميل غير متوفر في الفاتورة')),
+          const SnackBar(content: Text('الاسم غير متوفر في الفاتورة')),
         );
       }
       return;
@@ -133,7 +149,7 @@ class WhatsappInvoiceShareService {
                 ),
                 const SizedBox(height: 8),
                 Text(
-                  clientName,
+                  name,
                   textAlign: TextAlign.center,
                   style: const TextStyle(color: Colors.black54),
                 ),
@@ -184,13 +200,16 @@ class WhatsappInvoiceShareService {
     required Map<String, dynamic> invoice,
     VoidCallback? onShareSuccess,
   }) async {
+    final supplierName = invoice['supplierName']?.toString().trim() ?? '';
     final clientName = invoice['clientName']?.toString().trim() ?? '';
-    if (clientName.isEmpty) return;
+    final isSupplier = supplierName.isNotEmpty && clientName.isEmpty;
+    final name = isSupplier ? supplierName : clientName;
+    if (name.isEmpty) return;
 
-    final phone = await fetchClientPhone(clientName);
+    final phone = isSupplier ? null : await fetchClientPhone(name);
 
     final prepared =
-        await InvoicePrintService.prepareForPrint(invoice, clientId: clientName);
+        await InvoicePrintService.prepareForPrint(invoice, clientId: isSupplier ? null : name);
     final message = buildInvoiceMessage(prepared);
     final ok = await openWhatsappChat(
       phoneDigits: phone,
@@ -215,10 +234,13 @@ class WhatsappInvoiceShareService {
     required Map<String, dynamic> invoice,
     VoidCallback? onShareSuccess,
   }) async {
+    final supplierName = invoice['supplierName']?.toString().trim() ?? '';
     final clientName = invoice['clientName']?.toString().trim() ?? '';
-    if (clientName.isEmpty) return;
+    final isSupplier = supplierName.isNotEmpty && clientName.isEmpty;
+    final name = isSupplier ? supplierName : clientName;
+    if (name.isEmpty) return;
 
-    final phone = await fetchClientPhone(clientName);
+    final phone = isSupplier ? null : await fetchClientPhone(name);
 
     if (!context.mounted) return;
     BuildContext? loadingDialogContext;
@@ -251,7 +273,7 @@ class WhatsappInvoiceShareService {
     var ok = false;
     try {
       final prepared =
-          await InvoicePrintService.prepareForPrint(invoice, clientId: clientName);
+          await InvoicePrintService.prepareForPrint(invoice, clientId: isSupplier ? null : name);
       final imageFiles =
           await SalesInvoiceImageService.generatePngPages(prepared);
       final caption = buildInvoiceMessage(prepared);

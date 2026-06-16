@@ -54,11 +54,14 @@ class InvoiceReceiptCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
     final lineProducts = _products;
     final previousBalance = invoiceNum(invoice['previousBalance']);
     final totalSum = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
-    final clientBalance = invoiceClientRemainingOwed(invoice);
+    final clientBalance = isBuying
+        ? invoiceSupplierRemainingOwed(invoice)
+        : invoiceClientRemainingOwed(invoice);
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
     final qtySum = qtySumOverride ??
@@ -102,10 +105,10 @@ class InvoiceReceiptCard extends StatelessWidget {
               ),
             ),
             const SizedBox(height: 6),
-            const Center(
+            Center(
               child: Text(
-                'فاتورة مبيعات',
-                style: TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                isBuying ? 'فاتورة مشتريات' : 'فاتورة مبيعات',
+                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
             ),
             const SizedBox(height: 4),
@@ -128,7 +131,9 @@ class InvoiceReceiptCard extends StatelessWidget {
           if (showCompactHeader) ...[
             Center(
               child: Text(
-                'فاتورة مبيعات رقم ${invoice['invoiceNumber']?.toString() ?? ''}',
+                isBuying
+                    ? 'فاتورة مشتريات رقم ${invoice['invoiceNumber']?.toString() ?? ''}'
+                    : 'فاتورة مبيعات رقم ${invoice['invoiceNumber']?.toString() ?? ''}',
                 style:
                     const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
               ),
@@ -157,7 +162,9 @@ class InvoiceReceiptCard extends StatelessWidget {
             const SizedBox(height: 6),
             Center(
               child: Text(
-                'اسم العميل : ${invoice['clientName']?.toString() ?? ''}',
+                isBuying
+                    ? 'اسم المورد : ${invoice['supplierName']?.toString() ?? ''}'
+                    : 'اسم العميل : ${invoice['clientName']?.toString() ?? ''}',
                 style:
                     const TextStyle(fontSize: 13, fontWeight: FontWeight.w600),
               ),
@@ -259,8 +266,8 @@ class InvoiceReceiptCard extends StatelessWidget {
       final p = entry.value;
       final name = invoiceProductName(p);
       final qty = invoiceQty(p['amount']);
-      final price = invoiceAmount(p['selectedPrice']);
-      final total = invoiceAmount(p['total']);
+      final price = invoiceAmount(p['selectedPrice'] ?? p['cost']);
+      final total = invoiceAmount(p['total'] ?? p['totalCost']);
       final cells = [total, price, qty, name, '$index'];
       return TableRow(
         children: cells.map((val) {
@@ -361,6 +368,7 @@ class InvoiceReceiptCard extends StatelessWidget {
 
   Widget _summaryTable(
       double previousBalance, double totalSum, double paid, double balance) {
+    final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
     return Table(
       border: TableBorder.all(color: Colors.grey.shade400),
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
@@ -374,7 +382,9 @@ class InvoiceReceiptCard extends StatelessWidget {
         _summaryTableRow('المدفوع', invoiceAmount(paid)),
         _summaryTableRow('المتبقي من الفاتورة', invoiceAmount(totalSum - paid)),
         _summaryTableRow(
-            'الرصيد الحالي (عليكم)', invoiceAmount(balance), bold: true),
+            isBuying ? 'الرصيد الحالي (للمورد)' : 'الرصيد الحالي (عليكم)',
+            invoiceAmount(balance),
+            bold: true),
       ],
     );
   }

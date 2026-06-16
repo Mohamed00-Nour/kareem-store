@@ -1,4 +1,5 @@
-﻿import 'package:flutter/material.dart';
+import 'dart:io';
+import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'Data/quick_add_product_sheet.dart';
@@ -8,6 +9,9 @@ import '../Buing Invoices/BuyingInvoiceListPage.dart';
 import '../Buing Invoices/BuyingInvoiceDetailPage.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
+import '../Services/invoice_print_ui.dart';
+import '../Services/whatsapp_invoice_share_service.dart';
+import 'g_Nav.dart';
 
 void _selectAllField(TextEditingController controller) {
   final text = controller.text;
@@ -60,7 +64,7 @@ class _AddProductPageState extends State<AddProductPage> {
   Future<void> _fetchProducts() async {
     try {
       QuerySnapshot querySnapshot =
-      await FirebaseFirestore.instance.collection('products').get();
+          await FirebaseFirestore.instance.collection('products').get();
       if (!mounted) return;
       setState(() {
         _products
@@ -84,7 +88,7 @@ class _AddProductPageState extends State<AddProductPage> {
   Future<void> _fetchSuppliers() async {
     try {
       QuerySnapshot querySnapshot =
-      await FirebaseFirestore.instance.collection('suppliers').get();
+          await FirebaseFirestore.instance.collection('suppliers').get();
       if (!mounted) return;
       setState(() {
         _suppliers = querySnapshot.docs
@@ -173,11 +177,26 @@ class _AddProductPageState extends State<AddProductPage> {
       return;
     }
 
+    void logProgress(String msg) {
+      try {
+        final file = File('crash_log.txt');
+        file.writeAsStringSync('$msg\n', mode: FileMode.append);
+        print('[DEBUG_SAVE] $msg');
+      } catch (_) {}
+    }
+
+    try {
+      final file = File('crash_log.txt');
+      if (file.existsSync()) file.deleteSync();
+    } catch (_) {}
+
     setState(() => _isSaving = true);
+    logProgress('1. Save started');
 
     try {
       Supplier workingSupplier = effectiveSupplier;
       if (workingSupplier.id.isEmpty) {
+        logProgress('2. Supplier ID is empty, fetching from database');
         QuerySnapshot sq = await FirebaseFirestore.instance
             .collection('suppliers')
             .where('name', isEqualTo: workingSupplier.name)
@@ -186,14 +205,18 @@ class _AddProductPageState extends State<AddProductPage> {
         if (sq.docs.isNotEmpty) {
           workingSupplier =
               Supplier(id: sq.docs.first.id, name: workingSupplier.name);
+          logProgress('3. Found existing supplier ID: ${workingSupplier.id}');
         } else {
+          logProgress('4. Creating new supplier document');
           DocumentReference r = await FirebaseFirestore.instance
               .collection('suppliers')
               .add({'name': workingSupplier.name});
           workingSupplier = Supplier(id: r.id, name: workingSupplier.name);
+          logProgress('5. Created new supplier ID: ${workingSupplier.id}');
         }
       }
 
+      logProgress('6. Fetching buying invoice number');
       QuerySnapshot invoiceQuery = await FirebaseFirestore.instance
           .collection('buying invoices')
           .orderBy('invoiceNumber', descending: true)
@@ -202,6 +225,7 @@ class _AddProductPageState extends State<AddProductPage> {
       int newInvoiceNumber = invoiceQuery.docs.isNotEmpty
           ? invoiceQuery.docs.first['invoiceNumber'] + 1
           : 1;
+      logProgress('7. Invoice number resolved: $newInvoiceNumber');
 
       final totalBeforeDiscount = _calculateTotalSum();
       final effectiveDiscountAmt = discountIsPercent
@@ -220,6 +244,7 @@ class _AddProductPageState extends State<AddProductPage> {
         'invoiceDiscount': effectiveDiscountAmt,
         'notes': notes,
         'previousBalance': _supplierBalance,
+        'paymentMethod': balance == 0 ? 'نقد' : 'آجل',
         'products': _addedProducts
             .map((p) => {
                   'product': p['product'],
@@ -230,12 +255,17 @@ class _AddProductPageState extends State<AddProductPage> {
             .toList(),
       };
 
+      logProgress('8. Writing buying invoice to Firestore');
       DocumentReference docRef = await FirebaseFirestore.instance
           .collection('buying invoices')
           .add(invoiceData);
+      logProgress('9. Buying invoice saved with ID: ${docRef.id}');
       _lastInvoice = {...invoiceData, 'id': docRef.id};
+      logProgress('10. Updating invoice ID field self reference');
       await docRef.update({'id': docRef.id});
+      logProgress('11. Updated invoice ID field');
 
+      logProgress('12. Writing invoice to supplier subcollection');
       DocumentReference supplierDocRef = FirebaseFirestore.instance
           .collection('suppliers')
           .doc(workingSupplier.id);
@@ -243,15 +273,20 @@ class _AddProductPageState extends State<AddProductPage> {
         ...invoiceData,
         'invoiceId': docRef.id,
       });
+      logProgress('13. Invoice added to supplier subcollection');
 
+      logProgress('14. Updating supplier document name');
       await supplierDocRef.set(
         {'name': workingSupplier.name},
         SetOptions(merge: true),
       );
+      logProgress('15. Supplier document updated. Syncing supplier balance');
       await SupplierInvoiceBalanceSyncService.syncForSupplier(
         workingSupplier.id,
       );
+      logProgress('16. Supplier balance sync completed');
 
+      logProgress('17. Updating products stock quantities');
       for (var product in _addedProducts) {
         final productId = product['productId']?.toString() ?? '';
         DocumentSnapshot? productDoc;
@@ -278,8 +313,7 @@ class _AddProductPageState extends State<AddProductPage> {
           'quantity': existingQty + addedQty,
         };
         if (product['newCostPrice'] != null) {
-          updateData['costPrice'] =
-              (product['newCostPrice'] as num).toDouble();
+          updateData['costPrice'] = (product['newCostPrice'] as num).toDouble();
         }
         if (product['newSellingPrice1'] != null) {
           updateData['sellingPrice1'] =
@@ -293,14 +327,19 @@ class _AddProductPageState extends State<AddProductPage> {
           updateData['sellingPrice3'] =
               (product['newSellingPrice3'] as num).toDouble();
         }
+        logProgress('18. Updating product stock for: ${product['product']}');
         await docRef.update(updateData);
+        logProgress(
+            '19. Adding change log under product changes subcollection');
         await docRef.collection('changes').add({
           'date': product['date'],
           'amount': addedQty,
           'type': 'increase',
         });
       }
+      logProgress('20. Products loop completed');
 
+      logProgress('21. Initializing box transaction');
       DocumentReference boxDocRef =
           FirebaseFirestore.instance.collection('box').doc('mainBox');
       await FirebaseFirestore.instance.runTransaction((transaction) async {
@@ -312,14 +351,16 @@ class _AddProductPageState extends State<AddProductPage> {
         } else {
           transaction.set(boxDocRef, {'value': -effectivePaid});
         }
-        await boxDocRef.collection('changes').add({
-          'date': FieldValue.serverTimestamp(),
-          'value': effectivePaid,
-          'type': 'decrement',
-          'name': workingSupplier.name,
-          'invoiceNumber': newInvoiceNumber,
-        });
       });
+      logProgress('22. Box transaction completed. Adding box change entry');
+      await boxDocRef.collection('changes').add({
+        'date': FieldValue.serverTimestamp(),
+        'value': effectivePaid,
+        'type': 'decrement',
+        'name': workingSupplier.name,
+        'invoiceNumber': newInvoiceNumber,
+      });
+      logProgress('23. Box change entry added');
 
       if (!mounted) return;
       setState(() {
@@ -327,15 +368,178 @@ class _AddProductPageState extends State<AddProductPage> {
         _isSaving = false;
         _selectedSupplier = workingSupplier;
       });
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('تم الحفظ بنجاح')));
+      logProgress('24. State updated. Launching dialog...');
+      _showSaveSuccessDialog(_lastInvoice!);
+      logProgress('25. Dialog shown');
     } catch (e) {
+      logProgress('ERROR: Caught exception: $e');
       print(e);
       if (!mounted) return;
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error saving data: $e')));
     }
+  }
+
+  void _navigateHome() {
+    Navigator.of(context).pushAndRemoveUntil(
+      MaterialPageRoute(builder: (_) => const GNavPage()),
+      (route) => false,
+    );
+  }
+
+  void _showSaveSuccessDialog(Map<String, dynamic> invoice) {
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(14.r),
+          ),
+          title: Text(
+            'تم الحفظ بنجاح',
+            style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+          ),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                _buildInvoiceSuccessContent(invoice),
+                SizedBox(height: 16.h),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      final supplierName =
+                          invoice['supplierName']?.toString() ?? '';
+                      InvoicePrintUi.printInvoice(
+                        ctx,
+                        invoice,
+                        clientId: supplierName.isNotEmpty ? supplierName : null,
+                      );
+                    },
+                    icon: const Icon(Icons.print, color: Colors.white),
+                    label: const Text('طباعة الفاتورة'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.blue.shade700,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: 10.h),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 8.h),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      WhatsappInvoiceShareService.showShareOptions(
+                        ctx,
+                        invoice: invoice,
+                        onShareSuccess: () {
+                          if (!ctx.mounted) return;
+                          ScaffoldMessenger.of(ctx).showSnackBar(
+                            const SnackBar(
+                              content: Text('تم فتح واتساب'),
+                            ),
+                          );
+                        },
+                      );
+                    },
+                    icon: const Icon(Icons.chat, color: Colors.white),
+                    label: const Text('مشاركة في واتساب'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.green.shade700,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: 10.h),
+                    ),
+                  ),
+                ),
+                SizedBox(height: 8.h),
+                SizedBox(
+                  width: double.infinity,
+                  child: ElevatedButton.icon(
+                    onPressed: () {
+                      Navigator.of(ctx).pop();
+                      _navigateHome();
+                    },
+                    icon: const Icon(Icons.check, color: Colors.white),
+                    label: const Text('إنهاء'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade800,
+                      foregroundColor: Colors.white,
+                      padding: EdgeInsets.symmetric(vertical: 10.h),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildInvoiceSuccessContent(Map<String, dynamic> invoice) {
+    final date = invoice['date'];
+    String dateStr = '';
+    if (date is Timestamp) {
+      final d = date.toDate().toLocal();
+      dateStr = '${d.day}/${d.month}/${d.year}';
+    } else if (date is DateTime) {
+      final d = date.toLocal();
+      dateStr = '${d.day}/${d.month}/${d.year}';
+    }
+
+    Widget line(String label, String value) {
+      return Padding(
+        padding: EdgeInsets.symmetric(vertical: 4.h),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Expanded(
+              flex: 2,
+              child: Text(
+                label,
+                style: TextStyle(fontSize: 13.sp, color: Colors.black54),
+              ),
+            ),
+            Expanded(
+              flex: 3,
+              child: Text(
+                value,
+                textAlign: TextAlign.left,
+                style: TextStyle(
+                  fontSize: 14.sp,
+                  fontWeight: FontWeight.w600,
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+
+    // Determine payment type label for the display
+    String method = invoice['paymentMethod']?.toString() ?? 'نقداً';
+    if (method == 'cash') {
+      method = 'نقداً';
+    } else if (method == 'deferred') {
+      method = 'آجل';
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        line('رقم الفاتورة', '#${invoice['invoiceNumber']}'),
+        line('المورد', invoice['supplierName']?.toString() ?? ''),
+        if (dateStr.isNotEmpty) line('التاريخ', dateStr),
+        line('طريقة الدفع', method),
+      ],
+    );
   }
 
   Future<double> _fetchSupplierBalance(String supplierName) async {
@@ -469,8 +673,7 @@ class _AddProductPageState extends State<AddProductPage> {
           textDirection: TextDirection.rtl,
           child: AlertDialog(
             title: Text('تغيير اسم المنتج',
-                style:
-                    TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
+                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
             content: SizedBox(
               width: double.maxFinite,
               child: Column(
@@ -478,8 +681,7 @@ class _AddProductPageState extends State<AddProductPage> {
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
                   Text('الاسم الحالي: $oldName',
-                      style:
-                          TextStyle(fontSize: 13.sp, color: Colors.black54)),
+                      style: TextStyle(fontSize: 13.sp, color: Colors.black54)),
                   SizedBox(height: 6.h),
                   Text(
                     'يتم تغيير الاسم فقط — التكلفة والأسعار والكمية تبقى كما هي',
@@ -528,8 +730,7 @@ class _AddProductPageState extends State<AddProductPage> {
     for (var i = 0; i < _addedProducts.length; i++) {
       if (i != index && _addedProducts[i]['product'] == newName) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(
-              content: Text('هذا المنتج موجود بالفعل في الفاتورة')),
+          const SnackBar(content: Text('هذا المنتج موجود بالفعل في الفاتورة')),
         );
         return;
       }
@@ -647,8 +848,7 @@ class _AddProductPageState extends State<AddProductPage> {
         : newCost;
 
     final qtyCtrl = TextEditingController(text: qty.toStringAsFixed(1));
-    final newCostCtrl =
-        TextEditingController(text: newCost.toStringAsFixed(2));
+    final newCostCtrl = TextEditingController(text: newCost.toStringAsFixed(2));
     final sp1Ctrl = TextEditingController(text: sp1.toStringAsFixed(2));
     final sp2Ctrl = TextEditingController(text: sp2.toStringAsFixed(2));
     final sp3Ctrl = TextEditingController(text: sp3.toStringAsFixed(2));
@@ -708,9 +908,8 @@ class _AddProductPageState extends State<AddProductPage> {
                           TextField(
                             controller: qtyCtrl,
                             textAlign: TextAlign.center,
-                            keyboardType:
-                                const TextInputType.numberWithOptions(
-                                    decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             style: TextStyle(
                                 fontSize: 15.sp,
                                 fontWeight: FontWeight.bold,
@@ -722,8 +921,8 @@ class _AddProductPageState extends State<AddProductPage> {
                                   EdgeInsets.symmetric(vertical: 8.h),
                             ),
                             onTap: () => _selectAllField(qtyCtrl),
-                            onChanged: (v) => setSheet(
-                                () => qty = double.tryParse(v) ?? qty),
+                            onChanged: (v) =>
+                                setSheet(() => qty = double.tryParse(v) ?? qty),
                           ),
                           Row(
                               mainAxisAlignment: MainAxisAlignment.center,
@@ -776,9 +975,8 @@ class _AddProductPageState extends State<AddProductPage> {
                           TextField(
                             controller: newCostCtrl,
                             textAlign: TextAlign.center,
-                            keyboardType:
-                                const TextInputType.numberWithOptions(
-                                    decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             style: TextStyle(
                                 fontSize: 15.sp,
                                 fontWeight: FontWeight.bold,
@@ -846,9 +1044,8 @@ class _AddProductPageState extends State<AddProductPage> {
                           TextField(
                             controller: sp3Ctrl,
                             textAlign: TextAlign.center,
-                            keyboardType:
-                                const TextInputType.numberWithOptions(
-                                    decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             style: TextStyle(
                                 fontSize: 13.sp,
                                 fontWeight: FontWeight.bold,
@@ -875,9 +1072,8 @@ class _AddProductPageState extends State<AddProductPage> {
                           TextField(
                             controller: sp2Ctrl,
                             textAlign: TextAlign.center,
-                            keyboardType:
-                                const TextInputType.numberWithOptions(
-                                    decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             style: TextStyle(
                                 fontSize: 13.sp,
                                 fontWeight: FontWeight.bold,
@@ -904,9 +1100,8 @@ class _AddProductPageState extends State<AddProductPage> {
                           TextField(
                             controller: sp1Ctrl,
                             textAlign: TextAlign.center,
-                            keyboardType:
-                                const TextInputType.numberWithOptions(
-                                    decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             style: TextStyle(
                                 fontSize: 13.sp,
                                 fontWeight: FontWeight.bold,
@@ -963,8 +1158,7 @@ class _AddProductPageState extends State<AddProductPage> {
                             final DateTime? picked = await showDatePicker(
                               context: ctx,
                               initialDate: expiryDate ??
-                                  DateTime.now()
-                                      .add(const Duration(days: 365)),
+                                  DateTime.now().add(const Duration(days: 365)),
                               firstDate: DateTime.now(),
                               lastDate: DateTime(DateTime.now().year + 10),
                               builder: (c, child) => Theme(
@@ -1076,7 +1270,8 @@ class _AddProductPageState extends State<AddProductPage> {
                               'expiryDate': expiryDate,
                             };
                             if (editIndex != null) {
-                              final lineId = _addedProducts[editIndex]['lineId'];
+                              final lineId =
+                                  _addedProducts[editIndex]['lineId'];
                               if (lineId != null) entry['lineId'] = lineId;
                             }
                             setState(() {
@@ -1239,8 +1434,7 @@ class _AddProductPageState extends State<AddProductPage> {
                       children: [
                         Text('الخصم',
                             style: TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.bold)),
+                                fontSize: 13.sp, fontWeight: FontWeight.bold)),
                         SizedBox(width: 8.w),
                         SizedBox(
                           width: 80.w,
@@ -1446,8 +1640,8 @@ class _AddProductPageState extends State<AddProductPage> {
                                     horizontal: 12.w, vertical: 10.h),
                                 border: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(10.r),
-                                  borderSide: const BorderSide(
-                                      color: Colors.black87),
+                                  borderSide:
+                                      const BorderSide(color: Colors.black87),
                                 ),
                                 focusedBorder: OutlineInputBorder(
                                   borderRadius: BorderRadius.circular(10.r),
@@ -1561,8 +1755,7 @@ class _AddProductPageState extends State<AddProductPage> {
                           itemCount: filtered.length,
                           itemBuilder: (_, i) {
                             final s = filtered[i];
-                            final isSelected =
-                                checkoutSupplier?.name == s.name;
+                            final isSelected = checkoutSupplier?.name == s.name;
                             return InkWell(
                               onTap: () {
                                 setSheet(() => checkoutSupplier = s);
@@ -1722,7 +1915,8 @@ class _AddProductPageState extends State<AddProductPage> {
                               if (name.isEmpty) {
                                 ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                        content: Text('يرجى إدخال اسم المورد')));
+                                        content:
+                                            Text('يرجى إدخال اسم المورد')));
                                 return;
                               }
                               finalSupplier = Supplier(id: '', name: name);
@@ -1738,10 +1932,12 @@ class _AddProductPageState extends State<AddProductPage> {
                                 double.tryParse(paidCtrl.text) ?? 0.0;
                             final String savedNotes = notesCtrl.text;
                             final double savedDiscount = invoiceDiscount;
-                            final bool savedDiscountIsPercent = discountIsPercent;
+                            final bool savedDiscountIsPercent =
+                                discountIsPercent;
                             Navigator.pop(ctx);
                             setState(() => _selectedSupplier = finalSupplier);
-                            await _fetchAndSetSupplierBalance(finalSupplier!.name);
+                            await _fetchAndSetSupplierBalance(
+                                finalSupplier!.name);
                             _saveData(
                               supplier: finalSupplier,
                               paidAmount: paidAmount,
@@ -1768,7 +1964,6 @@ class _AddProductPageState extends State<AddProductPage> {
       },
     );
   }
-
 
   Widget _buildDrawer() {
     return Drawer(
@@ -1817,8 +2012,7 @@ class _AddProductPageState extends State<AddProductPage> {
                       Navigator.push(
                           context,
                           MaterialPageRoute(
-                              builder: (_) =>
-                                  const BuyingInvoiceListPage()));
+                              builder: (_) => const BuyingInvoiceListPage()));
                     }
                   },
                 ),
@@ -1856,8 +2050,7 @@ class _AddProductPageState extends State<AddProductPage> {
                             TextButton(
                                 onPressed: () => Navigator.pop(context),
                                 child: Text('حسنًا',
-                                    style: TextStyle(
-                                        color: Colors.orange))),
+                                    style: TextStyle(color: Colors.orange))),
                           ],
                         ),
                       ),
@@ -1875,421 +2068,420 @@ class _AddProductPageState extends State<AddProductPage> {
   @override
   Widget build(BuildContext context) {
     double totalSum = _calculateTotalSum();
-    double totalQty = _addedProducts.fold(
-        0.0, (s, p) => s + (p['amount'] as num).toDouble());
+    double totalQty =
+        _addedProducts.fold(0.0, (s, p) => s + (p['amount'] as num).toDouble());
 
     return DesktopBackShortcuts(
       confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
       child: WillPopScope(
-      onWillPop: () => HomePage.confirmNavigateBack(context),
-      child: Directionality(
-        textDirection: TextDirection.rtl,
-        child: Scaffold(
-          key: _scaffoldKey,
-          backgroundColor: const Color(0xffeeeced),
-          endDrawer: _buildDrawer(),
-          appBar: AppBar(
-          backgroundColor: Colors.black.withOpacity(0.7),
-          leading: AppBarNavLeading(
-            openDrawer: () => _scaffoldKey.currentState?.openEndDrawer(),
-            confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
-          ),
-          automaticallyImplyLeading: false,
-          title: Text('المشتريات',
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20.sp,
-                  fontWeight: FontWeight.bold)),
-          centerTitle: true,
-          iconTheme: const IconThemeData(color: Colors.white),
-          actions: [
-            IconButton(
-              icon: Icon(Icons.menu, color: Colors.white, size: 26.sp),
-              tooltip: 'القائمة',
-              onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
-            ),
-          ],
-        ),
-        body: Stack(
-          children: [
-            Column(
-              children: [
-                // ── Date row ──
-                Container(
-                  color: Colors.white,
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
-                  child: Row(children: [
-                    Expanded(
-                      child: GestureDetector(
-                        onTap: _pickDate,
-                        child: Container(
-                          padding: EdgeInsets.symmetric(
-                              vertical: 10.h, horizontal: 12.w),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(8.r),
-                            border: Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: Text(
-                            _dateController.text,
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 15.sp, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ),
-                    ),
-                    SizedBox(width: 12.w),
-                    Text('تاريخ الفاتورة',
-                        style: TextStyle(
-                            fontSize: 14.sp, fontWeight: FontWeight.bold)),
-                  ]),
-                ),
-
-                // ── Search row ──
-                Container(
-                  color: Colors.white,
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 8.w, vertical: 6.h),
-                  child: Row(children: [
-                    IconButton(
-                      icon: Icon(Icons.save_outlined,
-                          color: Colors.blue.shade700, size: 30.sp),
-                      onPressed: _showCheckoutSheet,
-                      tooltip: 'حفظ الفاتورة',
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.add_circle_outline,
-                          color: Colors.orange.shade800, size: 26.sp),
-                      onPressed: () => _addNewProductInline(
-                        initialName: _productController.text.trim().isEmpty
-                            ? null
-                            : _productController.text.trim(),
-                      ),
-                      tooltip: 'إضافة منتج جديد',
-                    ),
-                    Expanded(
-                      child: Container(
-                        height: 42.h,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(8.r),
-                          border: Border.all(color: Colors.red.shade200),
-                        ),
-                        child: _isFetching
-                            ? Center(
-                                child: SizedBox(
-                                    width: 20.w,
-                                    height: 20.h,
-                                    child: const CircularProgressIndicator(
-                                        strokeWidth: 2)))
-                            : Autocomplete<Product>(
-                                optionsBuilder: (TextEditingValue val) {
-                                  if (val.text.isEmpty) {
-                                    return const Iterable<Product>.empty();
-                                  }
-                                  return _products.where((p) =>
-                                      !p.retail &&
-                                      p.name
-                                          .toLowerCase()
-                                          .contains(val.text.toLowerCase()));
-                                },
-                                displayStringForOption: (p) => p.name,
-                                fieldViewBuilder: (ctx, ctrl, focus, _) {
-                                  _productController = ctrl;
-                                  return TextField(
-                                    controller: ctrl,
-                                    focusNode: focus,
-                                    textAlign: TextAlign.right,
-                                    decoration: InputDecoration(
-                                      hintText:
-                                          'ابحث عن منتج أو استخدم الكاميرا',
-                                      hintStyle: TextStyle(
-                                          fontSize: 12.sp,
-                                          color: Colors.grey),
-                                      border: InputBorder.none,
-                                      contentPadding: EdgeInsets.symmetric(
-                                          horizontal: 10.w, vertical: 11.h),
-                                    ),
-                                  );
-                                },
-                                onSelected: (Product selected) {
-                                  _productController.clear();
-                                  _showProductSheet(newProduct: selected);
-                                },
-                              ),
-                      ),
-                    ),
-                    SizedBox(width: 4.w),
-                    IconButton(
-                      icon: Icon(Icons.qr_code_scanner,
-                          color: Colors.black87, size: 26.sp),
-                      onPressed: () {},
-                    ),
-                  ]),
-                ),
-
-                // ── Supplier badge ──
-                if (_selectedSupplier != null)
-                  Container(
-                    color: Colors.white,
-                    padding: EdgeInsets.symmetric(
-                        horizontal: 12.w, vertical: 5.h),
-                    child: Row(children: [
-                      GestureDetector(
-                        onTap: () => setState(() => _selectedSupplier = null),
-                        child: Container(
-                          padding: EdgeInsets.all(4.w),
-                          decoration: BoxDecoration(
-                            color: Colors.red.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.close,
-                              color: Colors.red, size: 16.sp),
-                        ),
-                      ),
-                      SizedBox(width: 8.w),
-                      if (_supplierBalance > 0) ...[
-                        Icon(Icons.warning_amber_rounded,
-                            color: Colors.red, size: 18.sp),
-                        SizedBox(width: 4.w),
-                      ],
-                      Expanded(
-                        child: Text(_selectedSupplier!.name,
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                                fontSize: 15.sp,
-                                fontWeight: FontWeight.bold)),
-                      ),
-                      if (_supplierBalance > 0)
-                        Text(
-                          'رصيد: ${_supplierBalance.toStringAsFixed(2)}',
-                          style: TextStyle(
-                              fontSize: 11.sp, color: Colors.red.shade700),
-                        ),
-                    ]),
-                  ),
-
-                // ── Table headers ──
-                Container(
-                  color: Colors.grey.shade200,
-                  padding: EdgeInsets.symmetric(
-                      horizontal: 10.w, vertical: 7.h),
-                  child: Row(children: [
-                    SizedBox(width: 28.w),
-                    Expanded(
-                        flex: 3,
-                        child: Text('الإجمالي',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.bold))),
-                    Expanded(
-                        flex: 2,
-                        child: Text('الكمية',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.bold))),
-                    Expanded(
-                        flex: 2,
-                        child: Text('التكلفه',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.bold))),
-                    Expanded(
-                        flex: 3,
-                        child: Text('المنتج',
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                                fontSize: 12.sp,
-                                fontWeight: FontWeight.bold))),
-                  ]),
-                ),
-
-                // ── Products list ──
-                Expanded(
-                  child: _addedProducts.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.shopping_cart_outlined,
-                                  size: 60.sp,
-                                  color: Colors.grey.shade400),
-                              SizedBox(height: 8.h),
-                              Text('ابحث عن منتج وأضفه للفاتورة',
-                                  style: TextStyle(
-                                      fontSize: 14.sp,
-                                      color: Colors.grey.shade500)),
-                            ],
-                          ),
-                        )
-                      : ReorderableListView.builder(
-                          padding:
-                              EdgeInsets.only(top: 4.h, bottom: 80.h),
-                          buildDefaultDragHandles: false,
-                          itemCount: _addedProducts.length,
-                          onReorder: _reorderAddedProducts,
-                          itemBuilder: (context, index) {
-                            final p = _addedProducts[index];
-                            final amount =
-                                (p['amount'] as num).toDouble();
-                            final cost = (p['cost'] as num).toDouble();
-                            final totalCost =
-                                (p['totalCost'] as num).toDouble();
-                            return Material(
-                              key: ValueKey(p['lineId'] ?? index),
-                              color: Colors.transparent,
-                              child: GestureDetector(
-                              onTap: () =>
-                                  _showProductSheet(editIndex: index),
-                              onLongPress: () =>
-                                  _showChangeLineProductNameDialog(index),
-                              child: Container(
-                                margin: EdgeInsets.symmetric(
-                                    horizontal: 8.w, vertical: 3.h),
-                                decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius:
-                                      BorderRadius.circular(10.r),
-                                  boxShadow: [
-                                    BoxShadow(
-                                        color: Colors.black
-                                            .withOpacity(0.05),
-                                        blurRadius: 4,
-                                        offset: const Offset(0, 2))
-                                  ],
-                                ),
-                                child: Row(children: [
-                                  ReorderableDragStartListener(
-                                    index: index,
-                                    child: Container(
-                                      width: 28.w,
-                                      alignment: Alignment.center,
-                                      child: Icon(Icons.drag_handle,
-                                          color: Colors.grey.shade400,
-                                          size: 20.sp),
-                                    ),
-                                  ),
-                                  Expanded(
-                                      flex: 3,
-                                      child: Text(
-                                          totalCost.toStringAsFixed(1),
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                              fontSize: 13.sp,
-                                              fontWeight:
-                                                  FontWeight.bold))),
-                                  Expanded(
-                                      flex: 2,
-                                      child: Text(
-                                          amount.toStringAsFixed(1),
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                              fontSize: 13.sp))),
-                                  Expanded(
-                                      flex: 2,
-                                      child: Text(cost.toStringAsFixed(1),
-                                          textAlign: TextAlign.center,
-                                          style: TextStyle(
-                                              fontSize: 13.sp))),
-                                  Expanded(
-                                    flex: 3,
-                                    child: Padding(
-                                      padding: EdgeInsets.symmetric(
-                                          vertical: 12.h, horizontal: 6.w),
-                                      child: Text(p['product'],
-                                          textAlign: TextAlign.right,
-                                          style: TextStyle(
-                                              fontSize: 13.sp,
-                                              fontWeight:
-                                                  FontWeight.w600)),
-                                    ),
-                                  ),
-                                ]),
-                              ),
-                            ),
-                            );
-                          },
-                        ),
+        onWillPop: () => HomePage.confirmNavigateBack(context),
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Scaffold(
+            key: _scaffoldKey,
+            backgroundColor: const Color(0xffeeeced),
+            endDrawer: _buildDrawer(),
+            appBar: AppBar(
+              backgroundColor: Colors.black.withOpacity(0.7),
+              leading: AppBarNavLeading(
+                openDrawer: () => _scaffoldKey.currentState?.openEndDrawer(),
+                confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
+              ),
+              automaticallyImplyLeading: false,
+              title: Text('المشتريات',
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20.sp,
+                      fontWeight: FontWeight.bold)),
+              centerTitle: true,
+              iconTheme: const IconThemeData(color: Colors.white),
+              actions: [
+                IconButton(
+                  icon: Icon(Icons.menu, color: Colors.white, size: 26.sp),
+                  tooltip: 'القائمة',
+                  onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
                 ),
               ],
             ),
+            body: Stack(
+              children: [
+                Column(
+                  children: [
+                    // ── Date row ──
+                    Container(
+                      color: Colors.white,
+                      padding: EdgeInsets.symmetric(
+                          horizontal: 12.w, vertical: 10.h),
+                      child: Row(children: [
+                        Expanded(
+                          child: GestureDetector(
+                            onTap: _pickDate,
+                            child: Container(
+                              padding: EdgeInsets.symmetric(
+                                  vertical: 10.h, horizontal: 12.w),
+                              decoration: BoxDecoration(
+                                color: Colors.grey.shade100,
+                                borderRadius: BorderRadius.circular(8.r),
+                                border: Border.all(color: Colors.grey.shade300),
+                              ),
+                              child: Text(
+                                _dateController.text,
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    fontSize: 15.sp,
+                                    fontWeight: FontWeight.bold),
+                              ),
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: 12.w),
+                        Text('تاريخ الفاتورة',
+                            style: TextStyle(
+                                fontSize: 14.sp, fontWeight: FontWeight.bold)),
+                      ]),
+                    ),
 
-            // ── Bottom bar ──
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 8,
-                        offset: const Offset(0, -2))
+                    // ── Search row ──
+                    Container(
+                      color: Colors.white,
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 8.w, vertical: 6.h),
+                      child: Row(children: [
+                        IconButton(
+                          icon: Icon(Icons.save_outlined,
+                              color: Colors.blue.shade700, size: 30.sp),
+                          onPressed: _showCheckoutSheet,
+                          tooltip: 'حفظ الفاتورة',
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.add_circle_outline,
+                              color: Colors.orange.shade800, size: 26.sp),
+                          onPressed: () => _addNewProductInline(
+                            initialName: _productController.text.trim().isEmpty
+                                ? null
+                                : _productController.text.trim(),
+                          ),
+                          tooltip: 'إضافة منتج جديد',
+                        ),
+                        Expanded(
+                          child: Container(
+                            height: 42.h,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(8.r),
+                              border: Border.all(color: Colors.red.shade200),
+                            ),
+                            child: _isFetching
+                                ? Center(
+                                    child: SizedBox(
+                                        width: 20.w,
+                                        height: 20.h,
+                                        child: const CircularProgressIndicator(
+                                            strokeWidth: 2)))
+                                : Autocomplete<Product>(
+                                    optionsBuilder: (TextEditingValue val) {
+                                      if (val.text.isEmpty) {
+                                        return const Iterable<Product>.empty();
+                                      }
+                                      return _products.where((p) =>
+                                          !p.retail &&
+                                          p.name.toLowerCase().contains(
+                                              val.text.toLowerCase()));
+                                    },
+                                    displayStringForOption: (p) => p.name,
+                                    fieldViewBuilder: (ctx, ctrl, focus, _) {
+                                      _productController = ctrl;
+                                      return TextField(
+                                        controller: ctrl,
+                                        focusNode: focus,
+                                        textAlign: TextAlign.right,
+                                        decoration: InputDecoration(
+                                          hintText:
+                                              'ابحث عن منتج أو استخدم الكاميرا',
+                                          hintStyle: TextStyle(
+                                              fontSize: 12.sp,
+                                              color: Colors.grey),
+                                          border: InputBorder.none,
+                                          contentPadding: EdgeInsets.symmetric(
+                                              horizontal: 10.w, vertical: 11.h),
+                                        ),
+                                      );
+                                    },
+                                    onSelected: (Product selected) {
+                                      _productController.clear();
+                                      _showProductSheet(newProduct: selected);
+                                    },
+                                  ),
+                          ),
+                        ),
+                        SizedBox(width: 4.w),
+                        IconButton(
+                          icon: Icon(Icons.qr_code_scanner,
+                              color: Colors.black87, size: 26.sp),
+                          onPressed: () {},
+                        ),
+                      ]),
+                    ),
+
+                    // ── Supplier badge ──
+                    if (_selectedSupplier != null)
+                      Container(
+                        color: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 12.w, vertical: 5.h),
+                        child: Row(children: [
+                          GestureDetector(
+                            onTap: () =>
+                                setState(() => _selectedSupplier = null),
+                            child: Container(
+                              padding: EdgeInsets.all(4.w),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.close,
+                                  color: Colors.red, size: 16.sp),
+                            ),
+                          ),
+                          SizedBox(width: 8.w),
+                          if (_supplierBalance > 0) ...[
+                            Icon(Icons.warning_amber_rounded,
+                                color: Colors.red, size: 18.sp),
+                            SizedBox(width: 4.w),
+                          ],
+                          Expanded(
+                            child: Text(_selectedSupplier!.name,
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                    fontSize: 15.sp,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                          if (_supplierBalance > 0)
+                            Text(
+                              'رصيد: ${_supplierBalance.toStringAsFixed(2)}',
+                              style: TextStyle(
+                                  fontSize: 11.sp, color: Colors.red.shade700),
+                            ),
+                        ]),
+                      ),
+
+                    // ── Table headers ──
+                    Container(
+                      color: Colors.grey.shade200,
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 10.w, vertical: 7.h),
+                      child: Row(children: [
+                        SizedBox(width: 28.w),
+                        Expanded(
+                            flex: 3,
+                            child: Text('الإجمالي',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    fontSize: 12.sp,
+                                    fontWeight: FontWeight.bold))),
+                        Expanded(
+                            flex: 2,
+                            child: Text('الكمية',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    fontSize: 12.sp,
+                                    fontWeight: FontWeight.bold))),
+                        Expanded(
+                            flex: 2,
+                            child: Text('التكلفه',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    fontSize: 12.sp,
+                                    fontWeight: FontWeight.bold))),
+                        Expanded(
+                            flex: 3,
+                            child: Text('المنتج',
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                    fontSize: 12.sp,
+                                    fontWeight: FontWeight.bold))),
+                      ]),
+                    ),
+
+                    // ── Products list ──
+                    Expanded(
+                      child: _addedProducts.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.shopping_cart_outlined,
+                                      size: 60.sp, color: Colors.grey.shade400),
+                                  SizedBox(height: 8.h),
+                                  Text('ابحث عن منتج وأضفه للفاتورة',
+                                      style: TextStyle(
+                                          fontSize: 14.sp,
+                                          color: Colors.grey.shade500)),
+                                ],
+                              ),
+                            )
+                          : ReorderableListView.builder(
+                              padding: EdgeInsets.only(top: 4.h, bottom: 80.h),
+                              buildDefaultDragHandles: false,
+                              itemCount: _addedProducts.length,
+                              onReorder: _reorderAddedProducts,
+                              itemBuilder: (context, index) {
+                                final p = _addedProducts[index];
+                                final amount = (p['amount'] as num).toDouble();
+                                final cost = (p['cost'] as num).toDouble();
+                                final totalCost =
+                                    (p['totalCost'] as num).toDouble();
+                                return Material(
+                                  key: ValueKey(p['lineId'] ?? index),
+                                  color: Colors.transparent,
+                                  child: GestureDetector(
+                                    onTap: () =>
+                                        _showProductSheet(editIndex: index),
+                                    onLongPress: () =>
+                                        _showChangeLineProductNameDialog(index),
+                                    child: Container(
+                                      margin: EdgeInsets.symmetric(
+                                          horizontal: 8.w, vertical: 3.h),
+                                      decoration: BoxDecoration(
+                                        color: Colors.white,
+                                        borderRadius:
+                                            BorderRadius.circular(10.r),
+                                        boxShadow: [
+                                          BoxShadow(
+                                              color: Colors.black
+                                                  .withOpacity(0.05),
+                                              blurRadius: 4,
+                                              offset: const Offset(0, 2))
+                                        ],
+                                      ),
+                                      child: Row(children: [
+                                        ReorderableDragStartListener(
+                                          index: index,
+                                          child: Container(
+                                            width: 28.w,
+                                            alignment: Alignment.center,
+                                            child: Icon(Icons.drag_handle,
+                                                color: Colors.grey.shade400,
+                                                size: 20.sp),
+                                          ),
+                                        ),
+                                        Expanded(
+                                            flex: 3,
+                                            child: Text(
+                                                totalCost.toStringAsFixed(1),
+                                                textAlign: TextAlign.center,
+                                                style: TextStyle(
+                                                    fontSize: 13.sp,
+                                                    fontWeight:
+                                                        FontWeight.bold))),
+                                        Expanded(
+                                            flex: 2,
+                                            child: Text(
+                                                amount.toStringAsFixed(1),
+                                                textAlign: TextAlign.center,
+                                                style: TextStyle(
+                                                    fontSize: 13.sp))),
+                                        Expanded(
+                                            flex: 2,
+                                            child: Text(cost.toStringAsFixed(1),
+                                                textAlign: TextAlign.center,
+                                                style: TextStyle(
+                                                    fontSize: 13.sp))),
+                                        Expanded(
+                                          flex: 3,
+                                          child: Padding(
+                                            padding: EdgeInsets.symmetric(
+                                                vertical: 12.h,
+                                                horizontal: 6.w),
+                                            child: Text(p['product'],
+                                                textAlign: TextAlign.right,
+                                                style: TextStyle(
+                                                    fontSize: 13.sp,
+                                                    fontWeight:
+                                                        FontWeight.w600)),
+                                          ),
+                                        ),
+                                      ]),
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
                   ],
                 ),
-                padding: EdgeInsets.symmetric(
-                    horizontal: 12.w, vertical: 10.h),
-                child: Row(children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text('ج.م',
-                          style: TextStyle(
-                              fontSize: 11.sp, color: Colors.black54)),
-                      Text(totalQty.toStringAsFixed(1),
-                          style: TextStyle(
-                              fontSize: 16.sp,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red.shade600)),
-                    ],
+
+                // ── Bottom bar ──
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 8,
+                            offset: const Offset(0, -2))
+                      ],
+                    ),
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                    child: Row(children: [
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Text('ج.م',
+                              style: TextStyle(
+                                  fontSize: 11.sp, color: Colors.black54)),
+                          Text(totalQty.toStringAsFixed(1),
+                              style: TextStyle(
+                                  fontSize: 16.sp,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.red.shade600)),
+                        ],
+                      ),
+                      SizedBox(width: 8.w),
+                      Expanded(
+                        child: Container(
+                          alignment: Alignment.center,
+                          padding: EdgeInsets.symmetric(vertical: 12.h),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(8.r),
+                          ),
+                          child: Text(
+                            totalSum.toStringAsFixed(2),
+                            style: TextStyle(
+                                fontSize: 18.sp,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green.shade700),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: 8.w),
+                      IconButton(
+                        icon: Icon(Icons.grid_view_rounded,
+                            color: Colors.black54, size: 28.sp),
+                        onPressed: _showCheckoutSheet,
+                      ),
+                    ]),
                   ),
-                  SizedBox(width: 8.w),
-                  Expanded(
-                    child: Container(
-                      alignment: Alignment.center,
-                      padding: EdgeInsets.symmetric(vertical: 12.h),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(8.r),
-                      ),
-                      child: Text(
-                        totalSum.toStringAsFixed(2),
-                        style: TextStyle(
-                            fontSize: 18.sp,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green.shade700),
-                      ),
+                ),
+
+                if (_isSaving)
+                  Container(
+                    color: Colors.black.withOpacity(0.45),
+                    child: Center(
+                      child: CircularProgressIndicator(
+                          color: Colors.orange.withOpacity(0.9)),
                     ),
                   ),
-                  SizedBox(width: 8.w),
-                  IconButton(
-                    icon: Icon(Icons.grid_view_rounded,
-                        color: Colors.black54, size: 28.sp),
-                    onPressed: _showCheckoutSheet,
-                  ),
-                ]),
-              ),
+              ],
             ),
-
-            if (_isSaving)
-              Container(
-                color: Colors.black.withOpacity(0.45),
-                child: Center(
-                  child: CircularProgressIndicator(
-                      color: Colors.orange.withOpacity(0.9)),
-                ),
-              ),
-          ],
+          ),
         ),
-      ),
-      ),
       ),
     );
   }
@@ -2299,18 +2491,17 @@ class _BuySheetCol extends StatelessWidget {
   final String label;
   final String value;
   final Color? valueColor;
-  const _BuySheetCol({required this.label, required this.value, this.valueColor});
+  const _BuySheetCol(
+      {required this.label, required this.value, this.valueColor});
 
   @override
   Widget build(BuildContext context) {
     return Column(children: [
-      Text(label,
-          style: TextStyle(fontSize: 10.sp, color: Colors.black54)),
+      Text(label, style: TextStyle(fontSize: 10.sp, color: Colors.black54)),
       SizedBox(height: 4.h),
       Container(
         width: double.infinity,
-        padding:
-            EdgeInsets.symmetric(vertical: 10.h, horizontal: 6.w),
+        padding: EdgeInsets.symmetric(vertical: 10.h, horizontal: 6.w),
         decoration: BoxDecoration(
           border: Border.all(color: Colors.grey.shade300),
           borderRadius: BorderRadius.circular(6.r),

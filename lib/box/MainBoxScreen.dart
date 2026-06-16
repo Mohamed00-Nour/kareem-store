@@ -49,15 +49,15 @@ class _MainBoxScreenState extends State<MainBoxScreen> {
               : currentBoxValue - value;
 
           transaction.update(boxDocRef, {'value': newBoxValue});
-
-          // Add change to the subcollection
-          await boxDocRef.collection('changes').add({
-            'date': _selectedDate,
-            'value': value,
-            'type': type,
-            if (name != null) 'name': name,
-          });
         }
+      });
+
+      // Add change to the subcollection
+      await boxDocRef.collection('changes').add({
+        'date': _selectedDate,
+        'value': value,
+        'type': type,
+        if (name != null) 'name': name,
       });
 
       _fetchBoxValue();
