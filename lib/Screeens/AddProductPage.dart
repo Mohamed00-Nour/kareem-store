@@ -811,9 +811,25 @@ class _AddProductPageState extends State<AddProductPage> {
   // ─────────────────────────────────────────────
   void _showProductSheet({int? editIndex, Product? newProduct}) {
     final Product product = editIndex != null
-        ? (_products.firstWhere(
-            (p) => p.name == _addedProducts[editIndex]['product'],
-            orElse: () => newProduct!))
+        ? (() {
+            final item = _addedProducts[editIndex];
+            final itemId = item['productId']?.toString() ?? item['id']?.toString();
+            final itemName = item['product']?.toString();
+            return _products.firstWhere(
+              (p) => (itemId != null && p.id == itemId) || p.name == itemName,
+              orElse: () => Product(
+                id: itemId ?? '',
+                randomNumber: 0,
+                name: itemName ?? '',
+                sellingPrice1: invoiceNum(item['newSellingPrice1'] ?? item['sellingPrice1']),
+                sellingPrice2: invoiceNum(item['newSellingPrice2'] ?? item['sellingPrice2']),
+                sellingPrice3: invoiceNum(item['newSellingPrice3'] ?? item['sellingPrice3']),
+                costPrice: invoiceNum(item['newCostPrice'] ?? item['cost'] ?? item['costPrice']),
+                quantity: 0.0,
+                alertAmount: 0,
+              ),
+            );
+          })()
         : newProduct!;
 
     double qty = editIndex != null

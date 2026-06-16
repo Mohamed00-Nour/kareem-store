@@ -1572,9 +1572,25 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
   void _showProductSheet({int? editIndex, Product? newProduct}) {
     final Product product = editIndex != null
-        ? (_products.firstWhere(
-            (p) => p.name == _addedProducts[editIndex]['product'],
-            orElse: () => newProduct!))
+        ? (() {
+            final item = _addedProducts[editIndex];
+            final itemId = item['productId']?.toString() ?? item['id']?.toString();
+            final itemName = item['product']?.toString();
+            return _products.firstWhere(
+              (p) => (itemId != null && p.id == itemId) || p.name == itemName,
+              orElse: () => Product(
+                id: itemId ?? '',
+                randomNumber: 0,
+                name: itemName ?? '',
+                sellingPrice1: invoiceNum(item['sellingPrice1']),
+                sellingPrice2: invoiceNum(item['sellingPrice2']),
+                sellingPrice3: invoiceNum(item['sellingPrice3']),
+                costPrice: invoiceNum(item['costPrice']),
+                quantity: invoiceNum(item['quantity']),
+                alertAmount: 0,
+              ),
+            );
+          })()
         : newProduct!;
 
     var sheetProduct = product;
@@ -2162,6 +2178,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 amount, discount, discountIsPercent, priceTier);
                             final entry = <String, dynamic>{
                               'product': sheetProduct.name,
+                              'productId': sheetProduct.id,
                               'date': _selectedDate,
                               'amount': amount,
                               'costPrice': sheetProduct.costPrice,
