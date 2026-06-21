@@ -235,13 +235,13 @@ class ClientsPage extends StatelessWidget {
                     !EgyptPhoneField.isValidLocalPart(phoneCtrl.text)) {
                   ScaffoldMessenger.of(ctx).showSnackBar(
                     const SnackBar(
-                      content: Text('رقم الهاتف غير صحيح. اتركه فارغاً أو أدخل رقماً صالحاً'),
+                      content: Text(
+                          'رقم الهاتف غير صحيح. اتركه فارغاً أو أدخل رقماً صالحاً'),
                     ),
                   );
                   return;
                 }
-                final balance =
-                    double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
+                final balance = double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
                 final data = <String, dynamic>{
                   'clientName': name,
                   'balance': balance,
@@ -269,8 +269,7 @@ class ClientsPage extends StatelessWidget {
                 }
                 if (ctx.mounted) Navigator.pop(ctx);
               },
-              child: const Text('حفظ',
-                  style: TextStyle(color: Colors.white)),
+              child: const Text('حفظ', style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -290,8 +289,10 @@ class ClientsPage extends StatelessWidget {
       _MenuItem(
         label: 'الأرصدة الافتتاحيه والمبالغ النقدية للعملاء',
         customIcon: const Icon(Icons.settings, color: Colors.grey),
-        onTap: () => Navigator.push(context,
-            MaterialPageRoute(builder: (_) => const _ClientOpeningBalancesPage())),
+        onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const _ClientOpeningBalancesPage())),
       ),
       _MenuItem(
         label: 'ذمم العملاء - المبالغ المتبقية عند العملاء من الفواتير الآجل',
@@ -304,15 +305,19 @@ class ClientsPage extends StatelessWidget {
         label: 'ذمم العملاء - تقرير',
         icon: Icons.receipt_long,
         iconColor: Colors.black54,
-        onTap: () => Navigator.push(context,
-            MaterialPageRoute(builder: (_) => const _ClientRemainingReportPage())),
+        onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const _ClientRemainingReportPage())),
       ),
       _MenuItem(
         label: 'العملاء المتبقي لهم أرصدة - تقرير',
         icon: Icons.receipt_long,
         iconColor: Colors.black54,
-        onTap: () => Navigator.push(context,
-            MaterialPageRoute(builder: (_) => const _ClientBalanceReportPage())),
+        onTap: () => Navigator.push(
+            context,
+            MaterialPageRoute(
+                builder: (_) => const _ClientBalanceReportPage())),
       ),
       _MenuItem(
         label: 'فحص ارصدة العملاء',
@@ -357,8 +362,8 @@ class ClientsPage extends StatelessWidget {
               onTap: item.onTap,
               child: Container(
                 color: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 22),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
@@ -548,18 +553,15 @@ class _ClientOpeningBalancesPageState
               ),
               const Divider(),
               ListTile(
-                leading:
-                    const Icon(Icons.picture_as_pdf, color: Colors.blue),
-                title: const Text(
-                    'تقرير الأرصدة الافتتاحية والمبالغ النقدية'),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.blue),
+                title: const Text('تقرير الأرصدة الافتتاحية والمبالغ النقدية'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _generatePdf();
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.picture_as_pdf, color: Colors.red),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
                 title: const Text('تقرير سند الصرف'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -567,8 +569,7 @@ class _ClientOpeningBalancesPageState
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.picture_as_pdf, color: Colors.green),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.green),
                 title: const Text('تقرير سند القبض'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -576,8 +577,7 @@ class _ClientOpeningBalancesPageState
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.picture_as_pdf, color: Colors.orange),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.orange),
                 title: const Text('عملاء عليهم أموال'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -585,8 +585,7 @@ class _ClientOpeningBalancesPageState
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.picture_as_pdf, color: Colors.teal),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.teal),
                 title: const Text('عملاء لهم أموال'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -600,8 +599,7 @@ class _ClientOpeningBalancesPageState
     );
   }
 
-  Future<void> _generateVoucherPdf(
-      String direction, String reportTitle) async {
+  Future<void> _generateVoucherPdf(String direction, String reportTitle) async {
     final voucherCtrl = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -641,11 +639,9 @@ class _ClientOpeningBalancesPageState
 
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
@@ -663,8 +659,7 @@ class _ClientOpeningBalancesPageState
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-                content:
-                    Text('لم يتم العثور على سند برقم $voucherNumber')),
+                content: Text('لم يتم العثور على سند برقم $voucherNumber')),
           );
         }
         return;
@@ -694,21 +689,21 @@ class _ClientOpeningBalancesPageState
           pw.TableRow(
             children: [
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(english, style: s()),
               ),
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(value,
                     textDirection: pw.TextDirection.rtl,
                     textAlign: pw.TextAlign.center,
                     style: s(bold: true)),
               ),
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(arabic,
                     textDirection: pw.TextDirection.rtl,
                     textAlign: pw.TextAlign.right,
@@ -764,8 +759,7 @@ class _ClientOpeningBalancesPageState
                   children: [
                     row3('رقم السند', 'No.', vNum),
                     row3('التاريخ', 'Date', voucherDate),
-                    row3('تم تسليم السيد/الساده', 'Pay To Mr/Mrs',
-                        clientName),
+                    row3('تم تسليم السيد/الساده', 'Pay To Mr/Mrs', clientName),
                     row3('مبلغ وقدره', 'Amount',
                         'فقط ${amount.toStringAsFixed(2)} ج.م لا غير'),
                     row3('وذلك مقابل', 'For', description),
@@ -863,20 +857,16 @@ class _ClientOpeningBalancesPageState
     assert(!(onlyWithBalanceOwed && onlyWithBalanceCredit));
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
       final dateStr = DateFormat('dd/MM/yyyy').format(now);
       final timeStr = DateFormat('hh:mm:ss a').format(now);
 
-      final snap = await FirebaseFirestore.instance
-          .collection('clients')
-          .get();
+      final snap = await FirebaseFirestore.instance.collection('clients').get();
 
       final reportTitle = onlyWithBalanceOwed
           ? 'عملاء عليهم أموال'
@@ -902,8 +892,7 @@ class _ClientOpeningBalancesPageState
         }
       }
 
-      rows.sort((a, b) =>
-          (a['name'] as String).compareTo(b['name'] as String));
+      rows.sort((a, b) => (a['name'] as String).compareTo(b['name'] as String));
 
       if (rows.isEmpty) {
         if (mounted) {
@@ -918,8 +907,7 @@ class _ClientOpeningBalancesPageState
       final amountHeader =
           onlyWithBalanceOwed ? 'عليه' : (onlyWithBalanceCredit ? 'له' : '');
       final grandFiltered = filteredReport
-          ? rows.fold<double>(
-              0.0, (s, r) => s + (r['amount'] as double))
+          ? rows.fold<double>(0.0, (s, r) => s + (r['amount'] as double))
           : 0.0;
       final grandLahu = filteredReport
           ? 0.0
@@ -939,25 +927,21 @@ class _ClientOpeningBalancesPageState
           );
 
       pw.Widget headerCell(String text) => pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
             child: pw.Text(text,
                 textDirection: pw.TextDirection.rtl,
                 textAlign: pw.TextAlign.center,
                 style: cell(bold: true, fontSize: 9)),
           );
 
-      pw.Widget dataCell(String text,
-              {bool red = false, bool bold = false}) =>
+      pw.Widget dataCell(String text, {bool red = false, bool bold = false}) =>
           pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
             child: pw.Text(text,
                 textDirection: pw.TextDirection.rtl,
                 textAlign: pw.TextAlign.center,
                 style: cell(
-                    bold: bold,
-                    color: red ? PdfColors.red : PdfColors.black)),
+                    bold: bold, color: red ? PdfColors.red : PdfColors.black)),
           );
 
       final pdf = pw.Document();
@@ -974,10 +958,8 @@ class _ClientOpeningBalancesPageState
                     pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
-                        pw.Text('Date: $dateStr',
-                            style: cell(fontSize: 9)),
-                        pw.Text('Time: $timeStr',
-                            style: cell(fontSize: 9)),
+                        pw.Text('Date: $dateStr', style: cell(fontSize: 9)),
+                        pw.Text('Time: $timeStr', style: cell(fontSize: 9)),
                       ],
                     ),
                   ],
@@ -1002,8 +984,8 @@ class _ClientOpeningBalancesPageState
                     },
                     children: [
                       pw.TableRow(
-                        decoration: const pw.BoxDecoration(
-                            color: PdfColors.grey200),
+                        decoration:
+                            const pw.BoxDecoration(color: PdfColors.grey200),
                         children: [
                           headerCell('#'),
                           headerCell('اسم العميل'),
@@ -1013,24 +995,22 @@ class _ClientOpeningBalancesPageState
                       for (int i = 0; i < rows.length; i++)
                         pw.TableRow(
                           decoration: pw.BoxDecoration(
-                            color: i.isEven
-                                ? PdfColors.white
-                                : PdfColors.grey50,
+                            color:
+                                i.isEven ? PdfColors.white : PdfColors.grey50,
                           ),
                           children: [
                             dataCell('${i + 1}'),
                             dataCell(rows[i]['name'] as String),
                             dataCell(
-                              (rows[i]['amount'] as double)
-                                  .toStringAsFixed(2),
+                              (rows[i]['amount'] as double).toStringAsFixed(2),
                               bold: true,
                               red: onlyWithBalanceCredit,
                             ),
                           ],
                         ),
                       pw.TableRow(
-                        decoration: const pw.BoxDecoration(
-                            color: PdfColors.grey100),
+                        decoration:
+                            const pw.BoxDecoration(color: PdfColors.grey100),
                         children: [
                           dataCell(''),
                           dataCell('الإجمالي', bold: true, red: true),
@@ -1055,8 +1035,8 @@ class _ClientOpeningBalancesPageState
                     },
                     children: [
                       pw.TableRow(
-                        decoration: const pw.BoxDecoration(
-                            color: PdfColors.grey200),
+                        decoration:
+                            const pw.BoxDecoration(color: PdfColors.grey200),
                         children: [
                           headerCell('#'),
                           headerCell('اسم العميل'),
@@ -1067,27 +1047,24 @@ class _ClientOpeningBalancesPageState
                       for (int i = 0; i < rows.length; i++)
                         pw.TableRow(
                           decoration: pw.BoxDecoration(
-                            color: i.isEven
-                                ? PdfColors.white
-                                : PdfColors.grey50,
+                            color:
+                                i.isEven ? PdfColors.white : PdfColors.grey50,
                           ),
                           children: [
                             dataCell('${i + 1}'),
                             dataCell(rows[i]['name'] as String),
                             dataCell(
-                              (rows[i]['lahu'] as double)
-                                  .toStringAsFixed(2),
+                              (rows[i]['lahu'] as double).toStringAsFixed(2),
                               red: (rows[i]['lahu'] as double) > 0,
                             ),
                             dataCell(
-                              (rows[i]['alayhi'] as double)
-                                  .toStringAsFixed(2),
+                              (rows[i]['alayhi'] as double).toStringAsFixed(2),
                             ),
                           ],
                         ),
                       pw.TableRow(
-                        decoration: const pw.BoxDecoration(
-                            color: PdfColors.grey100),
+                        decoration:
+                            const pw.BoxDecoration(color: PdfColors.grey100),
                         children: [
                           dataCell(''),
                           dataCell('الإجمالي', bold: true, red: true),
@@ -1181,8 +1158,7 @@ class _ClientOpeningBalancesPageState
     DateTime selectedDate = DateTime.now();
     final amountCtrl = TextEditingController(text: '0');
     final descCtrl = TextEditingController();
-    final voucherCtrl =
-        TextEditingController(text: nextVoucher.toString());
+    final voucherCtrl = TextEditingController(text: nextVoucher.toString());
 
     await showDialog(
       context: context,
@@ -1218,19 +1194,16 @@ class _ClientOpeningBalancesPageState
                       const SizedBox(height: 16),
                       Container(
                         color: Colors.grey.shade100,
-                        padding:
-                            const EdgeInsets.symmetric(vertical: 8),
+                        padding: const EdgeInsets.symmetric(vertical: 8),
                         child: Row(
-                          mainAxisAlignment:
-                              MainAxisAlignment.spaceEvenly,
+                          mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                           children: [
                             Row(children: [
                               Radio<String>(
                                 value: 'عليه',
                                 groupValue: direction,
                                 activeColor: Colors.green,
-                                onChanged: (v) =>
-                                    setDlg(() => direction = v!),
+                                onChanged: (v) => setDlg(() => direction = v!),
                               ),
                               const Text('عليه',
                                   style: TextStyle(fontSize: 15)),
@@ -1240,11 +1213,9 @@ class _ClientOpeningBalancesPageState
                                 value: 'له',
                                 groupValue: direction,
                                 activeColor: Colors.green,
-                                onChanged: (v) =>
-                                    setDlg(() => direction = v!),
+                                onChanged: (v) => setDlg(() => direction = v!),
                               ),
-                              const Text('له',
-                                  style: TextStyle(fontSize: 15)),
+                              const Text('له', style: TextStyle(fontSize: 15)),
                             ]),
                           ],
                         ),
@@ -1259,19 +1230,16 @@ class _ClientOpeningBalancesPageState
                               keyboardType: TextInputType.number,
                               decoration: InputDecoration(
                                 border: OutlineInputBorder(
-                                    borderRadius:
-                                        BorderRadius.circular(8)),
-                                contentPadding:
-                                    const EdgeInsets.symmetric(
-                                        vertical: 10, horizontal: 12),
+                                    borderRadius: BorderRadius.circular(8)),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    vertical: 10, horizontal: 12),
                               ),
                             ),
                           ),
                           const SizedBox(width: 12),
                           const Text('رقم السند',
                               style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold)),
+                                  fontSize: 15, fontWeight: FontWeight.bold)),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -1300,8 +1268,7 @@ class _ClientOpeningBalancesPageState
                         },
                         child: Container(
                           decoration: BoxDecoration(
-                            border: Border.all(
-                                color: Colors.blue.shade300),
+                            border: Border.all(color: Colors.blue.shade300),
                             borderRadius: BorderRadius.circular(8),
                           ),
                           padding: const EdgeInsets.symmetric(
@@ -1313,13 +1280,11 @@ class _ClientOpeningBalancesPageState
                                     horizontal: 14, vertical: 8),
                                 decoration: BoxDecoration(
                                   color: Colors.grey.shade300,
-                                  borderRadius:
-                                      BorderRadius.circular(6),
+                                  borderRadius: BorderRadius.circular(6),
                                 ),
                                 child: Text(
                                   '${selectedDate.year}-${selectedDate.month.toString().padLeft(2, '0')}-${selectedDate.day.toString().padLeft(2, '0')}',
-                                  style:
-                                      const TextStyle(fontSize: 14),
+                                  style: const TextStyle(fontSize: 14),
                                 ),
                               ),
                               const SizedBox(width: 12),
@@ -1335,8 +1300,7 @@ class _ClientOpeningBalancesPageState
                       const SizedBox(height: 10),
                       Container(
                         decoration: BoxDecoration(
-                          border:
-                              Border.all(color: Colors.blue.shade300),
+                          border: Border.all(color: Colors.blue.shade300),
                           borderRadius: BorderRadius.circular(8),
                         ),
                         padding: const EdgeInsets.symmetric(
@@ -1345,46 +1309,39 @@ class _ClientOpeningBalancesPageState
                           alignment: WrapAlignment.spaceEvenly,
                           crossAxisAlignment: WrapCrossAlignment.center,
                           children: [
-                            Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Radio<String>(
-                                    value: 'شيك',
-                                    groupValue: paymentMethod,
-                                    activeColor: Colors.green,
-                                    onChanged: (v) => setDlg(
-                                        () => paymentMethod = v!),
-                                  ),
-                                  const Text('شيك'),
-                                ]),
-                            Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Radio<String>(
-                                    value: 'بطاقة',
-                                    groupValue: paymentMethod,
-                                    activeColor: Colors.green,
-                                    onChanged: (v) => setDlg(
-                                        () => paymentMethod = v!),
-                                  ),
-                                  const Text('بطاقة'),
-                                ]),
-                            Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Radio<String>(
-                                    value: 'نقداً',
-                                    groupValue: paymentMethod,
-                                    activeColor: Colors.green,
-                                    onChanged: (v) => setDlg(
-                                        () => paymentMethod = v!),
-                                  ),
-                                  const Text('نقداً'),
-                                ]),
+                            Row(mainAxisSize: MainAxisSize.min, children: [
+                              Radio<String>(
+                                value: 'شيك',
+                                groupValue: paymentMethod,
+                                activeColor: Colors.green,
+                                onChanged: (v) =>
+                                    setDlg(() => paymentMethod = v!),
+                              ),
+                              const Text('شيك'),
+                            ]),
+                            Row(mainAxisSize: MainAxisSize.min, children: [
+                              Radio<String>(
+                                value: 'بطاقة',
+                                groupValue: paymentMethod,
+                                activeColor: Colors.green,
+                                onChanged: (v) =>
+                                    setDlg(() => paymentMethod = v!),
+                              ),
+                              const Text('بطاقة'),
+                            ]),
+                            Row(mainAxisSize: MainAxisSize.min, children: [
+                              Radio<String>(
+                                value: 'نقداً',
+                                groupValue: paymentMethod,
+                                activeColor: Colors.green,
+                                onChanged: (v) =>
+                                    setDlg(() => paymentMethod = v!),
+                              ),
+                              const Text('نقداً'),
+                            ]),
                             const Text('طريقة الدفع',
                                 style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold)),
+                                    fontSize: 13, fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),
@@ -1406,25 +1363,21 @@ class _ClientOpeningBalancesPageState
                                 filled: true,
                                 fillColor: Colors.yellow.shade200,
                                 border: OutlineInputBorder(
-                                    borderRadius:
-                                        BorderRadius.circular(8)),
-                                contentPadding:
-                                    const EdgeInsets.symmetric(
-                                        vertical: 12, horizontal: 12),
+                                    borderRadius: BorderRadius.circular(8)),
+                                contentPadding: const EdgeInsets.symmetric(
+                                    vertical: 12, horizontal: 12),
                               ),
                             ),
                           ),
                           const SizedBox(width: 12),
                           const Text('المبلغ',
                               style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold)),
+                                  fontSize: 15, fontWeight: FontWeight.bold)),
                         ],
                       ),
                       const SizedBox(height: 20),
                       Row(
-                        mainAxisAlignment:
-                            MainAxisAlignment.spaceAround,
+                        mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
                           TextButton(
                             onPressed: () => Navigator.pop(ctx),
@@ -1435,15 +1388,12 @@ class _ClientOpeningBalancesPageState
                           TextButton(
                             onPressed: () async {
                               final amount =
-                                  double.tryParse(amountCtrl.text) ??
-                                      0.0;
+                                  double.tryParse(amountCtrl.text) ?? 0.0;
                               if (amount == 0) return;
 
-                              double delta = direction == 'عليه'
-                                  ? amount
-                                  : -amount;
-                              double newBalance =
-                                  currentBalance + delta;
+                              double delta =
+                                  direction == 'عليه' ? amount : -amount;
+                              double newBalance = currentBalance + delta;
 
                               await FirebaseFirestore.instance
                                   .collection('clients')
@@ -1463,17 +1413,14 @@ class _ClientOpeningBalancesPageState
                                 'description': descCtrl.text,
                                 'date': selectedDate,
                                 'paymentMethod': paymentMethod,
-                                'timestamp':
-                                    FieldValue.serverTimestamp(),
+                                'timestamp': FieldValue.serverTimestamp(),
                               });
 
                               if (ctx.mounted) Navigator.pop(ctx);
                               if (context.mounted) {
-                                ScaffoldMessenger.of(context)
-                                    .showSnackBar(
+                                ScaffoldMessenger.of(context).showSnackBar(
                                   const SnackBar(
-                                      content:
-                                          Text('تم إضافة المبلغ بنجاح')),
+                                      content: Text('تم إضافة المبلغ بنجاح')),
                                 );
                               }
                             },
@@ -1505,16 +1452,13 @@ class _ClientOpeningBalancesPageState
           title: const Text(
             'الأرصدة الافتتاحية والمبالغ النقدية للعملاء',
             style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 15),
+                color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
           ),
         ),
         body: Column(
           children: [
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               child: Row(
                 children: [
                   Expanded(
@@ -1522,14 +1466,12 @@ class _ClientOpeningBalancesPageState
                       style: ElevatedButton.styleFrom(
                           backgroundColor: Colors.grey.shade300,
                           foregroundColor: Colors.black),
-                      onPressed:
-                          _generating ? null : _showReportChoiceDialog,
+                      onPressed: _generating ? null : _showReportChoiceDialog,
                       child: _generating
                           ? const SizedBox(
                               width: 18,
                               height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text('تقرير'),
                     ),
                   ),
@@ -1541,8 +1483,8 @@ class _ClientOpeningBalancesPageState
                       decoration: const InputDecoration(
                         hintText: 'بحث',
                         border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                            vertical: 8, horizontal: 12),
+                        contentPadding:
+                            EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                       ),
                       onChanged: (v) => setState(() => _search = v),
                     ),
@@ -1552,26 +1494,22 @@ class _ClientOpeningBalancesPageState
             ),
             Container(
               color: Colors.grey.shade200,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: const Row(
                 children: [
                   Expanded(
                       child: Text('عليه',
                           textAlign: TextAlign.center,
-                          style:
-                              TextStyle(fontWeight: FontWeight.bold))),
+                          style: TextStyle(fontWeight: FontWeight.bold))),
                   Expanded(
                       child: Text('له',
                           textAlign: TextAlign.center,
-                          style:
-                              TextStyle(fontWeight: FontWeight.bold))),
+                          style: TextStyle(fontWeight: FontWeight.bold))),
                   Expanded(
                       flex: 2,
                       child: Text('بيانات العميل',
                           textAlign: TextAlign.right,
-                          style:
-                              TextStyle(fontWeight: FontWeight.bold))),
+                          style: TextStyle(fontWeight: FontWeight.bold))),
                 ],
               ),
             ),
@@ -1582,8 +1520,7 @@ class _ClientOpeningBalancesPageState
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) {
-                    return const Center(
-                        child: CircularProgressIndicator());
+                    return const Center(child: CircularProgressIndicator());
                   }
                   final clients = snapshot.data!.docs.where((d) {
                     if (_search.isEmpty) return true;
@@ -1595,16 +1532,12 @@ class _ClientOpeningBalancesPageState
 
                   return ListView.separated(
                     itemCount: clients.length,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 1),
+                    separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final doc = clients[index];
-                      final name =
-                          (doc['clientName'] ?? '').toString();
-                      final balance =
-                          (doc['balance'] ?? 0.0).toDouble();
-                      final lahu =
-                          balance < 0 ? balance.abs() : 0.0;
+                      final name = (doc['clientName'] ?? '').toString();
+                      final balance = (doc['balance'] ?? 0.0).toDouble();
+                      final lahu = balance < 0 ? balance.abs() : 0.0;
                       final alayhi = balance > 0 ? balance : 0.0;
 
                       return InkWell(
@@ -1618,8 +1551,8 @@ class _ClientOpeningBalancesPageState
                               Expanded(
                                 child: Container(
                                   alignment: Alignment.center,
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 6),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 6),
                                   color: Colors.grey.shade200,
                                   child: Text(
                                     alayhi.toStringAsFixed(2),
@@ -1632,8 +1565,8 @@ class _ClientOpeningBalancesPageState
                               Expanded(
                                 child: Container(
                                   alignment: Alignment.center,
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 6),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 6),
                                   color: Colors.brown.shade100,
                                   child: Text(
                                     lahu.toStringAsFixed(2),
@@ -1646,14 +1579,12 @@ class _ClientOpeningBalancesPageState
                               Expanded(
                                 flex: 2,
                                 child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.end,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
                                     Text(name,
                                         textAlign: TextAlign.right,
                                         style: const TextStyle(
-                                            fontWeight:
-                                                FontWeight.bold)),
+                                            fontWeight: FontWeight.bold)),
                                     Text(
                                       '${index + 1}',
                                       textAlign: TextAlign.right,
@@ -1716,18 +1647,15 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
               ),
               const Divider(),
               ListTile(
-                leading: const Icon(Icons.picture_as_pdf,
-                    color: Colors.orange),
-                title: const Text(
-                    'تقرير المبالغ المتبقية من الفواتير الآجل'),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.orange),
+                title: const Text('تقرير المبالغ المتبقية من الفواتير الآجل'),
                 onTap: () {
                   Navigator.pop(ctx);
                   _generatePdf(allEntries, grandTotal);
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.picture_as_pdf, color: Colors.red),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
                 title: const Text('تقرير سند الصرف'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -1735,8 +1663,7 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                 },
               ),
               ListTile(
-                leading: const Icon(Icons.picture_as_pdf,
-                    color: Colors.green),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.green),
                 title: const Text('تقرير سند القبض'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -1750,8 +1677,7 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
     );
   }
 
-  Future<void> _generateVoucherPdf(
-      String direction, String reportTitle) async {
+  Future<void> _generateVoucherPdf(String direction, String reportTitle) async {
     final voucherCtrl = TextEditingController();
     final confirmed = await showDialog<bool>(
       context: context,
@@ -1791,11 +1717,9 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
 
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
@@ -1813,8 +1737,7 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-                content:
-                    Text('لم يتم العثور على سند برقم $voucherNumber')),
+                content: Text('لم يتم العثور على سند برقم $voucherNumber')),
           );
         }
         return;
@@ -1844,21 +1767,21 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
           pw.TableRow(
             children: [
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(english, style: s()),
               ),
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(value,
                     textDirection: pw.TextDirection.rtl,
                     textAlign: pw.TextAlign.center,
                     style: s(bold: true)),
               ),
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(arabic,
                     textDirection: pw.TextDirection.rtl,
                     textAlign: pw.TextAlign.right,
@@ -1912,8 +1835,7 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                   children: [
                     row3('رقم السند', 'No.', vNum),
                     row3('التاريخ', 'Date', voucherDate),
-                    row3('تم تسليم السيد/الساده', 'Pay To Mr/Mrs',
-                        clientName),
+                    row3('تم تسليم السيد/الساده', 'Pay To Mr/Mrs', clientName),
                     row3('مبلغ وقدره', 'Amount',
                         'فقط ${amount.toStringAsFixed(2)} ج.م لا غير'),
                     row3('وذلك مقابل', 'For', description),
@@ -2008,11 +1930,9 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
       List<MapEntry<String, double>> entries, double grandTotal) async {
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
@@ -2030,25 +1950,21 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
           );
 
       pw.Widget headerCell(String text) => pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
             child: pw.Text(text,
                 textDirection: pw.TextDirection.rtl,
                 textAlign: pw.TextAlign.center,
                 style: cell(bold: true, fontSize: 9)),
           );
 
-      pw.Widget dataCell(String text,
-              {bool red = false, bool bold = false}) =>
+      pw.Widget dataCell(String text, {bool red = false, bool bold = false}) =>
           pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
             child: pw.Text(text,
                 textDirection: pw.TextDirection.rtl,
                 textAlign: pw.TextAlign.center,
                 style: cell(
-                    bold: bold,
-                    color: red ? PdfColors.red : PdfColors.black)),
+                    bold: bold, color: red ? PdfColors.red : PdfColors.black)),
           );
 
       final pdf = pw.Document();
@@ -2066,10 +1982,8 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                     pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
-                        pw.Text('Date: $dateStr',
-                            style: cell(fontSize: 9)),
-                        pw.Text('Time: $timeStr',
-                            style: cell(fontSize: 9)),
+                        pw.Text('Date: $dateStr', style: cell(fontSize: 9)),
+                        pw.Text('Time: $timeStr', style: cell(fontSize: 9)),
                       ],
                     ),
                   ],
@@ -2084,8 +1998,8 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                 ),
                 pw.SizedBox(height: 12),
                 pw.Table(
-                  border: pw.TableBorder.all(
-                      color: PdfColors.grey400, width: 0.5),
+                  border:
+                      pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                   columnWidths: {
                     0: const pw.FlexColumnWidth(1),
                     1: const pw.FlexColumnWidth(3),
@@ -2093,8 +2007,8 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                   },
                   children: [
                     pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey200),
+                      decoration:
+                          const pw.BoxDecoration(color: PdfColors.grey200),
                       children: [
                         headerCell('#'),
                         headerCell('اسم العميل'),
@@ -2104,9 +2018,7 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                     for (int i = 0; i < entries.length; i++)
                       pw.TableRow(
                         decoration: pw.BoxDecoration(
-                          color: i.isEven
-                              ? PdfColors.white
-                              : PdfColors.grey50,
+                          color: i.isEven ? PdfColors.white : PdfColors.grey50,
                         ),
                         children: [
                           dataCell('${i + 1}'),
@@ -2116,8 +2028,8 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                         ],
                       ),
                     pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey100),
+                      decoration:
+                          const pw.BoxDecoration(color: PdfColors.grey100),
                       children: [
                         dataCell(''),
                         dataCell('الإجمالي', bold: true, red: true),
@@ -2144,10 +2056,8 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
           builder: (ctx) => Directionality(
             textDirection: ui.TextDirection.rtl,
             child: AlertDialog(
-              title: const Text(
-                  'تقرير المبالغ المتبقية من الفواتير الآجل'),
-              content:
-                  const Text('تم إنشاء التقرير. ماذا تريد أن تفعل؟'),
+              title: const Text('تقرير المبالغ المتبقية من الفواتير الآجل'),
+              content: const Text('تم إنشاء التقرير. ماذا تريد أن تفعل؟'),
               actions: [
                 TextButton.icon(
                   icon: const Icon(Icons.share),
@@ -2196,8 +2106,7 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
           iconTheme: const IconThemeData(color: Colors.white),
           title: const Text(
             'ذمم العملاء - الفواتير الآجل',
-            style: TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
@@ -2211,8 +2120,7 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
             }
             final docs = snapshot.data!.docs;
             if (docs.isEmpty) {
-              return const Center(
-                  child: Text('لا توجد ذمم متبقية للعملاء'));
+              return const Center(child: Text('لا توجد ذمم متبقية للعملاء'));
             }
 
             final allEntries = docs
@@ -2224,23 +2132,21 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
             final double grandTotal =
                 allEntries.fold(0.0, (s, e) => s + e.value);
             final clientIds = {
-              for (final d in docs)
-                (d['clientName'] ?? '').toString(): d.id
+              for (final d in docs) (d['clientName'] ?? '').toString(): d.id
             };
 
             final filtered = _search.isEmpty
                 ? allEntries
                 : allEntries
-                    .where((e) => e.key
-                        .toLowerCase()
-                        .contains(_search.toLowerCase()))
+                    .where((e) =>
+                        e.key.toLowerCase().contains(_search.toLowerCase()))
                     .toList();
 
             return Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   child: Row(
                     children: [
                       Expanded(
@@ -2256,10 +2162,9 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                               ? const SizedBox(
                                   width: 16,
                                   height: 16,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2))
-                              : const Icon(Icons.picture_as_pdf,
-                                  size: 18),
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
+                              : const Icon(Icons.picture_as_pdf, size: 18),
                           label: const Text('تقرير'),
                         ),
                       ),
@@ -2275,8 +2180,7 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                             contentPadding: EdgeInsets.symmetric(
                                 vertical: 8, horizontal: 12),
                           ),
-                          onChanged: (v) =>
-                              setState(() => _search = v),
+                          onChanged: (v) => setState(() => _search = v),
                         ),
                       ),
                     ],
@@ -2284,11 +2188,10 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                 ),
                 Container(
                   color: Colors.orange.shade100,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   child: Row(
-                    mainAxisAlignment:
-                        MainAxisAlignment.spaceBetween,
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
                       Text(grandTotal.toStringAsFixed(2),
                           style: const TextStyle(
@@ -2297,16 +2200,14 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                               color: Colors.red)),
                       const Text('الإجمالي',
                           style: TextStyle(
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16)),
+                              fontWeight: FontWeight.bold, fontSize: 16)),
                     ],
                   ),
                 ),
                 Expanded(
                   child: ListView.separated(
                     itemCount: filtered.length,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 1),
+                    separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final e = filtered[index];
                       final id = clientIds[e.key] ?? '';
@@ -2315,15 +2216,14 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                             ? Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) => ClientInvoicesPage(
-                                      clientId: id),
+                                  builder: (_) =>
+                                      ClientInvoicesPage(clientId: id),
                                 ))
                             : null,
                         title: Text(e.key,
                             textAlign: TextAlign.right,
                             style: const TextStyle(
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15)),
+                                fontWeight: FontWeight.bold, fontSize: 15)),
                         trailing: Text(
                           e.value.toStringAsFixed(2),
                           style: const TextStyle(
@@ -2363,11 +2263,9 @@ class _ClientRemainingReportPageState
   Future<void> _generatePdf(List<QueryDocumentSnapshot> clients) async {
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
@@ -2385,25 +2283,21 @@ class _ClientRemainingReportPageState
           );
 
       pw.Widget headerCell(String text) => pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
             child: pw.Text(text,
                 textDirection: pw.TextDirection.rtl,
                 textAlign: pw.TextAlign.center,
                 style: cell(bold: true, fontSize: 9)),
           );
 
-      pw.Widget dataCell(String text,
-              {bool red = false, bool bold = false}) =>
+      pw.Widget dataCell(String text, {bool red = false, bool bold = false}) =>
           pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
             child: pw.Text(text,
                 textDirection: pw.TextDirection.rtl,
                 textAlign: pw.TextAlign.center,
                 style: cell(
-                    bold: bold,
-                    color: red ? PdfColors.red : PdfColors.black)),
+                    bold: bold, color: red ? PdfColors.red : PdfColors.black)),
           );
 
       final grandTotal = clients.fold<double>(
@@ -2423,10 +2317,8 @@ class _ClientRemainingReportPageState
                     pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
-                        pw.Text('Date: $dateStr',
-                            style: cell(fontSize: 9)),
-                        pw.Text('Time: $timeStr',
-                            style: cell(fontSize: 9)),
+                        pw.Text('Date: $dateStr', style: cell(fontSize: 9)),
+                        pw.Text('Time: $timeStr', style: cell(fontSize: 9)),
                       ],
                     ),
                   ],
@@ -2441,8 +2333,8 @@ class _ClientRemainingReportPageState
                 ),
                 pw.SizedBox(height: 12),
                 pw.Table(
-                  border: pw.TableBorder.all(
-                      color: PdfColors.grey400, width: 0.5),
+                  border:
+                      pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                   columnWidths: {
                     0: const pw.FlexColumnWidth(1),
                     1: const pw.FlexColumnWidth(3),
@@ -2450,8 +2342,8 @@ class _ClientRemainingReportPageState
                   },
                   children: [
                     pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey200),
+                      decoration:
+                          const pw.BoxDecoration(color: PdfColors.grey200),
                       children: [
                         headerCell('#'),
                         headerCell('اسم العميل'),
@@ -2461,14 +2353,11 @@ class _ClientRemainingReportPageState
                     for (int i = 0; i < clients.length; i++)
                       pw.TableRow(
                         decoration: pw.BoxDecoration(
-                          color: i.isEven
-                              ? PdfColors.white
-                              : PdfColors.grey50,
+                          color: i.isEven ? PdfColors.white : PdfColors.grey50,
                         ),
                         children: [
                           dataCell('${i + 1}'),
-                          dataCell(
-                              (clients[i]['clientName'] ?? '').toString()),
+                          dataCell((clients[i]['clientName'] ?? '').toString()),
                           dataCell(
                               (clients[i]['balance'] ?? 0.0)
                                   .toDouble()
@@ -2477,8 +2366,8 @@ class _ClientRemainingReportPageState
                         ],
                       ),
                     pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey100),
+                      decoration:
+                          const pw.BoxDecoration(color: PdfColors.grey100),
                       children: [
                         dataCell(''),
                         dataCell('الإجمالي', bold: true, red: true),
@@ -2522,14 +2411,11 @@ class _ClientRemainingReportPageState
           iconTheme: const IconThemeData(color: Colors.white),
           title: const Text(
             'ذمم العملاء - تقرير',
-            style: TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('clients')
-              .snapshots(),
+          stream: FirebaseFirestore.instance.collection('clients').snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {
               return const Center(child: CircularProgressIndicator());
@@ -2537,12 +2423,11 @@ class _ClientRemainingReportPageState
             final clients = snapshot.data!.docs
                 .where((d) => (d['balance'] ?? 0.0) != 0.0)
                 .toList()
-              ..sort((a, b) => (b['balance'] as num)
-                  .compareTo(a['balance'] as num));
+              ..sort((a, b) =>
+                  (b['balance'] as num).compareTo(a['balance'] as num));
 
             if (clients.isEmpty) {
-              return const Center(
-                  child: Text('لا توجد أرصدة متبقية للعملاء'));
+              return const Center(child: Text('لا توجد أرصدة متبقية للعملاء'));
             }
 
             final grandTotal = clients.fold<double>(
@@ -2557,8 +2442,7 @@ class _ClientRemainingReportPageState
                       padding: const EdgeInsets.symmetric(
                           horizontal: 16, vertical: 10),
                       child: Row(
-                        mainAxisAlignment:
-                            MainAxisAlignment.spaceBetween,
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
                         children: [
                           Text(grandTotal.toStringAsFixed(2),
                               style: const TextStyle(
@@ -2567,8 +2451,7 @@ class _ClientRemainingReportPageState
                                   color: Colors.red)),
                           const Text('الإجمالي',
                               style: TextStyle(
-                                  fontWeight: FontWeight.bold,
-                                  fontSize: 16)),
+                                  fontWeight: FontWeight.bold, fontSize: 16)),
                         ],
                       ),
                     ),
@@ -2577,27 +2460,23 @@ class _ClientRemainingReportPageState
                         itemCount: clients.length,
                         itemBuilder: (context, index) {
                           final doc = clients[index];
-                          final balance =
-                              (doc['balance'] ?? 0.0).toDouble();
+                          final balance = (doc['balance'] ?? 0.0).toDouble();
                           return ListTile(
                             onTap: () => Navigator.push(
                               context,
                               MaterialPageRoute(
-                                builder: (_) => ClientInvoicesPage(
-                                    clientId: doc.id),
+                                builder: (_) =>
+                                    ClientInvoicesPage(clientId: doc.id),
                               ),
                             ),
-                            title: Text(
-                                (doc['clientName'] ?? '').toString(),
+                            title: Text((doc['clientName'] ?? '').toString(),
                                 textAlign: TextAlign.right,
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold)),
                             trailing: Text(
                               balance.toStringAsFixed(2),
                               style: TextStyle(
-                                color: balance > 0
-                                    ? Colors.red
-                                    : Colors.green,
+                                color: balance > 0 ? Colors.red : Colors.green,
                                 fontWeight: FontWeight.bold,
                                 fontSize: 15,
                               ),
@@ -2611,8 +2490,7 @@ class _ClientRemainingReportPageState
                 if (_generating)
                   Container(
                     color: Colors.black38,
-                    child:
-                        const Center(child: CircularProgressIndicator()),
+                    child: const Center(child: CircularProgressIndicator()),
                   ),
               ],
             );
@@ -2655,14 +2533,13 @@ class _ClientBalanceReportPage extends StatelessWidget {
           iconTheme: const IconThemeData(color: Colors.white),
           title: const Text(
             'العملاء المتبقي لهم أرصدة',
-            style: TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
           stream: FirebaseFirestore.instance
               .collection('clients')
-              .where('balance', isGreaterThan: 0)
+              .where('balance', isLessThan: 0)
               .snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {
@@ -2670,8 +2547,7 @@ class _ClientBalanceReportPage extends StatelessWidget {
             }
             final clients = snapshot.data!.docs;
             if (clients.isEmpty) {
-              return const Center(
-                  child: Text('لا يوجد عملاء لديهم أرصدة'));
+              return const Center(child: Text('لا يوجد عملاء لديهم أرصدة'));
             }
             return ListView.builder(
               itemCount: clients.length,
@@ -2682,19 +2558,16 @@ class _ClientBalanceReportPage extends StatelessWidget {
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) =>
-                          ClientInvoicesPage(clientId: doc.id),
+                      builder: (_) => ClientInvoicesPage(clientId: doc.id),
                     ),
                   ),
-                  title: Text(
-                      (doc['clientName'] ?? '').toString(),
+                  title: Text((doc['clientName'] ?? '').toString(),
                       textAlign: TextAlign.right,
-                      style: const TextStyle(
-                          fontWeight: FontWeight.bold)),
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
                   trailing: Text(
-                    balance.toStringAsFixed(2),
+                    balance.abs().toStringAsFixed(2),
                     style: const TextStyle(
-                        color: Colors.red,
+                        color: Colors.green,
                         fontWeight: FontWeight.bold,
                         fontSize: 15),
                   ),
@@ -2718,8 +2591,7 @@ class _ClientBalanceCheckPage extends StatefulWidget {
       _ClientBalanceCheckPageState();
 }
 
-class _ClientBalanceCheckPageState
-    extends State<_ClientBalanceCheckPage> {
+class _ClientBalanceCheckPageState extends State<_ClientBalanceCheckPage> {
   String _search = '';
 
   @override
@@ -2732,15 +2604,13 @@ class _ClientBalanceCheckPageState
           iconTheme: const IconThemeData(color: Colors.white),
           title: const Text(
             'فحص ارصدة العملاء',
-            style: TextStyle(
-                color: Colors.white, fontWeight: FontWeight.bold),
+            style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
         body: Column(
           children: [
             Padding(
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: TextField(
                 textAlign: TextAlign.right,
                 decoration: const InputDecoration(
@@ -2758,8 +2628,7 @@ class _ClientBalanceCheckPageState
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) {
-                    return const Center(
-                        child: CircularProgressIndicator());
+                    return const Center(child: CircularProgressIndicator());
                   }
                   final all = snapshot.data!.docs.where((d) {
                     if (_search.isEmpty) return true;
@@ -2773,21 +2642,19 @@ class _ClientBalanceCheckPageState
                     itemCount: all.length,
                     itemBuilder: (context, index) {
                       final doc = all[index];
-                      final balance =
-                          (doc['balance'] ?? 0.0).toDouble();
+                      final balance = (doc['balance'] ?? 0.0).toDouble();
                       return ListTile(
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => ClientInvoicesPage(
-                                clientId: doc.id),
+                            builder: (_) =>
+                                ClientInvoicesPage(clientId: doc.id),
                           ),
                         ),
-                        title: Text(
-                            (doc['clientName'] ?? '').toString(),
+                        title: Text((doc['clientName'] ?? '').toString(),
                             textAlign: TextAlign.right,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold)),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
                         trailing: Text(
                           balance.toStringAsFixed(2),
                           style: TextStyle(
@@ -2955,9 +2822,8 @@ class _ClientListPageState extends State<_ClientListPage> {
     String phoneLocal,
     String previousPhone,
   ) async {
-    final newDigits = phoneLocal.isEmpty
-        ? ''
-        : EgyptPhoneField.toWhatsappDigits(phoneLocal);
+    final newDigits =
+        phoneLocal.isEmpty ? '' : EgyptPhoneField.toWhatsappDigits(phoneLocal);
     final oldDigits = previousPhone.replaceAll(RegExp(r'\D'), '');
     if (newDigits == oldDigits) return;
 
@@ -3091,8 +2957,7 @@ class _ClientListPageState extends State<_ClientListPage> {
                       context,
                       MaterialPageRoute(
                         builder: (context) => DeletedClientsPage(
-                          deletedClients:
-                              _deletedClientsBox!.values.toSet(),
+                          deletedClients: _deletedClientsBox!.values.toSet(),
                           onRestoreClient: (clientId) {
                             _deletedClientsBox!.delete(clientId);
                             setState(() {});
@@ -3116,13 +2981,11 @@ class _ClientListPageState extends State<_ClientListPage> {
       body: Column(
         children: [
           Padding(
-            padding:
-                const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
+            padding: const EdgeInsets.symmetric(vertical: 5, horizontal: 10),
             child: TextField(
               decoration: InputDecoration(
                 focusedBorder: OutlineInputBorder(
-                  borderSide:
-                      BorderSide(color: Colors.black.withOpacity(0.7)),
+                  borderSide: BorderSide(color: Colors.black.withOpacity(0.7)),
                 ),
                 filled: true,
                 fillColor: Colors.grey.withOpacity(0.1),
@@ -3147,9 +3010,8 @@ class _ClientListPageState extends State<_ClientListPage> {
           ),
           Expanded(
             child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('clients')
-                  .snapshots(),
+              stream:
+                  FirebaseFirestore.instance.collection('clients').snapshots(),
               builder: (context, snapshot) {
                 if (!snapshot.hasData || _deletedClientsBox == null) {
                   return Center(
@@ -3166,12 +3028,11 @@ class _ClientListPageState extends State<_ClientListPage> {
                         final clientName =
                             client['clientName']?.toString().toLowerCase() ??
                                 '';
-                        return clientName
-                            .contains(_searchQuery.toLowerCase());
+                        return clientName.contains(_searchQuery.toLowerCase());
                       }).toList();
                 final visibleClients = filteredClients
-                    .where((client) =>
-                        !_deletedClientsBox!.containsKey(client.id))
+                    .where(
+                        (client) => !_deletedClientsBox!.containsKey(client.id))
                     .toList();
 
                 if (visibleClients.isEmpty) {
@@ -3190,10 +3051,8 @@ class _ClientListPageState extends State<_ClientListPage> {
                   itemBuilder: (context, index) {
                     final client = visibleClients[index];
                     final data = client.data() as Map<String, dynamic>;
-                    final name =
-                        data['clientName']?.toString() ?? client.id;
-                    final balance =
-                        (data['balance'] ?? 0.0).toDouble();
+                    final name = data['clientName']?.toString() ?? client.id;
+                    final balance = (data['balance'] ?? 0.0).toDouble();
                     final phone = data['phone']?.toString() ?? '';
 
                     return _PartyInfoCard(
