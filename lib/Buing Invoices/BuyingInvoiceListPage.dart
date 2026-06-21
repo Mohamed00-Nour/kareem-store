@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -20,6 +21,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
   bool _isFetching = true;
   DateTime? _selectedMonth;
   String _userRole = 'user'; // Default to user role
+  StreamSubscription<QuerySnapshot>? _invoicesSubscription;
 
   @override
   void initState() {
@@ -27,13 +29,14 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     // Initialize with current month
     _selectedMonth = DateTime.now();
     _loadUserRole();
-    _fetchInvoices();
+    _listenToInvoices();
     _searchController.addListener(_filterInvoices);
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _invoicesSubscription?.cancel();
     super.dispose();
   }
 
@@ -49,12 +52,12 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     }
   }
 
-  Future<void> _fetchInvoices() async {
-    try {
-      QuerySnapshot querySnapshot = await FirebaseFirestore.instance
-          .collection('buying invoices')
-          .orderBy('date', descending: true)
-          .get();
+  void _listenToInvoices() {
+    _invoicesSubscription = FirebaseFirestore.instance
+        .collection('buying invoices')
+        .orderBy('date', descending: true)
+        .snapshots()
+        .listen((querySnapshot) {
       if (!mounted) return;
       setState(() {
         _invoices.clear();
@@ -63,13 +66,14 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
         _filterInvoices(); // Apply filtering after fetching
         _isFetching = false;
       });
-    } catch (e) {
-      print('Error fetching invoices: $e');
-      if (!mounted) return;
-      setState(() {
-        _isFetching = false;
-      });
-    }
+    }, onError: (e) {
+      print('Error listening to invoices: $e');
+      if (mounted) {
+        setState(() {
+          _isFetching = false;
+        });
+      }
+    });
   }
 
   void _filterInvoices() {

@@ -15,9 +15,15 @@ class AppBarNavLeading extends StatelessWidget {
   });
 
   Future<void> _handleBack(BuildContext context) async {
-    final confirm = confirmBeforePop ?? () async => true;
-    if (await confirm() && context.mounted) {
-      Navigator.pop(context);
+    if (confirmBeforePop != null) {
+      final confirm = confirmBeforePop!;
+      if (await confirm() && context.mounted) {
+        Navigator.pop(context);
+      }
+    } else {
+      if (context.mounted) {
+        await Navigator.maybePop(context);
+      }
     }
   }
 
@@ -64,10 +70,15 @@ class DesktopBackShortcuts extends StatelessWidget {
           ActivateIntent: CallbackAction<ActivateIntent>(
             onInvoke: (_) {
               if (!Navigator.canPop(context)) return null;
-              final confirm = confirmBeforePop ?? () async => true;
-              confirm().then((ok) {
-                if (ok && context.mounted) Navigator.pop(context);
-              });
+              if (confirmBeforePop != null) {
+                confirmBeforePop!().then((ok) {
+                  if (ok && context.mounted) Navigator.pop(context);
+                });
+              } else {
+                if (context.mounted) {
+                  Navigator.maybePop(context);
+                }
+              }
               return null;
             },
           ),

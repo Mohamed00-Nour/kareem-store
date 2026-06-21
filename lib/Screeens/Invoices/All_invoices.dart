@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -28,6 +29,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   bool _isFetching = true;
   DateTime? _selectedMonth;
   String _userRole = 'user'; // Default to user role
+  StreamSubscription<QuerySnapshot>? _invoicesSubscription;
 
   @override
   void initState() {
@@ -35,13 +37,14 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     // Initialize with current month
     _selectedMonth = DateTime.now();
     _loadUserRole();
-    _fetchInvoices();
+    _listenToInvoices();
     _searchController.addListener(_filterInvoices);
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _invoicesSubscription?.cancel();
     super.dispose();
   }
 
@@ -57,12 +60,14 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     }
   }
 
-  Future<void> _fetchInvoices() async {
-    try {
-      QuerySnapshot querySnapshot = await FirebaseFirestore.instance
-          .collection(widget.collection)
-          .orderBy('date', descending: true)
-          .get();
+  void _listenToInvoices() {
+    // Cancel any previous subscription in case it's re-initialized
+    _invoicesSubscription?.cancel();
+    _invoicesSubscription = FirebaseFirestore.instance
+        .collection(widget.collection)
+        .orderBy('date', descending: true)
+        .snapshots()
+        .listen((querySnapshot) {
       if (!mounted) return;
       setState(() {
         _invoices.clear();
@@ -74,13 +79,14 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
         _filterInvoices(); // Apply filtering after fetching
         _isFetching = false;
       });
-    } catch (e) {
-      print('Error fetching invoices: $e');
-      if (!mounted) return;
-      setState(() {
-        _isFetching = false;
-      });
-    }
+    }, onError: (e) {
+      print('Error listening to invoices: $e');
+      if (mounted) {
+        setState(() {
+          _isFetching = false;
+        });
+      }
+    });
   }
 
   void _filterInvoices() {
@@ -186,15 +192,12 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   Future<void> _navigateToInvoiceDetail(Map<String, dynamic> invoice) async {
     final payload = Map<String, dynamic>.from(invoice);
     payload['_sourceCollection'] = widget.collection;
-    final changed = await Navigator.push<bool>(
+    await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => InvoiceDetailPage(invoice: payload),
       ),
     );
-    if (changed == true) {
-      _fetchInvoices();
-    }
   }
 
   void _handleDeleteAction(int index) {
