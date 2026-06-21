@@ -1115,14 +1115,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         await ClientInvoiceBalanceSyncService.syncForClient(effectiveClient);
       }
 
+      if (!mounted) return;
       setState(() {
         _dataModified = false;
         _isSaving = false;
       });
 
-      if (!mounted) return;
       _showSaveSuccessDialog(_lastInvoice!);
     } catch (e) {
+      if (!mounted) return;
       setState(() {
         _isSaving = false;
       });
@@ -2797,9 +2798,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                     );
                                     return;
                                   }
-                                  setSheet(() {
-                                    _isSaving = true;
-                                  });
                                   Navigator.pop(ctx);
                                   final bal = await _fetchClientBalance(
                                     checkoutClient.trim(),

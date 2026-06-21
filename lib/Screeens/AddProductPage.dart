@@ -1960,12 +1960,11 @@ class _AddProductPageState extends State<AddProductPage> {
                                   final double savedDiscount = invoiceDiscount;
                                   final bool savedDiscountIsPercent =
                                       discountIsPercent;
-                                  setSheet(() {
-                                    _isSaving = true;
-                                  });
                                   Navigator.pop(ctx);
-                                  setState(
-                                      () => _selectedSupplier = finalSupplier);
+                                  if (!mounted) return;
+                                  setState(() {
+                                    _selectedSupplier = finalSupplier;
+                                  });
                                   await _fetchAndSetSupplierBalance(
                                       finalSupplier!.name);
                                   _saveData(
@@ -2111,7 +2110,6 @@ class _AddProductPageState extends State<AddProductPage> {
         _addedProducts.fold(0.0, (s, p) => s + (p['amount'] as num).toDouble());
 
     return DesktopBackShortcuts(
-      confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
       child: WillPopScope(
         onWillPop: () => HomePage.confirmNavigateBack(context),
         child: Directionality(
@@ -2124,7 +2122,6 @@ class _AddProductPageState extends State<AddProductPage> {
               backgroundColor: Colors.black.withOpacity(0.7),
               leading: AppBarNavLeading(
                 openDrawer: () => _scaffoldKey.currentState?.openEndDrawer(),
-                confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
               ),
               automaticallyImplyLeading: false,
               title: Text('المشتريات',
