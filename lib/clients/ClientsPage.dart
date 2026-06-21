@@ -2423,14 +2423,19 @@ class _ClientRemainingReportPageState
             color: color,
           );
 
-      pw.Widget dataRow(String label, String value, {bool isRed = false, bool isBold = false}) => pw.Padding(
+      pw.Widget dataRow(String label, String value,
+              {bool isRed = false, bool isBold = false}) =>
+          pw.Padding(
             padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 8),
             child: pw.Row(
               mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
               children: [
                 pw.Text(value,
                     textDirection: pw.TextDirection.rtl,
-                    style: cell(bold: isBold, color: isRed ? PdfColors.red : PdfColors.black, fontSize: 12)),
+                    style: cell(
+                        bold: isBold,
+                        color: isRed ? PdfColors.red : PdfColors.black,
+                        fontSize: 12)),
                 pw.Text(label,
                     textDirection: pw.TextDirection.rtl,
                     style: cell(bold: true, fontSize: 12)),
@@ -2440,8 +2445,8 @@ class _ClientRemainingReportPageState
 
       final clientName = (client['clientName'] ?? '').toString();
       final balance = (client['balance'] ?? 0.0).toDouble();
-      final phone = (client.data() as Map<String, dynamic>).containsKey('phone') 
-          ? (client['phone'] ?? '').toString() 
+      final phone = (client.data() as Map<String, dynamic>).containsKey('phone')
+          ? (client['phone'] ?? '').toString()
           : '';
 
       String balanceStatus = 'خالص';
@@ -2487,18 +2492,23 @@ class _ClientRemainingReportPageState
                 pw.Container(
                   decoration: pw.BoxDecoration(
                     border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
-                    borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+                    borderRadius:
+                        const pw.BorderRadius.all(pw.Radius.circular(8)),
                   ),
                   padding: const pw.EdgeInsets.all(16),
                   child: pw.Column(
                     children: [
                       dataRow('اسم العميل:', clientName, isBold: true),
                       pw.Divider(thickness: 0.5, color: PdfColors.grey200),
-                      dataRow('رقم الهاتف (واتساب):', phone.isNotEmpty ? phone : 'غير متوفر'),
+                      dataRow('رقم الهاتف (واتساب):',
+                          phone.isNotEmpty ? phone : 'غير متوفر'),
                       pw.Divider(thickness: 0.5, color: PdfColors.grey200),
-                      dataRow('حالة الحساب:', balanceStatus, isRed: isRed, isBold: true),
+                      dataRow('حالة الحساب:', balanceStatus,
+                          isRed: isRed, isBold: true),
                       pw.Divider(thickness: 0.5, color: PdfColors.grey200),
-                      dataRow('المبلغ المتبقي:', '${displayBalance.toStringAsFixed(2)} ج.م', isRed: isRed, isBold: true),
+                      dataRow('المبلغ المتبقي:',
+                          '${displayBalance.toStringAsFixed(2)} ج.م',
+                          isRed: isRed, isBold: true),
                     ],
                   ),
                 ),
@@ -2513,7 +2523,8 @@ class _ClientRemainingReportPageState
                             textDirection: pw.TextDirection.rtl,
                             style: cell(bold: true)),
                         pw.SizedBox(height: 40),
-                        pw.Container(width: 120, height: 1, color: PdfColors.black),
+                        pw.Container(
+                            width: 120, height: 1, color: PdfColors.black),
                       ],
                     ),
                     pw.Column(
@@ -2523,7 +2534,8 @@ class _ClientRemainingReportPageState
                             textDirection: pw.TextDirection.rtl,
                             style: cell(bold: true)),
                         pw.SizedBox(height: 40),
-                        pw.Container(width: 120, height: 1, color: PdfColors.black),
+                        pw.Container(
+                            width: 120, height: 1, color: PdfColors.black),
                       ],
                     ),
                   ],
@@ -2575,9 +2587,11 @@ class _ClientRemainingReportPageState
                 title: const Text('كشف حساب لعميل محدد'),
                 onTap: () async {
                   Navigator.pop(ctx);
-                  final selectedClient = await showDialog<QueryDocumentSnapshot>(
+                  final selectedClient =
+                      await showDialog<QueryDocumentSnapshot>(
                     context: context,
-                    builder: (context) => _ClientSelectionDialog(clients: clients),
+                    builder: (context) =>
+                        _ClientSelectionDialog(clients: clients),
                   );
                   if (selectedClient != null) {
                     _generateSingleClientPdf(selectedClient);
@@ -2695,9 +2709,7 @@ class _ClientRemainingReportPageState
           },
         ),
         floatingActionButton: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('clients')
-              .snapshots(),
+          stream: FirebaseFirestore.instance.collection('clients').snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const SizedBox();
             final clients = snapshot.data!.docs
@@ -2705,7 +2717,8 @@ class _ClientRemainingReportPageState
                 .toList();
             return FloatingActionButton.extended(
               backgroundColor: Colors.black87,
-              onPressed: _generating ? null : () => _onPdfReportPressed(clients),
+              onPressed:
+                  _generating ? null : () => _onPdfReportPressed(clients),
               icon: const Icon(Icons.picture_as_pdf, color: Colors.white),
               label: const Text('تقرير PDF',
                   style: TextStyle(color: Colors.white)),
@@ -3285,7 +3298,8 @@ class _ClientListPageState extends State<_ClientListPage> {
 
 class _ClientSelectionDialog extends StatefulWidget {
   final List<QueryDocumentSnapshot> clients;
-  const _ClientSelectionDialog({Key? key, required this.clients}) : super(key: key);
+  const _ClientSelectionDialog({Key? key, required this.clients})
+      : super(key: key);
 
   @override
   State<_ClientSelectionDialog> createState() => _ClientSelectionDialogState();
@@ -3316,7 +3330,8 @@ class _ClientSelectionDialogState extends State<_ClientSelectionDialog> {
                   hintText: 'بحث عن عميل...',
                   prefixIcon: Icon(Icons.search),
                   border: OutlineInputBorder(),
-                  contentPadding: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                  contentPadding:
+                      EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                 ),
                 onChanged: (v) => setState(() => _search = v),
               ),
@@ -3335,8 +3350,11 @@ class _ClientSelectionDialogState extends State<_ClientSelectionDialog> {
                           final name = (doc['clientName'] ?? '').toString();
                           final balance = (doc['balance'] ?? 0.0).toDouble();
                           return ListTile(
-                            title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
-                            subtitle: Text('الرصيد: ${balance.toStringAsFixed(2)}'),
+                            title: Text(name,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            subtitle:
+                                Text('الرصيد: ${balance.toStringAsFixed(2)}'),
                             onTap: () => Navigator.pop(context, doc),
                           );
                         },
