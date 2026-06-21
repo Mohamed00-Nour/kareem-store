@@ -78,10 +78,12 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   TextEditingController _clientNameController = TextEditingController();
   TextEditingController _productController = TextEditingController();
   final TextEditingController _paidAmountController = TextEditingController();
-  final TextEditingController _newClientNameController = TextEditingController();
+  final TextEditingController _newClientNameController =
+      TextEditingController();
   List<String> _clients = [];
   int _defaultPriceTier = 1;
   bool _barcodeExternal = false;
+
   /// When true, search lists قطاعي (retail) products only.
   /// When false (normal), retail products are hidden from search.
   bool _retailOnlyMode = false;
@@ -191,8 +193,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                           decoration: InputDecoration(
                             hintText: 'ابحث عن عميل...',
                             hintTextDirection: TextDirection.rtl,
-                            prefixIcon: const Icon(Icons.search,
-                                color: Colors.black54),
+                            prefixIcon:
+                                const Icon(Icons.search, color: Colors.black54),
                             suffixIcon: searchQuery.isNotEmpty
                                 ? IconButton(
                                     icon: const Icon(Icons.clear,
@@ -244,9 +246,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             ),
                             child: Icon(
                               Icons.person_add_alt_1,
-                              color: showAddField
-                                  ? Colors.white
-                                  : Colors.black87,
+                              color:
+                                  showAddField ? Colors.white : Colors.black87,
                               size: 22.sp,
                             ),
                           ),
@@ -278,8 +279,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     TextField(
                       controller: newClientBalanceCtrl,
                       textDirection: TextDirection.rtl,
-                      keyboardType: const TextInputType.numberWithOptions(
-                          decimal: true),
+                      keyboardType:
+                          const TextInputType.numberWithOptions(decimal: true),
                       decoration: InputDecoration(
                         hintText: 'الرصيد الافتتاحي (اختياري)',
                         hintTextDirection: TextDirection.rtl,
@@ -378,8 +379,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       'enteredBalance': balance,
                                       'balanceBefore': 0.0,
                                       'type': 'opening',
-                                      'timestamp':
-                                          FieldValue.serverTimestamp(),
+                                      'timestamp': FieldValue.serverTimestamp(),
                                     });
                                   }
 
@@ -426,17 +426,17 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     ),
                   ],
                   // ── Duplicate warning ──
-                  if (duplicateWarning != null) ...[  
+                  if (duplicateWarning != null) ...[
                     SizedBox(height: 8.h),
                     Container(
                       width: double.infinity,
-                      padding: EdgeInsets.symmetric(
-                          horizontal: 12.w, vertical: 8.h),
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
                       decoration: BoxDecoration(
                         color: Colors.orange.shade50,
                         borderRadius: BorderRadius.circular(8.r),
-                        border: Border.all(
-                            color: Colors.orange.shade300, width: 1),
+                        border:
+                            Border.all(color: Colors.orange.shade300, width: 1),
                       ),
                       child: Row(
                         children: [
@@ -468,8 +468,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             child: Text(
                               'لا يوجد عميل بهذا الاسم',
                               style: TextStyle(
-                                  fontSize: 13.sp,
-                                  color: Colors.black54),
+                                  fontSize: 13.sp, color: Colors.black54),
                             ),
                           )
                         : ListView.builder(
@@ -486,14 +485,12 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 child: Container(
                                   padding: EdgeInsets.symmetric(
                                       horizontal: 12.w, vertical: 10.h),
-                                  margin:
-                                      EdgeInsets.symmetric(vertical: 3.h),
+                                  margin: EdgeInsets.symmetric(vertical: 3.h),
                                   decoration: BoxDecoration(
                                     color: isSelected
                                         ? Colors.black87
                                         : Colors.grey.shade100,
-                                    borderRadius:
-                                        BorderRadius.circular(10.r),
+                                    borderRadius: BorderRadius.circular(10.r),
                                   ),
                                   child: Row(
                                     children: [
@@ -520,8 +517,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       ),
                                       if (isSelected)
                                         Icon(Icons.check_circle,
-                                            size: 18.sp,
-                                            color: Colors.orange),
+                                            size: 18.sp, color: Colors.orange),
                                     ],
                                   ),
                                 ),
@@ -539,7 +535,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       decoration: BoxDecoration(
                         color: Colors.orange.withOpacity(0.12),
                         borderRadius: BorderRadius.circular(10.r),
-                        border: Border.all(color: Colors.orange.withOpacity(0.4)),
+                        border:
+                            Border.all(color: Colors.orange.withOpacity(0.4)),
                       ),
                       child: loadingClientBalance
                           ? Row(
@@ -593,8 +590,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                         const TextInputType.numberWithOptions(decimal: true),
                     decoration: InputDecoration(
                       hintText: '0.00',
-                      prefixIcon:
-                          const Icon(Icons.payments_outlined, color: Colors.black54),
+                      prefixIcon: const Icon(Icons.payments_outlined,
+                          color: Colors.black54),
                       contentPadding: EdgeInsets.symmetric(
                           horizontal: 12.w, vertical: 10.h),
                       border: OutlineInputBorder(
@@ -636,8 +633,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               if (!mounted) return;
                               setState(() {
                                 _clientNameController.text = selectedClient;
-                                _paidAmountController.text =
-                                    localPaidCtrl.text;
+                                _paidAmountController.text = localPaidCtrl.text;
                                 _clientBalance = bal;
                               });
                               Navigator.of(ctx).pop();
@@ -660,7 +656,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   void _applyInvoiceToEdit(Map<String, dynamic> inv) {
     _editingRootInvoiceId = SalesInvoiceActionsService.rootInvoiceIdFrom(inv);
     _editingClientSubDocId = inv['_clientSubDocId']?.toString();
-    _editingSourceCollection = inv['_sourceCollection']?.toString() ?? 'invoices';
+    _editingSourceCollection =
+        inv['_sourceCollection']?.toString() ?? 'invoices';
     _originalInvoice = Map<String, dynamic>.from(inv);
     _editingInvoiceNumber = inv['invoiceNumber'];
 
@@ -824,7 +821,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   Future<void> _fetchProducts() async {
     try {
       QuerySnapshot querySnapshot =
-      await FirebaseFirestore.instance.collection('products').get();
+          await FirebaseFirestore.instance.collection('products').get();
       setState(() {
         _products
           ..clear()
@@ -895,7 +892,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   Future<void> _fetchClients() async {
     try {
       QuerySnapshot querySnapshot =
-      await FirebaseFirestore.instance.collection('clients').get();
+          await FirebaseFirestore.instance.collection('clients').get();
       setState(() {
         _clients = querySnapshot.docs
             .map((doc) => doc['clientName'] as String)
@@ -920,9 +917,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             hintColor: Colors.orange.withOpacity(0.7),
             colorScheme: const ColorScheme.light(primary: Colors.orange),
             buttonTheme:
-            const ButtonThemeData(textTheme: ButtonTextTheme.primary),
+                const ButtonThemeData(textTheme: ButtonTextTheme.primary),
             textSelectionTheme:
-            const TextSelectionThemeData(cursorColor: Colors.black),
+                const TextSelectionThemeData(cursorColor: Colors.black),
           ),
           child: child!,
         );
@@ -977,7 +974,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     });
 
     try {
-      if (_isEditing && _originalInvoice != null && _editingRootInvoiceId != null) {
+      if (_isEditing &&
+          _originalInvoice != null &&
+          _editingRootInvoiceId != null) {
         final totalSumBeforeDiscount = _calculateTotalSum();
         await SalesInvoiceUpdateService.updateSalesInvoice(
           rootInvoiceId: _editingRootInvoiceId!,
@@ -1080,8 +1079,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
         _lastInvoice = Map<String, dynamic>.from(invoiceData);
 
-        final clientDocRef =
-            FirebaseFirestore.instance.collection('clients').doc(effectiveClient);
+        final clientDocRef = FirebaseFirestore.instance
+            .collection('clients')
+            .doc(effectiveClient);
         final boxDocRef =
             FirebaseFirestore.instance.collection('box').doc('mainBox');
 
@@ -1170,9 +1170,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       InvoicePrintUi.printInvoice(
                         ctx,
                         invoice,
-                        clientId: clientName.isNotEmpty
-                            ? clientName
-                            : null,
+                        clientId: clientName.isNotEmpty ? clientName : null,
                       );
                     },
                     icon: const Icon(Icons.print, color: Colors.white),
@@ -1302,20 +1300,16 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final name = clientName.trim();
     if (name.isEmpty) return false;
     if (_clientNameInList(name)) return true;
-    final clientDoc = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(name)
-        .get();
+    final clientDoc =
+        await FirebaseFirestore.instance.collection('clients').doc(name).get();
     return clientDoc.exists;
   }
 
   Future<double> _fetchClientBalance(String clientName) async {
     final name = clientName.trim();
     if (name.isEmpty) return 0.0;
-    final clientDoc = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(name)
-        .get();
+    final clientDoc =
+        await FirebaseFirestore.instance.collection('clients').doc(name).get();
     if (clientDoc.exists) {
       return invoiceNum(clientDoc.data()?['balance']);
     }
@@ -1401,8 +1395,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final discount = (entry['discount'] ?? 0.0).toDouble();
     final isPercent = entry['discountIsPercent'] == true;
     final subtotal = price * amount;
-    final result =
-        isPercent ? subtotal - (subtotal * discount / 100) : subtotal - discount;
+    final result = isPercent
+        ? subtotal - (subtotal * discount / 100)
+        : subtotal - discount;
     return result < 0 ? 0 : result;
   }
 
@@ -1576,7 +1571,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final Product product = editIndex != null
         ? (() {
             final item = _addedProducts[editIndex];
-            final itemId = item['productId']?.toString() ?? item['id']?.toString();
+            final itemId =
+                item['productId']?.toString() ?? item['id']?.toString();
             final itemName = item['product']?.toString();
             return _products.firstWhere(
               (p) => (itemId != null && p.id == itemId) || p.name == itemName,
@@ -1600,11 +1596,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     double amount = editIndex != null
         ? double.tryParse(_addedProducts[editIndex]['amount'].toString()) ?? 1.0
         : 1.0;
-    int priceTier =
-        editIndex != null ? (_addedProducts[editIndex]['priceTier'] ?? 1) : _defaultPriceTier;
-    double customPrice = editIndex != null && (_addedProducts[editIndex]['priceTier'] ?? 1) == 0
-        ? ((_addedProducts[editIndex]['selectedPrice'] ?? 0.0) as num).toDouble()
-        : 0.0;
+    int priceTier = editIndex != null
+        ? (_addedProducts[editIndex]['priceTier'] ?? 1)
+        : _defaultPriceTier;
+    double customPrice =
+        editIndex != null && (_addedProducts[editIndex]['priceTier'] ?? 1) == 0
+            ? ((_addedProducts[editIndex]['selectedPrice'] ?? 0.0) as num)
+                .toDouble()
+            : 0.0;
     double sp1 = editIndex != null
         ? invoiceNum(_addedProducts[editIndex]['sellingPrice1'])
         : product.sellingPrice1;
@@ -1623,8 +1622,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     bool discountIsPercent = editIndex != null
         ? (_addedProducts[editIndex]['discountIsPercent'] ?? true)
         : true;
-    String barcodeNote =
-        editIndex != null ? (_addedProducts[editIndex]['barcodeNote'] ?? '') : '';
+    String barcodeNote = editIndex != null
+        ? (_addedProducts[editIndex]['barcodeNote'] ?? '')
+        : '';
     String customProductName = editIndex != null
         ? (_addedProducts[editIndex]['customProductName']?.toString() ?? '')
         : '';
@@ -1633,14 +1633,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
     final TextEditingController qtyCtrl =
         TextEditingController(text: amount.toStringAsFixed(1));
-    final TextEditingController discountCtrl =
-        TextEditingController(text: discount > 0 ? discount.toStringAsFixed(1) : '');
+    final TextEditingController discountCtrl = TextEditingController(
+        text: discount > 0 ? discount.toStringAsFixed(1) : '');
     final TextEditingController barcodeCtrl =
         TextEditingController(text: barcodeNote);
     final TextEditingController customNameCtrl =
         TextEditingController(text: customProductName);
-    final TextEditingController customPriceCtrl =
-        TextEditingController(text: customPrice > 0 ? customPrice.toStringAsFixed(2) : '');
+    final TextEditingController customPriceCtrl = TextEditingController(
+        text: customPrice > 0 ? customPrice.toStringAsFixed(2) : '');
     final TextEditingController sp1Ctrl =
         TextEditingController(text: sp1 > 0 ? sp1.toStringAsFixed(2) : '');
     final TextEditingController sp2Ctrl =
@@ -1875,8 +1875,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       Expanded(
                           flex: 3,
                           child: _SheetValueBox(
-                              value: calcTotal(
-                                      amount, discount, discountIsPercent, priceTier)
+                              value: calcTotal(amount, discount,
+                                      discountIsPercent, priceTier)
                                   .toStringAsFixed(1))),
                       SizedBox(width: 8.w),
                       _CircleBtn(
@@ -1895,8 +1895,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                         child: TextField(
                           controller: qtyCtrl,
                           textAlign: TextAlign.center,
-                          keyboardType:
-                              const TextInputType.numberWithOptions(decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
                           style: TextStyle(
                               fontSize: 15.sp,
                               fontWeight: FontWeight.bold,
@@ -1910,12 +1910,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 borderRadius: BorderRadius.circular(8.r),
                                 borderSide: const BorderSide(
                                     color: Colors.orange, width: 2)),
-                            contentPadding:
-                                EdgeInsets.symmetric(vertical: 8.h),
+                            contentPadding: EdgeInsets.symmetric(vertical: 8.h),
                           ),
                           onTap: () => _selectAllField(qtyCtrl),
-                          onChanged: (v) =>
-                              setSheet(() => amount = double.tryParse(v) ?? amount),
+                          onChanged: (v) => setSheet(
+                              () => amount = double.tryParse(v) ?? amount),
                         ),
                       ),
                       SizedBox(width: 6.w),
@@ -1969,8 +1968,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                         child: TextField(
                           controller: discountCtrl,
                           textAlign: TextAlign.center,
-                          keyboardType:
-                              const TextInputType.numberWithOptions(decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
                           style: TextStyle(fontSize: 14.sp),
                           decoration: InputDecoration(
                             hintText: 'نسبه',
@@ -1982,8 +1981,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 vertical: 8.h, horizontal: 6.w),
                           ),
                           onTap: () => _selectAllField(discountCtrl),
-                          onChanged: (v) =>
-                              setSheet(() => discount = double.tryParse(v) ?? 0.0),
+                          onChanged: (v) => setSheet(
+                              () => discount = double.tryParse(v) ?? 0.0),
                         ),
                       ),
                       SizedBox(width: 6.w),
@@ -2014,8 +2013,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     Align(
                       alignment: Alignment.centerRight,
                       child: Text('ملاحظه للمنتج تظهر في الفاتورة',
-                          style:
-                              TextStyle(fontSize: 11.sp, color: Colors.black54)),
+                          style: TextStyle(
+                              fontSize: 11.sp, color: Colors.black54)),
                     ),
                     SizedBox(height: 6.h),
                     Row(children: [
@@ -2032,8 +2031,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 borderRadius: BorderRadius.circular(8.r)),
                             contentPadding: EdgeInsets.symmetric(
                                 vertical: 8.h, horizontal: 12.w),
-                            suffixIcon:
-                                Icon(Icons.edit_outlined, size: 18.sp),
+                            suffixIcon: Icon(Icons.edit_outlined, size: 18.sp),
                           ),
                           onTap: () => _selectAllField(barcodeCtrl),
                           onChanged: (v) => barcodeNote = v,
@@ -2056,8 +2054,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               padding: EdgeInsets.symmetric(
                                   horizontal: 24.w, vertical: 8.h),
                               decoration: BoxDecoration(
-                                border:
-                                    Border.all(color: Colors.grey.shade300),
+                                border: Border.all(color: Colors.grey.shade300),
                                 borderRadius: BorderRadius.circular(8.r),
                               ),
                               child: Text(
@@ -2070,14 +2067,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             ),
                             SizedBox(height: 6.h),
                             GestureDetector(
-                              onTap: () => setSheet(
-                                  () => costObscured = !costObscured),
+                              onTap: () =>
+                                  setSheet(() => costObscured = !costObscured),
                               child: Container(
                                 padding: EdgeInsets.symmetric(
                                     horizontal: 24.w, vertical: 8.h),
                                 decoration: BoxDecoration(
-                                  border: Border.all(
-                                      color: Colors.grey.shade300),
+                                  border:
+                                      Border.all(color: Colors.grey.shade300),
                                   borderRadius: BorderRadius.circular(8.r),
                                 ),
                                 child: ClipRRect(
@@ -2188,32 +2185,32 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               'sellingPrice2': sp2,
                               'sellingPrice3': sp3,
                               'quantity': sheetProduct.quantity,
-                              'selectedPrice': priceTier == 0 ? customPrice : price,
+                              'selectedPrice':
+                                  priceTier == 0 ? customPrice : price,
                               'priceTier': priceTier,
                               'total': total,
                               'discount': discount,
                               'discountIsPercent': discountIsPercent,
                               'barcodeNote': barcodeNote,
                             };
-                            final trimmedCustomName =
-                                customProductName.trim();
+                            final trimmedCustomName = customProductName.trim();
                             if (trimmedCustomName.isNotEmpty) {
                               entry['customProductName'] = trimmedCustomName;
                             }
                             if (editIndex != null) {
-                              final lineId = _addedProducts[editIndex]['lineId'];
+                              final lineId =
+                                  _addedProducts[editIndex]['lineId'];
                               if (lineId != null) entry['lineId'] = lineId;
                             }
                             setState(() {
                               if (editIndex != null) {
                                 _addedProducts[editIndex] = entry;
                               } else {
-                                int idx = _addedProducts.indexWhere(
-                                    (p) =>
-                                        p['product'] == sheetProduct.name &&
-                                        (p['customProductName']?.toString() ??
-                                                '') ==
-                                            trimmedCustomName);
+                                int idx = _addedProducts.indexWhere((p) =>
+                                    p['product'] == sheetProduct.name &&
+                                    (p['customProductName']?.toString() ??
+                                            '') ==
+                                        trimmedCustomName);
                                 if (idx != -1) {
                                   final lineId = _addedProducts[idx]['lineId'];
                                   if (lineId != null) entry['lineId'] = lineId;
@@ -2255,10 +2252,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       return;
     }
 
-    String paymentMethod =
-        _isEditing ? _editingPaymentMethod : 'نقداً';
-    double invoiceDiscount =
-        _isEditing ? _editingInvoiceDiscountAmount : 0.0;
+    String paymentMethod = _isEditing ? _editingPaymentMethod : 'نقداً';
+    double invoiceDiscount = _isEditing ? _editingInvoiceDiscountAmount : 0.0;
     bool discountIsPercent = !_isEditing;
     String checkoutClient = _clientNameController.text;
     String notes = _isEditing ? _editingNotes : '';
@@ -2279,8 +2274,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           ? _editingInvoiceDiscountAmount.toStringAsFixed(2)
           : '',
     );
-    final TextEditingController notesCtrl =
-        TextEditingController(text: notes);
+    final TextEditingController notesCtrl = TextEditingController(text: notes);
 
     showModalBottomSheet(
       context: context,
@@ -2363,8 +2357,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       children: [
                         Text('طريقة الدفع',
                             style: TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.bold)),
+                                fontSize: 13.sp, fontWeight: FontWeight.bold)),
                         const Spacer(),
                         ...['نقداً', 'آجل', 'بطاقه', 'ش'].map((m) => Row(
                               mainAxisSize: MainAxisSize.min,
@@ -2377,11 +2370,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       MaterialTapTargetSize.shrinkWrap,
                                   onChanged: (v) => setSheet(() {
                                     paymentMethod = v!;
-                                    syncPaidForPaymentMethod(forceClearDeferred: true);
+                                    syncPaidForPaymentMethod(
+                                        forceClearDeferred: true);
                                   }),
                                 ),
-                                Text(m,
-                                    style: TextStyle(fontSize: 11.sp)),
+                                Text(m, style: TextStyle(fontSize: 11.sp)),
                               ],
                             )),
                       ],
@@ -2394,16 +2387,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       children: [
                         Text('الإجمالي',
                             style: TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.bold)),
+                                fontSize: 13.sp, fontWeight: FontWeight.bold)),
                         Expanded(
                           child: Container(
                             margin: EdgeInsets.only(right: 12.w),
                             padding: EdgeInsets.symmetric(
                                 vertical: 10.h, horizontal: 12.w),
                             decoration: BoxDecoration(
-                              border:
-                                  Border.all(color: Colors.grey.shade300),
+                              border: Border.all(color: Colors.grey.shade300),
                               borderRadius: BorderRadius.circular(8.r),
                             ),
                             child: Text(
@@ -2426,8 +2417,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       children: [
                         Text('المدفوع',
                             style: TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.bold)),
+                                fontSize: 13.sp, fontWeight: FontWeight.bold)),
                         Expanded(
                           child: Row(children: [
                             SizedBox(width: 12.w),
@@ -2441,15 +2431,12 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 style: TextStyle(fontSize: 16.sp),
                                 decoration: InputDecoration(
                                   border: OutlineInputBorder(
-                                      borderRadius:
-                                          BorderRadius.circular(8.r)),
+                                      borderRadius: BorderRadius.circular(8.r)),
                                   contentPadding: EdgeInsets.symmetric(
                                       vertical: 10.h, horizontal: 8.w),
                                   suffixIcon: isCash && paid == 0
-                                      ? Icon(
-                                          Icons.warning_amber_rounded,
-                                          color: Colors.red,
-                                          size: 20.sp)
+                                      ? Icon(Icons.warning_amber_rounded,
+                                          color: Colors.red, size: 20.sp)
                                       : null,
                                 ),
                                 onTap: () => _selectAllField(paidCtrl),
@@ -2505,8 +2492,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                         ),
                       ),
                       SizedBox(width: 6.w),
-                      Text('الباقي',
-                          style: TextStyle(fontSize: 12.sp)),
+                      Text('الباقي', style: TextStyle(fontSize: 12.sp)),
                       SizedBox(width: 6.w),
                       // % toggle
                       GestureDetector(
@@ -2535,9 +2521,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                         child: TextField(
                           controller: discountCtrl,
                           textAlign: TextAlign.center,
-                          keyboardType:
-                              const TextInputType.numberWithOptions(
-                                  decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
                           decoration: InputDecoration(
                             hintText: '0',
                             border: OutlineInputBorder(
@@ -2555,8 +2540,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       SizedBox(width: 8.w),
                       Text('الخصم',
                           style: TextStyle(
-                              fontSize: 13.sp,
-                              fontWeight: FontWeight.bold)),
+                              fontSize: 13.sp, fontWeight: FontWeight.bold)),
                     ]),
                     SizedBox(height: 14.h),
 
@@ -2565,8 +2549,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       alignment: Alignment.centerRight,
                       child: Text('حفظ الفاتورة لحساب عميل',
                           style: TextStyle(
-                              fontSize: 13.sp,
-                              fontWeight: FontWeight.bold)),
+                              fontSize: 13.sp, fontWeight: FontWeight.bold)),
                     ),
                     SizedBox(height: 8.h),
                     Row(children: [
@@ -2575,8 +2558,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       SizedBox(width: 8.w),
                       Expanded(
                         child: Autocomplete<String>(
-                          initialValue: TextEditingValue(
-                              text: checkoutClient),
+                          initialValue: TextEditingValue(text: checkoutClient),
                           optionsBuilder: (val) {
                             if (val.text.isEmpty)
                               return const Iterable<String>.empty();
@@ -2584,8 +2566,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 .toLowerCase()
                                 .contains(val.text.toLowerCase()));
                           },
-                          fieldViewBuilder:
-                              (ctx2, ctrl2, focus, onSubmit) {
+                          fieldViewBuilder: (ctx2, ctrl2, focus, onSubmit) {
                             return TextField(
                               controller: ctrl2,
                               focusNode: focus,
@@ -2603,20 +2584,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 }
                               },
                               decoration: InputDecoration(
-                                hintText:
-                                    'ابحث عن عميل أو اكتب اسم',
-                                hintStyle:
-                                    TextStyle(fontSize: 12.sp),
+                                hintText: 'ابحث عن عميل أو اكتب اسم',
+                                hintStyle: TextStyle(fontSize: 12.sp),
                                 border: OutlineInputBorder(
-                                    borderRadius:
-                                        BorderRadius.circular(8.r)),
+                                    borderRadius: BorderRadius.circular(8.r)),
                                 contentPadding: EdgeInsets.symmetric(
                                     vertical: 10.h, horizontal: 12.w),
                                 suffixIcon: checkoutClient.isEmpty
-                                    ? Icon(
-                                        Icons.warning_amber_rounded,
-                                        color: Colors.red,
-                                        size: 20.sp)
+                                    ? Icon(Icons.warning_amber_rounded,
+                                        color: Colors.red, size: 20.sp)
                                     : null,
                               ),
                             );
@@ -2759,13 +2735,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       Expanded(
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Colors.orange.withOpacity(0.85),
+                            backgroundColor: Colors.orange.withOpacity(0.85),
                             shape: RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius.circular(8.r)),
-                            padding:
-                                EdgeInsets.symmetric(vertical: 12.h),
+                                borderRadius: BorderRadius.circular(8.r)),
+                            padding: EdgeInsets.symmetric(vertical: 12.h),
                           ),
                           onPressed: _isSaving
                               ? null
@@ -2777,8 +2750,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                                 Text('يجب ادخال اسم العميل')));
                                     return;
                                   }
-                                  if (!await _clientExists(checkoutClient.trim())) {
-                                    setSheet(() => checkoutClientNotFound = true);
+                                  if (!await _clientExists(
+                                      checkoutClient.trim())) {
+                                    setSheet(
+                                        () => checkoutClientNotFound = true);
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text('هذا العميل غير موجود'),
@@ -2866,7 +2841,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                 try {
                   // Simple evaluator via Dart double arithmetic
                   final result = _evalExpr(_expr);
-                  _display = result.toStringAsFixed(2)
+                  _display = result
+                      .toStringAsFixed(2)
                       .replaceAll(RegExp(r'\.?0+$'), '');
                   _expr = _display;
                 } catch (_) {
@@ -2914,8 +2890,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             child: AlertDialog(
               title: Text('الحاسبة',
                   textAlign: TextAlign.right,
-                  style: TextStyle(
-                      fontSize: 16.sp, fontWeight: FontWeight.bold)),
+                  style:
+                      TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
               contentPadding:
                   EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
               content: SizedBox(
@@ -2923,8 +2899,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                 child: Column(mainAxisSize: MainAxisSize.min, children: [
                   Container(
                     width: double.infinity,
-                    padding: EdgeInsets.symmetric(
-                        horizontal: 12.w, vertical: 16.h),
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 12.w, vertical: 16.h),
                     decoration: BoxDecoration(
                       color: Colors.grey.shade100,
                       borderRadius: BorderRadius.circular(8.r),
@@ -2941,39 +2917,33 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                     _btn('8'),
                     _btn('9'),
                     _btn('÷',
-                        bg: Colors.orange.shade100,
-                        fg: Colors.orange.shade800),
+                        bg: Colors.orange.shade100, fg: Colors.orange.shade800),
                   ]),
                   Row(children: [
                     _btn('4'),
                     _btn('5'),
                     _btn('6'),
                     _btn('×',
-                        bg: Colors.orange.shade100,
-                        fg: Colors.orange.shade800),
+                        bg: Colors.orange.shade100, fg: Colors.orange.shade800),
                   ]),
                   Row(children: [
                     _btn('1'),
                     _btn('2'),
                     _btn('3'),
                     _btn('-',
-                        bg: Colors.orange.shade100,
-                        fg: Colors.orange.shade800),
+                        bg: Colors.orange.shade100, fg: Colors.orange.shade800),
                   ]),
                   Row(children: [
                     _btn('0'),
                     _btn('.'),
                     _btn('⌫', bg: Colors.red.shade50, fg: Colors.red),
                     _btn('+',
-                        bg: Colors.orange.shade100,
-                        fg: Colors.orange.shade800),
+                        bg: Colors.orange.shade100, fg: Colors.orange.shade800),
                   ]),
                   Row(children: [
-                    _btn('C',
-                        bg: Colors.grey.shade300, fg: Colors.black87),
+                    _btn('C', bg: Colors.grey.shade300, fg: Colors.black87),
                     _btn('=',
-                        bg: Colors.orange.withOpacity(0.85),
-                        fg: Colors.white),
+                        bg: Colors.orange.withOpacity(0.85), fg: Colors.white),
                   ]),
                 ]),
               ),
@@ -3038,15 +3008,13 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             textDirection: TextDirection.rtl,
             child: AlertDialog(
               title: Text('الاستعلام عن رصيد العميل',
-                  style: TextStyle(
-                      fontSize: 16.sp, fontWeight: FontWeight.bold)),
+                  style:
+                      TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
               content: Column(mainAxisSize: MainAxisSize.min, children: [
                 DropdownButtonFormField<String>(
-                  decoration:
-                      InputDecoration(hintText: 'اختر اسم العميل'),
+                  decoration: InputDecoration(hintText: 'اختر اسم العميل'),
                   items: _clients
-                      .map((c) =>
-                          DropdownMenuItem(value: c, child: Text(c)))
+                      .map((c) => DropdownMenuItem(value: c, child: Text(c)))
                       .toList(),
                   onChanged: (val) async {
                     setQ(() {
@@ -3059,9 +3027,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                         .doc(val)
                         .get();
                     setQ(() {
-                      _balance = doc.exists
-                          ? (doc['balance'] ?? 0.0).toDouble()
-                          : 0.0;
+                      _balance =
+                          doc.exists ? (doc['balance'] ?? 0.0).toDouble() : 0.0;
                       _loading = false;
                     });
                   },
@@ -3087,8 +3054,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       children: [
                         Text('المتبقي:',
                             style: TextStyle(
-                                fontSize: 14.sp,
-                                fontWeight: FontWeight.bold)),
+                                fontSize: 14.sp, fontWeight: FontWeight.bold)),
                         Text('${_balance!.toStringAsFixed(2)} ج.م',
                             style: TextStyle(
                                 fontSize: 16.sp,
@@ -3103,8 +3069,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
               actions: [
                 TextButton(
                     onPressed: () => Navigator.pop(ctx),
-                    child: Text('إغلاق',
-                        style: TextStyle(color: Colors.orange))),
+                    child:
+                        Text('إغلاق', style: TextStyle(color: Colors.orange))),
               ],
             ),
           );
@@ -3120,15 +3086,13 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         textDirection: TextDirection.rtl,
         child: AlertDialog(
           title: Text('مسح القائمة',
-              style:
-                  TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
+              style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
           content: Text('هل تريد مسح جميع المنتجات من القائمة الحالية؟',
               style: TextStyle(fontSize: 14.sp)),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx),
-              child:
-                  Text('إلغاء', style: TextStyle(color: Colors.orange)),
+              child: Text('إلغاء', style: TextStyle(color: Colors.orange)),
             ),
             ElevatedButton(
               style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
@@ -3161,8 +3125,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             Navigator.push(
                 context,
                 MaterialPageRoute(
-                    builder: (_) =>
-                        InvoiceDetailPage(invoice: _lastInvoice!)));
+                    builder: (_) => InvoiceDetailPage(invoice: _lastInvoice!)));
           } else {
             Navigator.push(
               context,
@@ -3260,8 +3223,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                 title: Text('قريبًا',
                     style: TextStyle(
                         fontSize: 16.sp, fontWeight: FontWeight.bold)),
-                content: Text(
-                    'ميزة استيراد عروض الأسعار ستكون متاحة قريبًا.',
+                content: Text('ميزة استيراد عروض الأسعار ستكون متاحة قريبًا.',
                     style: TextStyle(fontSize: 14.sp)),
                 actions: [
                   TextButton(
@@ -3492,509 +3454,518 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     return DesktopBackShortcuts(
       confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
       child: WillPopScope(
-      onWillPop: () => HomePage.confirmNavigateBack(context),
-      child: Directionality(
-        textDirection: TextDirection.rtl,
-        child: Scaffold(
-          key: _scaffoldKey,
-          backgroundColor: const Color(0xffeeeced),
-          drawer: _buildDrawer(),
-          appBar: AppBar(
-          backgroundColor: Colors.black.withOpacity(0.7),
-          leading: AppBarNavLeading(
-            openDrawer: () => _scaffoldKey.currentState?.openDrawer(),
-            confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
-          ),
-          title: Text(_pageTitle,
-              style: TextStyle(
-                  color: Colors.white,
-                  fontSize: 20.sp,
-                  fontWeight: FontWeight.bold)),
-          centerTitle: true,
-          iconTheme: const IconThemeData(color: Colors.white),
-          automaticallyImplyLeading: false,
-          actions: [
-            if (Navigator.canPop(context))
-              IconButton(
-                icon: Icon(Icons.menu, color: Colors.white, size: 24.sp),
-                tooltip: 'القائمة',
-                onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+        onWillPop: () => HomePage.confirmNavigateBack(context),
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Scaffold(
+            key: _scaffoldKey,
+            backgroundColor: const Color(0xffeeeced),
+            drawer: _buildDrawer(),
+            appBar: AppBar(
+              backgroundColor: Colors.black.withOpacity(0.7),
+              leading: AppBarNavLeading(
+                openDrawer: () => _scaffoldKey.currentState?.openDrawer(),
+                confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
               ),
-            IconButton(
-              icon: Icon(Icons.calendar_today_outlined,
-                  color: Colors.white, size: 22.sp),
-              tooltip: _dateController.text,
-              onPressed: _pickDate,
-            ),
-          ],
-        ),
-        body: Stack(
-          children: [
-            Column(
-              children: [
-                // ── Search row ──
-                Container(
-                  color: Colors.white,
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 8.w, vertical: 6.h),
-                  child: Row(children: [
-                    IconButton(
-                      icon: Icon(Icons.person_outline,
-                          color: Colors.black87, size: 26.sp),
-                      onPressed: _showClientNameDialog,
-                      tooltip: 'اختر العميل',
-                    ),
-                    IconButton(
-                      icon: Icon(Icons.add_circle_outline,
-                          color: Colors.orange.shade800, size: 26.sp),
-                      onPressed: () => _addNewProductInline(
-                        initialName: _productController.text.trim().isEmpty
-                            ? null
-                            : _productController.text.trim(),
-                      ),
-                      tooltip: 'إضافة منتج جديد',
-                    ),
-                    Expanded(
-                      child: Container(
-                        height: 42.h,
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade100,
-                          borderRadius: BorderRadius.circular(8.r),
-                          border: Border.all(color: Colors.grey.shade300),
-                        ),
-                        child: _isFetching
-                            ? Center(
-                                child: SizedBox(
-                                    width: 20.w,
-                                    height: 20.h,
-                                    child: const CircularProgressIndicator(
-                                        strokeWidth: 2)))
-                            : Autocomplete<Product>(
-                                optionsBuilder: (TextEditingValue val) {
-                                  return _productsMatchingSearch(val.text);
-                                },
-                                displayStringForOption: (p) => p.name,
-                                fieldViewBuilder: (ctx, ctrl, focus, _) {
-                                  _productController = ctrl;
-                                  return TextField(
-                                    controller: ctrl,
-                                    focusNode: focus,
-                                    textAlign: TextAlign.right,
-                                    decoration: InputDecoration(
-                                      hintText:
-                                          'ابحث عن منتج أو استخدام الكاميرا',
-                                      hintStyle: TextStyle(
-                                          fontSize: 12.sp,
-                                          color: Colors.grey),
-                                      border: InputBorder.none,
-                                      contentPadding: EdgeInsets.symmetric(
-                                          horizontal: 10.w, vertical: 11.h),
-                                      prefixIcon: Icon(Icons.search,
-                                          size: 18.sp, color: Colors.grey),
-                                    ),
-                                  );
-                                },
-                                onSelected: (Product selected) {
-                                  _productController.clear();
-                                  _showProductSheet(newProduct: selected);
-                                },
-                              ),
-                      ),
-                    ),
-                    if (!widget.isReturnInvoice) ...[
-                      SizedBox(width: 4.w),
-                      Material(
-                        color: _retailOnlyMode
-                            ? Colors.orange.withOpacity(0.9)
-                            : Colors.grey.shade200,
-                        borderRadius: BorderRadius.circular(8.r),
-                        child: InkWell(
-                          onTap: _toggleRetailOnlyMode,
-                          borderRadius: BorderRadius.circular(8.r),
-                          child: Padding(
-                            padding: EdgeInsets.symmetric(
-                              horizontal: 10.w,
-                              vertical: 8.h,
-                            ),
-                            child: Text(
-                              _retailOnlyMode ? 'قطاعي ✓' : 'قطاعي',
-                              style: TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.bold,
-                                color: _retailOnlyMode
-                                    ? Colors.white
-                                    : Colors.black87,
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                    ],
-                    SizedBox(width: 4.w),
-                    IconButton(
-                      icon: Icon(Icons.qr_code_scanner,
-                          color: Colors.black87, size: 26.sp),
-                      onPressed: () {},
-                    ),
-                  ]),
-                ),
-
-                // ── Client badge ──
-                if (_clientNameController.text.isNotEmpty)
-                  Container(
-                    color: Colors.white,
-                    padding: EdgeInsets.symmetric(
-                        horizontal: 12.w, vertical: 5.h),
-                    child: Row(children: [
-                      GestureDetector(
-                        onTap: () => setState(() {
-                          _clientNameController.clear();
-                          _clientBalance = 0.0;
-                        }),
-                        child: Container(
-                          padding: EdgeInsets.all(4.w),
-                          decoration: BoxDecoration(
-                            color: Colors.red.withOpacity(0.1),
-                            shape: BoxShape.circle,
-                          ),
-                          child: Icon(Icons.close,
-                              color: Colors.red, size: 16.sp),
-                        ),
-                      ),
-                      SizedBox(width: 8.w),
-                      if (_clientBalance > 0)
-                        Icon(Icons.warning_amber_rounded,
-                            color: Colors.red, size: 18.sp),
-                      SizedBox(width: 4.w),
-                      Expanded(
-                        child: Text(_clientNameController.text,
-                            textAlign: TextAlign.right,
-                            style: TextStyle(
-                                fontSize: 15.sp,
-                                fontWeight: FontWeight.bold)),
-                      ),
-                      Text(
-                        'رصيد: ${invoiceAmount(_clientBalance)} ج.م',
-                        style: TextStyle(
-                          fontSize: 12.sp,
-                          fontWeight: FontWeight.w600,
-                          color: _clientBalance > 0
-                              ? Colors.red.shade700
-                              : Colors.black87,
-                        ),
-                      ),
-                    ]),
+              title: Text(_pageTitle,
+                  style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 20.sp,
+                      fontWeight: FontWeight.bold)),
+              centerTitle: true,
+              iconTheme: const IconThemeData(color: Colors.white),
+              automaticallyImplyLeading: false,
+              actions: [
+                if (Navigator.canPop(context))
+                  IconButton(
+                    icon: Icon(Icons.menu, color: Colors.white, size: 24.sp),
+                    tooltip: 'القائمة',
+                    onPressed: () => _scaffoldKey.currentState?.openDrawer(),
                   ),
-
-                // ── Table headers (RTL: تعداد | المنتج | السعر | الكمية | الإجمالي) ──
-                Container(
-                  color: Colors.grey.shade200,
-                  padding: EdgeInsets.symmetric(
-                      horizontal: 6.w, vertical: 6.h),
-                  child: Row(
-                    children: [
-                      _invoiceHeaderCell(
-                        'م',
-                        width: _invoiceSerialColWidth,
-                        compact: true,
-                        fontSize: 9.sp,
-                      ),
-                      Expanded(
-                        flex: 4,
-                        child: _invoiceHeaderCell(
-                          'المنتج',
-                          flex: 1,
-                          align: TextAlign.right,
-                          expanded: false,
-                        ),
-                      ),
-                      _invoiceHeaderCell(
-                        'السعر',
-                        width: _invoicePriceColWidth,
-                        compact: true,
-                      ),
-                      _invoiceHeaderCell(
-                        'الكمية',
-                        width: _invoiceQtyColWidth,
-                        compact: true,
-                      ),
-                      _invoiceHeaderCell(
-                        'الإجمالي',
-                        width: _invoiceTotalColWidth,
-                        compact: true,
-                      ),
-                      SizedBox(width: _invoiceDragColWidth.w),
-                    ],
-                  ),
-                ),
-
-                // ── Products list ──
-                Expanded(
-                  child: _addedProducts.isEmpty
-                      ? Center(
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(Icons.shopping_cart_outlined,
-                                  size: 60.sp,
-                                  color: Colors.grey.shade400),
-                              SizedBox(height: 8.h),
-                              Text('ابحث عن منتج وأضفه للفاتورة',
-                                  style: TextStyle(
-                                      fontSize: 14.sp,
-                                      color: Colors.grey.shade500)),
-                            ],
-                          ),
-                        )
-                      : ReorderableListView.builder(
-                          padding:
-                              EdgeInsets.only(top: 4.h, bottom: 80.h),
-                          buildDefaultDragHandles: false,
-                          itemCount: _addedProducts.length,
-                          onReorder: _reorderAddedProducts,
-                          itemBuilder: (context, index) {
-                            final p = _addedProducts[index];
-                            final amount =
-                                double.tryParse(p['amount'].toString()) ??
-                                    0.0;
-                            final total =
-                                (p['total'] as num).toDouble();
-                            final price =
-                                (p['selectedPrice'] as num).toDouble();
-                            final hasDiscount =
-                                (p['discount'] ?? 0.0) > 0;
-                            return Material(
-                              key: ValueKey(p['lineId'] ?? index),
-                              color: Colors.transparent,
-                              child: Padding(
-                                padding: EdgeInsets.symmetric(
-                                    horizontal: 6.w, vertical: 2.h),
-                                child: Row(
-                                  children: [
-                                    Expanded(
-                                      child: GestureDetector(
-                                      behavior: HitTestBehavior.opaque,
-                                      onTap: () =>
-                                          _showProductSheet(editIndex: index),
-                                      onLongPress: () =>
-                                          _confirmRemoveInvoiceLine(index),
-                                      child: Row(
-                                        children: [
-                                          _invoiceValueCell(
-                                            width: _invoiceSerialColWidth,
-                                            compact: true,
-                                            child: Text(
-                                              '${index + 1}',
-                                              textAlign: TextAlign.center,
-                                              style: TextStyle(
-                                                fontSize: 9.sp,
-                                                fontWeight: FontWeight.w600,
-                                              ),
-                                            ),
-                                          ),
-                                          Expanded(
-                                            flex: 4,
-                                            child: _invoiceValueCell(
-                                              flex: 1,
-                                              alignment:
-                                                  Alignment.centerRight,
-                                              expanded: false,
-                                              child: Column(
-                                                mainAxisSize: MainAxisSize.min,
-                                                crossAxisAlignment:
-                                                    CrossAxisAlignment.end,
-                                                children: [
-                                                  Text(
-                                                    invoiceProductName(p),
-                                                    textAlign: TextAlign.right,
-                                                    style: TextStyle(
-                                                      fontSize: 10.sp,
-                                                      height: 1.2,
-                                                      fontWeight:
-                                                          FontWeight.w600,
-                                                    ),
-                                                    maxLines: 3,
-                                                    overflow:
-                                                        TextOverflow.ellipsis,
-                                                  ),
-                                                ],
-                                              ),
-                                            ),
-                                          ),
-                                          _invoiceValueCell(
-                                            width: _invoicePriceColWidth,
-                                            tight: true,
-                                            child: Text(
-                                              invoiceAmount(price),
-                                              textAlign: TextAlign.center,
-                                              style: TextStyle(
-                                                fontSize: 11.sp,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.black87,
-                                              ),
-                                            ),
-                                          ),
-                                          _invoiceValueCell(
-                                            width: _invoiceQtyColWidth,
-                                            tight: true,
-                                            backgroundColor: Colors.teal
-                                                .withOpacity(0.08),
-                                            onTap: () =>
-                                                _incrementInvoiceLineQuantity(
-                                                    index),
-                                            child: Text(
-                                              invoiceQty(amount),
-                                              textAlign: TextAlign.center,
-                                              style: TextStyle(
-                                                fontSize: 11.sp,
-                                                fontWeight: FontWeight.bold,
-                                                color: Colors.teal.shade700,
-                                              ),
-                                            ),
-                                          ),
-                                          _invoiceValueCell(
-                                            width: _invoiceTotalColWidth,
-                                            tight: true,
-                                            child: Column(
-                                              mainAxisSize: MainAxisSize.min,
-                                              children: [
-                                                Text(
-                                                  invoiceAmount(total),
-                                                  textAlign: TextAlign.center,
-                                                  style: TextStyle(
-                                                    fontSize: 11.sp,
-                                                    fontWeight: FontWeight.bold,
-                                                    color: hasDiscount
-                                                        ? Colors.orange.shade700
-                                                        : Colors.black87,
-                                                  ),
-                                                ),
-                                                if (hasDiscount)
-                                                  Text(
-                                                    '- ${p['discount']}${p['discountIsPercent'] == true ? '%' : ' ج.م'}',
-                                                    textAlign: TextAlign.center,
-                                                    style: TextStyle(
-                                                      fontSize: 9.sp,
-                                                      color: Colors
-                                                          .orange.shade600,
-                                                    ),
-                                                  ),
-                                              ],
-                                            ),
-                                          ),
-                                        ],
-                                      ),
-                                    ),
-                                    ),
-                                    ReorderableDragStartListener(
-                                      index: index,
-                                      child: GestureDetector(
-                                        behavior: HitTestBehavior.opaque,
-                                        onTap: () =>
-                                            _showReorderInvoiceLineSheet(
-                                                index),
-                                        child: SizedBox(
-                                          width: _invoiceDragColWidth.w,
-                                          height: 36.h,
-                                          child: Icon(
-                                            Icons.drag_handle,
-                                            color: Colors.grey.shade600,
-                                            size: 18.sp,
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
-                            );
-                          },
-                        ),
+                IconButton(
+                  icon: Icon(Icons.calendar_today_outlined,
+                      color: Colors.white, size: 22.sp),
+                  tooltip: _dateController.text,
+                  onPressed: _pickDate,
                 ),
               ],
             ),
+            body: Stack(
+              children: [
+                Column(
+                  children: [
+                    // ── Search row ──
+                    Container(
+                      color: Colors.white,
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 8.w, vertical: 6.h),
+                      child: Row(children: [
+                        IconButton(
+                          icon: Icon(Icons.person_outline,
+                              color: Colors.black87, size: 26.sp),
+                          onPressed: _showClientNameDialog,
+                          tooltip: 'اختر العميل',
+                        ),
+                        IconButton(
+                          icon: Icon(Icons.add_circle_outline,
+                              color: Colors.orange.shade800, size: 26.sp),
+                          onPressed: () => _addNewProductInline(
+                            initialName: _productController.text.trim().isEmpty
+                                ? null
+                                : _productController.text.trim(),
+                          ),
+                          tooltip: 'إضافة منتج جديد',
+                        ),
+                        Expanded(
+                          child: Container(
+                            height: 42.h,
+                            decoration: BoxDecoration(
+                              color: Colors.grey.shade100,
+                              borderRadius: BorderRadius.circular(8.r),
+                              border: Border.all(color: Colors.grey.shade300),
+                            ),
+                            child: _isFetching
+                                ? Center(
+                                    child: SizedBox(
+                                        width: 20.w,
+                                        height: 20.h,
+                                        child: const CircularProgressIndicator(
+                                            strokeWidth: 2)))
+                                : Autocomplete<Product>(
+                                    optionsBuilder: (TextEditingValue val) {
+                                      return _productsMatchingSearch(val.text);
+                                    },
+                                    displayStringForOption: (p) => p.name,
+                                    fieldViewBuilder: (ctx, ctrl, focus, _) {
+                                      _productController = ctrl;
+                                      return TextField(
+                                        controller: ctrl,
+                                        focusNode: focus,
+                                        textAlign: TextAlign.right,
+                                        decoration: InputDecoration(
+                                          hintText:
+                                              'ابحث عن منتج أو استخدام الكاميرا',
+                                          hintStyle: TextStyle(
+                                              fontSize: 12.sp,
+                                              color: Colors.grey),
+                                          border: InputBorder.none,
+                                          contentPadding: EdgeInsets.symmetric(
+                                              horizontal: 10.w, vertical: 11.h),
+                                          prefixIcon: Icon(Icons.search,
+                                              size: 18.sp, color: Colors.grey),
+                                        ),
+                                      );
+                                    },
+                                    onSelected: (Product selected) {
+                                      _productController.clear();
+                                      _showProductSheet(newProduct: selected);
+                                    },
+                                  ),
+                          ),
+                        ),
+                        if (!widget.isReturnInvoice) ...[
+                          SizedBox(width: 4.w),
+                          Material(
+                            color: _retailOnlyMode
+                                ? Colors.orange.withOpacity(0.9)
+                                : Colors.grey.shade200,
+                            borderRadius: BorderRadius.circular(8.r),
+                            child: InkWell(
+                              onTap: _toggleRetailOnlyMode,
+                              borderRadius: BorderRadius.circular(8.r),
+                              child: Padding(
+                                padding: EdgeInsets.symmetric(
+                                  horizontal: 10.w,
+                                  vertical: 8.h,
+                                ),
+                                child: Text(
+                                  _retailOnlyMode ? 'قطاعي ✓' : 'قطاعي',
+                                  style: TextStyle(
+                                    fontSize: 13.sp,
+                                    fontWeight: FontWeight.bold,
+                                    color: _retailOnlyMode
+                                        ? Colors.white
+                                        : Colors.black87,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                        SizedBox(width: 4.w),
+                        IconButton(
+                          icon: Icon(Icons.qr_code_scanner,
+                              color: Colors.black87, size: 26.sp),
+                          onPressed: () {},
+                        ),
+                      ]),
+                    ),
 
-            // ── Bottom bar ──
-            Positioned(
-              bottom: 0,
-              left: 0,
-              right: 0,
-              child: Container(
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  boxShadow: [
-                    BoxShadow(
-                        color: Colors.black.withOpacity(0.1),
-                        blurRadius: 8,
-                        offset: const Offset(0, -2))
+                    // ── Client badge ──
+                    if (_clientNameController.text.isNotEmpty)
+                      Container(
+                        color: Colors.white,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 12.w, vertical: 5.h),
+                        child: Row(children: [
+                          GestureDetector(
+                            onTap: () => setState(() {
+                              _clientNameController.clear();
+                              _clientBalance = 0.0;
+                            }),
+                            child: Container(
+                              padding: EdgeInsets.all(4.w),
+                              decoration: BoxDecoration(
+                                color: Colors.red.withOpacity(0.1),
+                                shape: BoxShape.circle,
+                              ),
+                              child: Icon(Icons.close,
+                                  color: Colors.red, size: 16.sp),
+                            ),
+                          ),
+                          SizedBox(width: 8.w),
+                          if (_clientBalance > 0)
+                            Icon(Icons.warning_amber_rounded,
+                                color: Colors.red, size: 18.sp),
+                          SizedBox(width: 4.w),
+                          Expanded(
+                            child: Text(_clientNameController.text,
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                    fontSize: 15.sp,
+                                    fontWeight: FontWeight.bold)),
+                          ),
+                          Text(
+                            'رصيد: ${invoiceAmount(_clientBalance)} ج.م',
+                            style: TextStyle(
+                              fontSize: 12.sp,
+                              fontWeight: FontWeight.w600,
+                              color: _clientBalance > 0
+                                  ? Colors.red.shade700
+                                  : Colors.black87,
+                            ),
+                          ),
+                        ]),
+                      ),
+
+                    // ── Table headers (RTL: تعداد | المنتج | السعر | الكمية | الإجمالي) ──
+                    Container(
+                      color: Colors.grey.shade200,
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 6.w, vertical: 6.h),
+                      child: Row(
+                        children: [
+                          _invoiceHeaderCell(
+                            'م',
+                            width: _invoiceSerialColWidth,
+                            compact: true,
+                            fontSize: 9.sp,
+                          ),
+                          Expanded(
+                            flex: 4,
+                            child: _invoiceHeaderCell(
+                              'المنتج',
+                              flex: 1,
+                              align: TextAlign.right,
+                              expanded: false,
+                            ),
+                          ),
+                          _invoiceHeaderCell(
+                            'السعر',
+                            width: _invoicePriceColWidth,
+                            compact: true,
+                          ),
+                          _invoiceHeaderCell(
+                            'الكمية',
+                            width: _invoiceQtyColWidth,
+                            compact: true,
+                          ),
+                          _invoiceHeaderCell(
+                            'الإجمالي',
+                            width: _invoiceTotalColWidth,
+                            compact: true,
+                          ),
+                          SizedBox(width: _invoiceDragColWidth.w),
+                        ],
+                      ),
+                    ),
+
+                    // ── Products list ──
+                    Expanded(
+                      child: _addedProducts.isEmpty
+                          ? Center(
+                              child: Column(
+                                mainAxisAlignment: MainAxisAlignment.center,
+                                children: [
+                                  Icon(Icons.shopping_cart_outlined,
+                                      size: 60.sp, color: Colors.grey.shade400),
+                                  SizedBox(height: 8.h),
+                                  Text('ابحث عن منتج وأضفه للفاتورة',
+                                      style: TextStyle(
+                                          fontSize: 14.sp,
+                                          color: Colors.grey.shade500)),
+                                ],
+                              ),
+                            )
+                          : ReorderableListView.builder(
+                              padding: EdgeInsets.only(top: 4.h, bottom: 80.h),
+                              buildDefaultDragHandles: false,
+                              itemCount: _addedProducts.length,
+                              onReorder: _reorderAddedProducts,
+                              itemBuilder: (context, index) {
+                                final p = _addedProducts[index];
+                                final amount =
+                                    double.tryParse(p['amount'].toString()) ??
+                                        0.0;
+                                final total = (p['total'] as num).toDouble();
+                                final price =
+                                    (p['selectedPrice'] as num).toDouble();
+                                final hasDiscount = (p['discount'] ?? 0.0) > 0;
+                                return Material(
+                                  key: ValueKey(p['lineId'] ?? index),
+                                  color: Colors.transparent,
+                                  child: Padding(
+                                    padding: EdgeInsets.symmetric(
+                                        horizontal: 6.w, vertical: 2.h),
+                                    child: Row(
+                                      children: [
+                                        Expanded(
+                                          child: GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onTap: () => _showProductSheet(
+                                                editIndex: index),
+                                            onLongPress: () =>
+                                                _confirmRemoveInvoiceLine(
+                                                    index),
+                                            child: Row(
+                                              children: [
+                                                _invoiceValueCell(
+                                                  width: _invoiceSerialColWidth,
+                                                  compact: true,
+                                                  child: Text(
+                                                    '${index + 1}',
+                                                    textAlign: TextAlign.center,
+                                                    style: TextStyle(
+                                                      fontSize: 9.sp,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                    ),
+                                                  ),
+                                                ),
+                                                Expanded(
+                                                  flex: 4,
+                                                  child: _invoiceValueCell(
+                                                    flex: 1,
+                                                    alignment:
+                                                        Alignment.centerRight,
+                                                    expanded: false,
+                                                    child: Column(
+                                                      mainAxisSize:
+                                                          MainAxisSize.min,
+                                                      crossAxisAlignment:
+                                                          CrossAxisAlignment
+                                                              .end,
+                                                      children: [
+                                                        Text(
+                                                          invoiceProductName(p),
+                                                          textAlign:
+                                                              TextAlign.right,
+                                                          style: TextStyle(
+                                                            fontSize: 10.sp,
+                                                            height: 1.2,
+                                                            fontWeight:
+                                                                FontWeight.w600,
+                                                          ),
+                                                          maxLines: 3,
+                                                          overflow: TextOverflow
+                                                              .ellipsis,
+                                                        ),
+                                                      ],
+                                                    ),
+                                                  ),
+                                                ),
+                                                _invoiceValueCell(
+                                                  width: _invoicePriceColWidth,
+                                                  tight: true,
+                                                  child: Text(
+                                                    invoiceAmount(price),
+                                                    textAlign: TextAlign.center,
+                                                    style: TextStyle(
+                                                      fontSize: 11.sp,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color: Colors.black87,
+                                                    ),
+                                                  ),
+                                                ),
+                                                _invoiceValueCell(
+                                                  width: _invoiceQtyColWidth,
+                                                  tight: true,
+                                                  backgroundColor: Colors.teal
+                                                      .withOpacity(0.08),
+                                                  onTap: () =>
+                                                      _incrementInvoiceLineQuantity(
+                                                          index),
+                                                  child: Text(
+                                                    invoiceQty(amount),
+                                                    textAlign: TextAlign.center,
+                                                    style: TextStyle(
+                                                      fontSize: 11.sp,
+                                                      fontWeight:
+                                                          FontWeight.bold,
+                                                      color:
+                                                          Colors.teal.shade700,
+                                                    ),
+                                                  ),
+                                                ),
+                                                _invoiceValueCell(
+                                                  width: _invoiceTotalColWidth,
+                                                  tight: true,
+                                                  child: Column(
+                                                    mainAxisSize:
+                                                        MainAxisSize.min,
+                                                    children: [
+                                                      Text(
+                                                        invoiceAmount(total),
+                                                        textAlign:
+                                                            TextAlign.center,
+                                                        style: TextStyle(
+                                                          fontSize: 11.sp,
+                                                          fontWeight:
+                                                              FontWeight.bold,
+                                                          color: hasDiscount
+                                                              ? Colors.orange
+                                                                  .shade700
+                                                              : Colors.black87,
+                                                        ),
+                                                      ),
+                                                      if (hasDiscount)
+                                                        Text(
+                                                          '- ${p['discount']}${p['discountIsPercent'] == true ? '%' : ' ج.م'}',
+                                                          textAlign:
+                                                              TextAlign.center,
+                                                          style: TextStyle(
+                                                            fontSize: 9.sp,
+                                                            color: Colors.orange
+                                                                .shade600,
+                                                          ),
+                                                        ),
+                                                    ],
+                                                  ),
+                                                ),
+                                              ],
+                                            ),
+                                          ),
+                                        ),
+                                        ReorderableDragStartListener(
+                                          index: index,
+                                          child: GestureDetector(
+                                            behavior: HitTestBehavior.opaque,
+                                            onTap: () =>
+                                                _showReorderInvoiceLineSheet(
+                                                    index),
+                                            child: SizedBox(
+                                              width: _invoiceDragColWidth.w,
+                                              height: 36.h,
+                                              child: Icon(
+                                                Icons.drag_handle,
+                                                color: Colors.grey.shade600,
+                                                size: 18.sp,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                );
+                              },
+                            ),
+                    ),
                   ],
                 ),
-                padding: EdgeInsets.symmetric(
-                    horizontal: 12.w, vertical: 10.h),
-                child: Row(children: [
-                  ElevatedButton(
-                    onPressed: _showCheckoutSheet,
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: Colors.black.withOpacity(0.75),
-                      shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(8.r)),
-                      padding: EdgeInsets.symmetric(
-                          horizontal: 16.w, vertical: 12.h),
-                    ),
-                    child: Text('حاسب',
-                        style: TextStyle(
-                            color: Colors.white,
-                            fontSize: 14.sp,
-                            fontWeight: FontWeight.bold)),
-                  ),
-                  SizedBox(width: 8.w),
-                  Expanded(
-                    child: Container(
-                      alignment: Alignment.center,
-                      padding: EdgeInsets.symmetric(vertical: 12.h),
-                      decoration: BoxDecoration(
-                        color: Colors.green.withOpacity(0.15),
-                        borderRadius: BorderRadius.circular(8.r),
-                      ),
-                      child: Text(
-                        invoiceAmount(totalSum),
-                        style: TextStyle(
-                            fontSize: 18.sp,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green.shade700),
-                      ),
-                    ),
-                  ),
-                  SizedBox(width: 8.w),
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Text('ج.م',
-                          style: TextStyle(
-                              fontSize: 11.sp, color: Colors.black54)),
-                      Text(invoiceQty(totalQty),
-                          style: TextStyle(
-                              fontSize: 16.sp,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red.shade600)),
-                    ],
-                  ),
-                ]),
-              ),
-            ),
 
-            if (_isSaving)
-              Container(
-                color: Colors.black.withOpacity(0.45),
-                child: Center(
-                  child: CircularProgressIndicator(
-                      color: Colors.orange.withOpacity(0.9)),
+                // ── Bottom bar ──
+                Positioned(
+                  bottom: 0,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      boxShadow: [
+                        BoxShadow(
+                            color: Colors.black.withOpacity(0.1),
+                            blurRadius: 8,
+                            offset: const Offset(0, -2))
+                      ],
+                    ),
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+                    child: Row(children: [
+                      ElevatedButton(
+                        onPressed: _showCheckoutSheet,
+                        style: ElevatedButton.styleFrom(
+                          backgroundColor: Colors.black.withOpacity(0.75),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(8.r)),
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 16.w, vertical: 12.h),
+                        ),
+                        child: Text('حاسب',
+                            style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 14.sp,
+                                fontWeight: FontWeight.bold)),
+                      ),
+                      SizedBox(width: 8.w),
+                      Expanded(
+                        child: Container(
+                          alignment: Alignment.center,
+                          padding: EdgeInsets.symmetric(vertical: 12.h),
+                          decoration: BoxDecoration(
+                            color: Colors.green.withOpacity(0.15),
+                            borderRadius: BorderRadius.circular(8.r),
+                          ),
+                          child: Text(
+                            invoiceAmount(totalSum),
+                            style: TextStyle(
+                                fontSize: 18.sp,
+                                fontWeight: FontWeight.bold,
+                                color: Colors.green.shade700),
+                          ),
+                        ),
+                      ),
+                      SizedBox(width: 8.w),
+                      Column(
+                        crossAxisAlignment: CrossAxisAlignment.end,
+                        children: [
+                          Text('ج.م',
+                              style: TextStyle(
+                                  fontSize: 11.sp, color: Colors.black54)),
+                          Text(invoiceQty(totalQty),
+                              style: TextStyle(
+                                  fontSize: 16.sp,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.red.shade600)),
+                        ],
+                      ),
+                    ]),
+                  ),
                 ),
-              ),
-          ],
+
+                if (_isSaving)
+                  Container(
+                    color: Colors.black.withOpacity(0.45),
+                    child: Center(
+                      child: CircularProgressIndicator(
+                          color: Colors.orange.withOpacity(0.9)),
+                    ),
+                  ),
+              ],
+            ),
+          ),
         ),
-      ),
-      ),
       ),
     );
   }
@@ -4042,9 +4013,8 @@ class _PriceTierBtn extends StatelessWidget {
         width: 34.w,
         height: 34.w,
         decoration: BoxDecoration(
-          color: selected
-              ? Colors.orange.withOpacity(0.85)
-              : Colors.grey.shade200,
+          color:
+              selected ? Colors.orange.withOpacity(0.85) : Colors.grey.shade200,
           borderRadius: BorderRadius.circular(6.r),
         ),
         child: Center(
