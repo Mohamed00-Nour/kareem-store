@@ -9,6 +9,7 @@ import '../Buing Invoices/BuyingInvoiceListPage.dart';
 import '../Buing Invoices/BuyingInvoiceDetailPage.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
+import '../Services/buying_invoice_update_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import 'g_Nav.dart';
@@ -23,7 +24,10 @@ void _selectAllField(TextEditingController controller) {
 }
 
 class AddProductPage extends StatefulWidget {
-  const AddProductPage({super.key});
+  /// When non-null, opens the page in edit mode pre-filled with this invoice.
+  final Map<String, dynamic>? invoiceToEdit;
+
+  const AddProductPage({super.key, this.invoiceToEdit});
 
   @override
   _AddProductPageState createState() => _AddProductPageState();
@@ -45,13 +49,62 @@ class _AddProductPageState extends State<AddProductPage> {
   Map<String, dynamic>? _lastInvoice;
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
 
+  // ── Edit mode state ──
+  bool get _isEditing =>
+      _editingRootInvoiceId != null && _editingRootInvoiceId!.isNotEmpty;
+  String? _editingRootInvoiceId;
+  String? _editingSupplierId;
+  Map<String, dynamic>? _originalInvoice;
+  dynamic _editingInvoiceNumber;
+
+  String get _pageTitle {
+    if (_isEditing && _editingInvoiceNumber != null) {
+      return 'تعديل فاتورة #$_editingInvoiceNumber';
+    }
+    return 'المشتريات';
+  }
+
+  void _applyInvoiceToEdit(Map<String, dynamic> inv) {
+    _editingRootInvoiceId = inv['id']?.toString() ?? '';
+    _originalInvoice = Map<String, dynamic>.from(inv);
+    _editingInvoiceNumber = inv['invoiceNumber'];
+
+    final supplierName = inv['supplierName']?.toString() ?? '';
+    _selectedSupplier = Supplier(id: '', name: supplierName);
+    _supplierBalance = invoiceNum(inv['previousBalance']);
+
+    final date = inv['date'];
+    if (date is Timestamp) {
+      _selectedDate = date.toDate();
+    } else if (date is DateTime) {
+      _selectedDate = date;
+    } else {
+      _selectedDate = DateTime.now();
+    }
+    _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
+
+    _addedProducts.clear();
+    final products = inv['products'] as List<dynamic>? ?? [];
+    for (final p in products) {
+      final entry = Map<String, dynamic>.from(p as Map);
+      entry.putIfAbsent('lineId', () => _lineIdCounter++);
+      _addedProducts.add(entry);
+    }
+
+    _dataModified = true;
+  }
+
   @override
   void initState() {
     super.initState();
     _fetchProducts();
     _fetchSuppliers();
-    _selectedDate = DateTime.now();
-    _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
+    if (widget.invoiceToEdit != null) {
+      _applyInvoiceToEdit(widget.invoiceToEdit!);
+    } else {
+      _selectedDate = DateTime.now();
+      _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
+    }
   }
 
   @override
@@ -171,7 +224,7 @@ class _AddProductPageState extends State<AddProductPage> {
       );
       return;
     }
-    if (!_dataModified) {
+    if (!_dataModified && !_isEditing) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم حفظ البيانات بالفعل')),
       );
@@ -194,6 +247,69 @@ class _AddProductPageState extends State<AddProductPage> {
     setState(() => _isSaving = true);
     logProgress('1. Save started');
 
+    // ── EDIT MODE ──
+    if (_isEditing && _originalInvoice != null) {
+      try {
+        // Resolve supplier ID if not yet known
+        String resolvedSupplierId = _editingSupplierId ?? '';
+        if (resolvedSupplierId.isEmpty) {
+          final sq = await FirebaseFirestore.instance
+              .collection('suppliers')
+              .where('name', isEqualTo: effectiveSupplier.name)
+              .limit(1)
+              .get();
+          resolvedSupplierId = sq.docs.isNotEmpty ? sq.docs.first.id : '';
+        }
+
+        final effectiveDiscountAmt = discountIsPercent
+            ? _calculateTotalSum() * invoiceDiscount / 100
+            : invoiceDiscount;
+        final lines = List<Map<String, dynamic>>.from(_addedProducts);
+
+        await BuyingInvoiceUpdateService.updateBuyingInvoice(
+          rootInvoiceId: _editingRootInvoiceId!,
+          originalInvoice: _originalInvoice!,
+          newProducts: lines,
+          supplierName: effectiveSupplier.name,
+          supplierId: resolvedSupplierId,
+          selectedDate: _selectedDate,
+          paidAmount: effectivePaid,
+          notes: notes,
+          invoiceDiscount: effectiveDiscountAmt,
+        );
+
+        final totalAfterDiscount = _calculateTotalSum() - effectiveDiscountAmt;
+        _lastInvoice = {
+          ..._originalInvoice!,
+          'id': _editingRootInvoiceId,
+          'supplierName': effectiveSupplier.name,
+          'date': _selectedDate,
+          'totalSum': totalAfterDiscount,
+          'paidAmount': effectivePaid,
+          'balance': totalAfterDiscount - effectivePaid,
+          'invoiceDiscount': effectiveDiscountAmt,
+          'notes': notes,
+          'products': lines,
+        };
+
+        if (!mounted) return;
+        setState(() {
+          _dataModified = false;
+          _isSaving = false;
+          _selectedSupplier = effectiveSupplier;
+        });
+        _showSaveSuccessDialog(_lastInvoice!);
+      } catch (e) {
+        logProgress('ERROR (edit): $e');
+        if (!mounted) return;
+        setState(() => _isSaving = false);
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text('خطأ في التعديل: $e')));
+      }
+      return;
+    }
+
+    // ── CREATE MODE ──
     try {
       Supplier workingSupplier = effectiveSupplier;
       if (workingSupplier.id.isEmpty) {
@@ -2124,7 +2240,7 @@ class _AddProductPageState extends State<AddProductPage> {
                 openDrawer: () => _scaffoldKey.currentState?.openEndDrawer(),
               ),
               automaticallyImplyLeading: false,
-              title: Text('المشتريات',
+              title: Text(_pageTitle,
                   style: TextStyle(
                       color: Colors.white,
                       fontSize: 20.sp,

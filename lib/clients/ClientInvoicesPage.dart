@@ -32,6 +32,7 @@ void _selectAllField(TextEditingController controller) {
 
 class ClientInvoicesPage extends StatefulWidget {
   final String clientId;
+
   /// Opens edit sheet for the client sub-invoice linked to this root [invoices] id.
   final String? autoEditRootInvoiceId;
 
@@ -49,8 +50,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   static const int _invoicePageSize = 20;
 
   final TextEditingController _balanceController = TextEditingController();
+  final TextEditingController _addBalanceController = TextEditingController();
   final ScrollController _invoiceScrollController = ScrollController();
-  double _enteredBalance = 0.0;
   bool _isSaving = false; // Add loading state
   bool _generatingStatement = false;
   bool _autoEditTriggered = false;
@@ -67,13 +68,15 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       final qs = await FirebaseFirestore.instance.collection('products').get();
       if (mounted) {
         setState(() {
-          _allProds = qs.docs.map((doc) => _ProdInfo(
-                name: (doc['name'] ?? '').toString(),
-                sellingPrice1: (doc['sellingPrice1'] ?? 0.0).toDouble(),
-                sellingPrice2: (doc['sellingPrice2'] ?? 0.0).toDouble(),
-                sellingPrice3: (doc['sellingPrice3'] ?? 0.0).toDouble(),
-                quantity: (doc['quantity'] as num?)?.toDouble() ?? 0.0,
-              )).toList();
+          _allProds = qs.docs
+              .map((doc) => _ProdInfo(
+                    name: (doc['name'] ?? '').toString(),
+                    sellingPrice1: (doc['sellingPrice1'] ?? 0.0).toDouble(),
+                    sellingPrice2: (doc['sellingPrice2'] ?? 0.0).toDouble(),
+                    sellingPrice3: (doc['sellingPrice3'] ?? 0.0).toDouble(),
+                    quantity: (doc['quantity'] as num?)?.toDouble() ?? 0.0,
+                  ))
+              .toList();
         });
       }
     } catch (_) {}
@@ -252,116 +255,128 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
 // In your ClientInvoicesPage, update the balance saving method
 
-Future<void> _saveBalance() async {
-  if (_balanceController.text.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('يرجى إدخال المبلغ')),
-    );
-    return;
-  }
+  Future<void> _saveBalance() async {
+    final deductText = _balanceController.text.trim();
+    final addText = _addBalanceController.text.trim();
 
-  double enteredBalance = double.tryParse(_balanceController.text) ?? 0.0;
-  if (enteredBalance <= 0) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('يرجى إدخال مبلغ صحيح')),
-    );
-    return;
-  }
-
-  setState(() {
-    _isSaving = true; // Show loading overlay
-  });
-
-  try {
-    // Get current client balance
-    DocumentSnapshot clientDoc = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(widget.clientId)
-        .get();
-
-    double currentBalance = 0.0;
-    String clientName = '';
-
-    if (clientDoc.exists) {
-      currentBalance = (clientDoc['balance'] ?? 0.0).toDouble();
-      clientName = clientDoc['clientName'] ?? '';
+    if (deductText.isEmpty && addText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال المبلغ')),
+      );
+      return;
     }
 
-    double newBalance = currentBalance - enteredBalance;
+    final isAddition = addText.isNotEmpty;
+    final valueText = isAddition ? addText : deductText;
+    double enteredBalance = double.tryParse(valueText) ?? 0.0;
 
-    // Update client balance
-    await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(widget.clientId)
-        .update({'balance': newBalance});
+    if (enteredBalance <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال مبلغ صحيح')),
+      );
+      return;
+    }
 
-    // Add to client's balance history
-    await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(widget.clientId)
-        .collection('balanceHistory')
-        .add({
-      'enteredBalance': enteredBalance,
-      'balanceBefore': currentBalance,
-      'timestamp': FieldValue.serverTimestamp(),
+    setState(() {
+      _isSaving = true; // Show loading overlay
     });
 
-    // Update the box collection (same implementation as DecreaseProductPage)
-    DocumentReference boxDocRef = FirebaseFirestore.instance
-        .collection('box')
-        .doc('mainBox');
+    try {
+      // Get current client balance
+      DocumentSnapshot clientDoc = await FirebaseFirestore.instance
+          .collection('clients')
+          .doc(widget.clientId)
+          .get();
 
-    await FirebaseFirestore.instance.runTransaction((transaction) async {
-      DocumentSnapshot boxSnapshot = await transaction.get(boxDocRef);
+      double currentBalance = 0.0;
+      String clientName = '';
 
-      if (boxSnapshot.exists) {
-        double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-        transaction.update(boxDocRef, {'value': currentBoxValue + enteredBalance});
-      } else {
-        transaction.set(boxDocRef, {'value': enteredBalance});
+      if (clientDoc.exists) {
+        currentBalance = (clientDoc['balance'] ?? 0.0).toDouble();
+        clientName = clientDoc['clientName'] ?? '';
       }
-    });
 
-    // Add change to the subcollection
-    await boxDocRef.collection('changes').add({
-      'date': FieldValue.serverTimestamp(),
-      'value': enteredBalance,
-      'type': 'addition',
-      'name': clientName,
-      'invoiceNumber': null, // No invoice number for balance entries
-    });
+      double newBalance = isAddition
+          ? currentBalance + enteredBalance
+          : currentBalance - enteredBalance;
 
-    _balanceController.clear();
+      // Update client balance
+      await FirebaseFirestore.instance
+          .collection('clients')
+          .doc(widget.clientId)
+          .update({'balance': newBalance});
 
-    await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
-    );
-
-  } catch (e) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
-    );
-  } finally {
-    if (mounted) {
-      setState(() {
-        _isSaving = false; // Hide loading overlay
+      // Add to client's balance history
+      await FirebaseFirestore.instance
+          .collection('clients')
+          .doc(widget.clientId)
+          .collection('balanceHistory')
+          .add({
+        'enteredBalance': enteredBalance,
+        'balanceBefore': currentBalance,
+        'type': isAddition ? 'addition' : 'deduction',
+        'timestamp': FieldValue.serverTimestamp(),
       });
+
+      // Update the box collection
+      DocumentReference boxDocRef =
+          FirebaseFirestore.instance.collection('box').doc('mainBox');
+
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        DocumentSnapshot boxSnapshot = await transaction.get(boxDocRef);
+
+        if (boxSnapshot.exists) {
+          double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
+          transaction.update(boxDocRef, {
+            'value': isAddition
+                ? currentBoxValue - enteredBalance
+                : currentBoxValue + enteredBalance
+          });
+        } else {
+          transaction.set(
+              boxDocRef, {'value': isAddition ? -enteredBalance : enteredBalance});
+        }
+      });
+
+      // Add change to the subcollection
+      await boxDocRef.collection('changes').add({
+        'date': FieldValue.serverTimestamp(),
+        'value': enteredBalance,
+        'type': isAddition ? 'decrement' : 'addition',
+        'name': clientName,
+        'invoiceNumber': null, // No invoice number for balance entries
+      });
+
+      _balanceController.clear();
+      _addBalanceController.clear();
+
+      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
+      );
+    } catch (e) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
+      );
+    } finally {
+      if (mounted) {
+        setState(() {
+          _isSaving = false; // Hide loading overlay
+        });
+      }
     }
   }
-}
 
-
-
-
-  Future<void> _editProduct(String invoiceId, int productIndex, Map<String, dynamic> product) async {
+  Future<void> _editProduct(
+      String invoiceId, int productIndex, Map<String, dynamic> product) async {
     // Resolve product info from loaded list, fall back to stored prices
-    final double storedPrice = double.tryParse(product['selectedPrice'].toString()) ?? 0.0;
+    final double storedPrice =
+        double.tryParse(product['selectedPrice'].toString()) ?? 0.0;
     _ProdInfo? prodInfo = _allProds.cast<_ProdInfo?>().firstWhere(
-      (p) => p!.name == product['product'].toString(),
-      orElse: () => null,
-    );
+          (p) => p!.name == product['product'].toString(),
+          orElse: () => null,
+        );
     prodInfo ??= _ProdInfo(
       name: product['product'].toString(),
       sellingPrice1: storedPrice,
@@ -375,8 +390,10 @@ Future<void> _saveBalance() async {
 
     // Detect price tier
     int priceTier = 0;
-    if (storedPrice == prodInfo.sellingPrice1) priceTier = 1;
-    else if (storedPrice == prodInfo.sellingPrice2) priceTier = 2;
+    if (storedPrice == prodInfo.sellingPrice1)
+      priceTier = 1;
+    else if (storedPrice == prodInfo.sellingPrice2)
+      priceTier = 2;
     else if (storedPrice == prodInfo.sellingPrice3) priceTier = 3;
 
     bool isSaving = false;
@@ -428,14 +445,12 @@ Future<void> _saveBalance() async {
                     Text('تعديل منتج',
                         textAlign: TextAlign.center,
                         style: const TextStyle(
-                            fontSize: 17,
-                            fontWeight: FontWeight.bold)),
+                            fontSize: 17, fontWeight: FontWeight.bold)),
                     const SizedBox(height: 16),
 
                     // ── Product search / autocomplete ──
                     Autocomplete<_ProdInfo>(
-                      initialValue:
-                          TextEditingValue(text: prodInfo!.name),
+                      initialValue: TextEditingValue(text: prodInfo!.name),
                       optionsBuilder: (val) {
                         if (val.text.isEmpty) {
                           return const Iterable<_ProdInfo>.empty();
@@ -452,8 +467,7 @@ Future<void> _saveBalance() async {
                             elevation: 4,
                             borderRadius: BorderRadius.circular(8),
                             child: ConstrainedBox(
-                              constraints:
-                                  const BoxConstraints(maxHeight: 200),
+                              constraints: const BoxConstraints(maxHeight: 200),
                               child: ListView.builder(
                                 padding: EdgeInsets.zero,
                                 shrinkWrap: true,
@@ -468,8 +482,7 @@ Future<void> _saveBalance() async {
                                         'س1: ${p.sellingPrice1.toStringAsFixed(2)}',
                                         textAlign: TextAlign.right,
                                         style: const TextStyle(
-                                            fontSize: 11,
-                                            color: Colors.grey)),
+                                            fontSize: 11, color: Colors.grey)),
                                     onTap: () => onSelected(p),
                                   );
                                 },
@@ -485,14 +498,12 @@ Future<void> _saveBalance() async {
                           textAlign: TextAlign.right,
                           decoration: InputDecoration(
                             labelText: 'ابحث عن منتج',
-                            prefixIcon: const Icon(Icons.search,
-                                color: Colors.orange),
+                            prefixIcon:
+                                const Icon(Icons.search, color: Colors.orange),
                             border: OutlineInputBorder(
-                                borderRadius:
-                                    BorderRadius.circular(8)),
+                                borderRadius: BorderRadius.circular(8)),
                             focusedBorder: OutlineInputBorder(
-                                borderRadius:
-                                    BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(8),
                                 borderSide: const BorderSide(
                                     color: Colors.orange, width: 2)),
                           ),
@@ -504,8 +515,7 @@ Future<void> _saveBalance() async {
                           prodInfo = p;
                           // Keep tier, update custom price reference
                           customPrice = p.priceForTier(priceTier, customPrice);
-                          customPriceCtrl.text =
-                              customPrice.toStringAsFixed(2);
+                          customPriceCtrl.text = customPrice.toStringAsFixed(2);
                         });
                       },
                     ),
@@ -521,15 +531,13 @@ Future<void> _saveBalance() async {
                           decoration: BoxDecoration(
                             color: Colors.grey.shade100,
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                                color: Colors.grey.shade300),
+                            border: Border.all(color: Colors.grey.shade300),
                           ),
                           child: Text(
                             price.toStringAsFixed(2),
                             textAlign: TextAlign.center,
                             style: const TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold),
+                                fontSize: 16, fontWeight: FontWeight.bold),
                           ),
                         ),
                       ),
@@ -537,29 +545,24 @@ Future<void> _saveBalance() async {
                       _PriceTierBtn(
                           label: '3',
                           selected: priceTier == 3,
-                          onTap: () =>
-                              setSheet(() => priceTier = 3)),
+                          onTap: () => setSheet(() => priceTier = 3)),
                       const SizedBox(width: 4),
                       _PriceTierBtn(
                           label: '2',
                           selected: priceTier == 2,
-                          onTap: () =>
-                              setSheet(() => priceTier = 2)),
+                          onTap: () => setSheet(() => priceTier = 2)),
                       const SizedBox(width: 4),
                       _PriceTierBtn(
                           label: '1',
                           selected: priceTier == 1,
-                          onTap: () =>
-                              setSheet(() => priceTier = 1)),
+                          onTap: () => setSheet(() => priceTier = 1)),
                       const SizedBox(width: 4),
                       _PriceTierBtn(
                           label: 'خ',
                           selected: priceTier == 0,
-                          onTap: () =>
-                              setSheet(() => priceTier = 0)),
+                          onTap: () => setSheet(() => priceTier = 0)),
                       const SizedBox(width: 8),
-                      const Text('سعر البيع',
-                          style: TextStyle(fontSize: 13)),
+                      const Text('سعر البيع', style: TextStyle(fontSize: 13)),
                     ]),
 
                     // ── Custom price input ──
@@ -568,27 +571,23 @@ Future<void> _saveBalance() async {
                       TextField(
                         controller: customPriceCtrl,
                         textAlign: TextAlign.center,
-                        keyboardType: const TextInputType
-                            .numberWithOptions(decimal: true),
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
                         autofocus: true,
                         decoration: InputDecoration(
                           labelText: 'سعر خاص',
-                          prefixIcon: const Icon(Icons.edit,
-                              color: Colors.orange),
+                          prefixIcon:
+                              const Icon(Icons.edit, color: Colors.orange),
                           border: OutlineInputBorder(
-                              borderRadius:
-                                  BorderRadius.circular(8)),
+                              borderRadius: BorderRadius.circular(8)),
                           focusedBorder: OutlineInputBorder(
-                              borderRadius:
-                                  BorderRadius.circular(8),
+                              borderRadius: BorderRadius.circular(8),
                               borderSide: const BorderSide(
-                                  color: Colors.orange,
-                                  width: 2)),
+                                  color: Colors.orange, width: 2)),
                         ),
                         onTap: () => _selectAllField(customPriceCtrl),
                         onChanged: (v) => setSheet(
-                            () => customPrice =
-                                double.tryParse(v) ?? 0.0),
+                            () => customPrice = double.tryParse(v) ?? 0.0),
                       ),
                     ],
                     const SizedBox(height: 12),
@@ -603,8 +602,7 @@ Future<void> _saveBalance() async {
                           decoration: BoxDecoration(
                             color: Colors.orange.shade50,
                             borderRadius: BorderRadius.circular(8),
-                            border: Border.all(
-                                color: Colors.orange.shade200),
+                            border: Border.all(color: Colors.orange.shade200),
                           ),
                           child: Text(
                             total.toStringAsFixed(2),
@@ -623,8 +621,7 @@ Future<void> _saveBalance() async {
                             if (amount > 1) {
                               setSheet(() {
                                 amount -= 1;
-                                qtyCtrl.text =
-                                    amount.toStringAsFixed(1);
+                                qtyCtrl.text = amount.toStringAsFixed(1);
                               });
                             }
                           }),
@@ -634,30 +631,27 @@ Future<void> _saveBalance() async {
                         child: TextField(
                           controller: qtyCtrl,
                           textAlign: TextAlign.center,
-                          keyboardType:
-                              const TextInputType.numberWithOptions(
-                                  decimal: true),
+                          keyboardType: const TextInputType.numberWithOptions(
+                              decimal: true),
                           style: TextStyle(
                               fontSize: 15,
                               fontWeight: FontWeight.bold,
                               color: Colors.teal.shade700),
                           decoration: InputDecoration(
                             border: OutlineInputBorder(
-                                borderRadius:
-                                    BorderRadius.circular(8),
-                                borderSide: const BorderSide(
-                                    color: Colors.orange)),
+                                borderRadius: BorderRadius.circular(8),
+                                borderSide:
+                                    const BorderSide(color: Colors.orange)),
                             focusedBorder: OutlineInputBorder(
-                                borderRadius:
-                                    BorderRadius.circular(8),
+                                borderRadius: BorderRadius.circular(8),
                                 borderSide: const BorderSide(
                                     color: Colors.orange, width: 2)),
                             contentPadding:
                                 const EdgeInsets.symmetric(vertical: 8),
                           ),
                           onTap: () => _selectAllField(qtyCtrl),
-                          onChanged: (v) => setSheet(() =>
-                              amount = double.tryParse(v) ?? amount),
+                          onChanged: (v) => setSheet(
+                              () => amount = double.tryParse(v) ?? amount),
                         ),
                       ),
                       const SizedBox(width: 6),
@@ -665,19 +659,16 @@ Future<void> _saveBalance() async {
                           icon: Icons.add,
                           onTap: () => setSheet(() {
                                 amount += 1;
-                                qtyCtrl.text =
-                                    amount.toStringAsFixed(1);
+                                qtyCtrl.text = amount.toStringAsFixed(1);
                               })),
                       const SizedBox(width: 8),
-                      const Text('الكمية',
-                          style: TextStyle(fontSize: 13)),
+                      const Text('الكمية', style: TextStyle(fontSize: 13)),
                     ]),
                     const SizedBox(height: 12),
 
                     // ── Available quantity ──
                     Row(
-                      mainAxisAlignment:
-                          MainAxisAlignment.spaceBetween,
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
                         const Text('الكمية المتوفرة',
                             style: TextStyle(fontSize: 13)),
@@ -685,15 +676,12 @@ Future<void> _saveBalance() async {
                           padding: const EdgeInsets.symmetric(
                               horizontal: 24, vertical: 8),
                           decoration: BoxDecoration(
-                            border: Border.all(
-                                color: Colors.grey.shade300),
+                            border: Border.all(color: Colors.grey.shade300),
                             borderRadius: BorderRadius.circular(8),
                           ),
-                          child: Text(
-                              prodInfo!.quantity.toStringAsFixed(1),
+                          child: Text(prodInfo!.quantity.toStringAsFixed(1),
                               style: const TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold)),
+                                  fontSize: 15, fontWeight: FontWeight.bold)),
                         ),
                       ],
                     ),
@@ -715,53 +703,42 @@ Future<void> _saveBalance() async {
                       Expanded(
                         child: ElevatedButton(
                           style: ElevatedButton.styleFrom(
-                            backgroundColor:
-                                Colors.orange.withOpacity(0.85),
+                            backgroundColor: Colors.orange.withOpacity(0.85),
                             shape: RoundedRectangleBorder(
-                                borderRadius:
-                                    BorderRadius.circular(8)),
-                            padding: const EdgeInsets.symmetric(
-                                vertical: 12),
+                                borderRadius: BorderRadius.circular(8)),
+                            padding: const EdgeInsets.symmetric(vertical: 12),
                           ),
                           onPressed: isSaving
                               ? null
                               : () async {
                                   setSheet(() => isSaving = true);
                                   try {
-                                    final String newName =
-                                        prodInfo!.name;
+                                    final String newName = prodInfo!.name;
                                     final String oldName =
                                         product['product'].toString();
-                                    final double oldAmount =
-                                        double.tryParse(product[
-                                                    'amount']
-                                                .toString()) ??
-                                            0.0;
+                                    final double oldAmount = double.tryParse(
+                                            product['amount'].toString()) ??
+                                        0.0;
                                     final double newAmount = amount;
                                     final double newPrice = prodInfo!
-                                        .priceForTier(
-                                            priceTier, customPrice);
+                                        .priceForTier(priceTier, customPrice);
                                     final double newTotal =
                                         newAmount * newPrice;
 
                                     // Restore old product quantity
-                                    final oldQ =
-                                        await FirebaseFirestore
-                                            .instance
-                                            .collection('products')
-                                            .where('name',
-                                                isEqualTo: oldName)
-                                            .get();
+                                    final oldQ = await FirebaseFirestore
+                                        .instance
+                                        .collection('products')
+                                        .where('name', isEqualTo: oldName)
+                                        .get();
                                     for (var doc in oldQ.docs) {
-                                      final qty = (doc['quantity']
-                                              as num)
-                                          .toDouble();
+                                      final qty =
+                                          (doc['quantity'] as num).toDouble();
                                       await FirebaseFirestore.instance
                                           .collection('products')
                                           .doc(doc.id)
-                                          .update({
-                                        'quantity': qty + oldAmount
-                                      });
+                                          .update(
+                                              {'quantity': qty + oldAmount});
                                       await FirebaseFirestore.instance
                                           .collection('products')
                                           .doc(doc.id)
@@ -774,23 +751,19 @@ Future<void> _saveBalance() async {
                                     }
 
                                     // Decrease new product quantity
-                                    final newQ =
-                                        await FirebaseFirestore
-                                            .instance
-                                            .collection('products')
-                                            .where('name',
-                                                isEqualTo: newName)
-                                            .get();
+                                    final newQ = await FirebaseFirestore
+                                        .instance
+                                        .collection('products')
+                                        .where('name', isEqualTo: newName)
+                                        .get();
                                     for (var doc in newQ.docs) {
-                                      final qty = (doc['quantity']
-                                              as num)
-                                          .toDouble();
+                                      final qty =
+                                          (doc['quantity'] as num).toDouble();
                                       await FirebaseFirestore.instance
                                           .collection('products')
                                           .doc(doc.id)
-                                          .update({
-                                        'quantity': qty - newAmount
-                                      });
+                                          .update(
+                                              {'quantity': qty - newAmount});
                                       await FirebaseFirestore.instance
                                           .collection('products')
                                           .doc(doc.id)
@@ -809,26 +782,22 @@ Future<void> _saveBalance() async {
                                         .doc(widget.clientId)
                                         .collection('invoices')
                                         .doc(invoiceId);
-                                    final snap =
-                                        await invoiceRef.get();
-                                    final List<
-                                            Map<String, dynamic>>
-                                        prods = List<
-                                            Map<String,
-                                                dynamic>>.from(
-                                        snap['products']);
+                                    final snap = await invoiceRef.get();
+                                    final List<Map<String, dynamic>> prods =
+                                        List<Map<String, dynamic>>.from(
+                                            snap['products']);
                                     prods[productIndex] = {
                                       'product': newName,
                                       'amount': newAmount.toString(),
-                                      'selectedPrice':
-                                          newPrice.toString(),
+                                      'selectedPrice': newPrice.toString(),
                                       'total': newTotal.toString(),
                                     };
-                                    double newTotalSum =
-                                        prods.fold(0.0, (s, p) =>
+                                    double newTotalSum = prods.fold(
+                                        0.0,
+                                        (s, p) =>
                                             s +
-                                            (double.tryParse(p['total']
-                                                    .toString()) ??
+                                            (double.tryParse(
+                                                    p['total'].toString()) ??
                                                 0.0));
                                     await invoiceRef.update({
                                       'products': prods,
@@ -838,17 +807,15 @@ Future<void> _saveBalance() async {
                                     await ClientInvoiceBalanceSyncService
                                         .syncForClient(widget.clientId);
 
-                                    ScaffoldMessenger.of(context)
-                                        .showSnackBar(const SnackBar(
-                                            content: Text(
-                                                'تم تعديل المنتج بنجاح')));
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                            content:
+                                                Text('تم تعديل المنتج بنجاح')));
                                     setState(() {});
                                     Navigator.pop(ctx);
                                   } catch (e) {
-                                    ScaffoldMessenger.of(context)
-                                        .showSnackBar(SnackBar(
-                                            content: Text(
-                                                'حدث خطأ: $e')));
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                        SnackBar(content: Text('حدث خطأ: $e')));
                                     if (ctx.mounted) {
                                       setSheet(() => isSaving = false);
                                     }
@@ -859,8 +826,7 @@ Future<void> _saveBalance() async {
                                   width: 16,
                                   height: 16,
                                   child: CircularProgressIndicator(
-                                      strokeWidth: 2,
-                                      color: Colors.white))
+                                      strokeWidth: 2, color: Colors.white))
                               : const Text('متابعة',
                                   style: TextStyle(
                                       color: Colors.white,
@@ -1083,24 +1049,21 @@ Future<void> _saveBalance() async {
                         title: const Text('كشف حساب مالي (الدفعات فقط)'),
                         value: ClientStatementType.financial,
                         groupValue: statementType,
-                        onChanged: (v) =>
-                            setDialog(() => statementType = v!),
+                        onChanged: (v) => setDialog(() => statementType = v!),
                       ),
                       RadioListTile<ClientStatementType>(
                         dense: true,
                         title: const Text('كشف حساب الفواتير'),
                         value: ClientStatementType.invoices,
                         groupValue: statementType,
-                        onChanged: (v) =>
-                            setDialog(() => statementType = v!),
+                        onChanged: (v) => setDialog(() => statementType = v!),
                       ),
                       RadioListTile<ClientStatementType>(
                         dense: true,
                         title: const Text('كشف حساب فواتير المرتجع'),
                         value: ClientStatementType.returns,
                         groupValue: statementType,
-                        onChanged: (v) =>
-                            setDialog(() => statementType = v!),
+                        onChanged: (v) => setDialog(() => statementType = v!),
                       ),
                       const SizedBox(height: 12),
                       const Text('الفترة',
@@ -1108,7 +1071,8 @@ Future<void> _saveBalance() async {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('من تاريخ'),
-                        subtitle: Text(intl.DateFormat('dd/MM/yyyy').format(from)),
+                        subtitle:
+                            Text(intl.DateFormat('dd/MM/yyyy').format(from)),
                         trailing: const Icon(Icons.calendar_today),
                         onTap: () => _pickDate(ctx, from, (d) {
                           setDialog(() => from = d);
@@ -1117,7 +1081,8 @@ Future<void> _saveBalance() async {
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         title: const Text('إلى تاريخ'),
-                        subtitle: Text(intl.DateFormat('dd/MM/yyyy').format(to)),
+                        subtitle:
+                            Text(intl.DateFormat('dd/MM/yyyy').format(to)),
                         trailing: const Icon(Icons.calendar_today),
                         onTap: () => _pickDate(ctx, to, (d) {
                           setDialog(() => to = d);
@@ -1317,8 +1282,7 @@ Future<void> _saveBalance() async {
     );
   }
 
-  Future<void> _shareInvoiceOnWhatsApp(
-      Map<String, dynamic> invoiceData) async {
+  Future<void> _shareInvoiceOnWhatsApp(Map<String, dynamic> invoiceData) async {
     final data = Map<String, dynamic>.from(invoiceData);
     data['clientName'] ??= widget.clientId;
     await WhatsappInvoiceShareService.showShareOptions(
@@ -1347,9 +1311,6 @@ Future<void> _saveBalance() async {
     );
   }
 
-
-
-
   @override
   void initState() {
     super.initState();
@@ -1374,6 +1335,7 @@ Future<void> _saveBalance() async {
     _invoiceScrollController.removeListener(_onInvoiceScroll);
     _invoiceScrollController.dispose();
     _balanceController.dispose();
+    _addBalanceController.dispose();
     super.dispose();
   }
 
@@ -1416,7 +1378,8 @@ Future<void> _saveBalance() async {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
-                      icon: const Icon(Icons.print_outlined, color: Colors.black87),
+                      icon: const Icon(Icons.print_outlined,
+                          color: Colors.black87),
                       tooltip: 'طباعة',
                       onPressed: () => _printInvoice(invoiceData),
                     ),
@@ -1445,8 +1408,10 @@ Future<void> _saveBalance() async {
               ],
             ),
             const SizedBox(height: 5),
-            Text('التاريخ: $formattedDate', style: const TextStyle(fontSize: 14)),
-            Text('$formattedTime :الوقت ', style: const TextStyle(fontSize: 14)),
+            Text('التاريخ: $formattedDate',
+                style: const TextStyle(fontSize: 14)),
+            Text('$formattedTime :الوقت ',
+                style: const TextStyle(fontSize: 14)),
             SizedBox(height: 10.h),
             _buildInvoiceProductsTable(
               List<dynamic>.from(invoiceData['products'] ?? []),
@@ -1520,11 +1485,12 @@ Future<void> _saveBalance() async {
         Scaffold(
           appBar: AppBar(
             backgroundColor: Colors.black.withOpacity(0.7),
-            title: const Text('فواتير العميل' , style: TextStyle(
-              fontSize: 20,
-              fontWeight: FontWeight.bold,
-              color: Colors.white,
-            )),
+            title: const Text('فواتير العميل',
+                style: TextStyle(
+                  fontSize: 20,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.white,
+                )),
             actions: [
               IconButton(
                 icon: const Icon(Icons.picture_as_pdf, color: Colors.white),
@@ -1541,34 +1507,74 @@ Future<void> _saveBalance() async {
                 padding: const EdgeInsets.all(10.0),
                 child: Column(
                   children: [
-                    TextField(
-                      controller: _balanceController,
-                      keyboardType: TextInputType.number,
-                      enabled: !_isSaving, // Disable during saving
-                      decoration: InputDecoration(
-                        focusedBorder: OutlineInputBorder(
-                          borderSide:
-                              BorderSide(color: Colors.black.withOpacity(0.7)),
-                        ),
-                        filled: true,
-                        fillColor: Colors.grey.withOpacity(0.1),
-                        labelText: 'أدخل الرصيد',
-                        labelStyle: TextStyle(
-                          color: Colors.black.withOpacity(0.7),
-                          fontSize: 16,
-                        ),
-                        border: OutlineInputBorder(
-                          borderSide: BorderSide(
-                            color: Colors.black.withOpacity(0.7),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: _balanceController,
+                            keyboardType: TextInputType.number,
+                            enabled: !_isSaving,
+                            decoration: InputDecoration(
+                              focusedBorder: OutlineInputBorder(
+                                borderSide: BorderSide(
+                                    color: Colors.black.withOpacity(0.7)),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey.withOpacity(0.1),
+                              labelText: 'خصم من الرصيد (سداد)',
+                              labelStyle: TextStyle(
+                                color: Colors.black.withOpacity(0.7),
+                                fontSize: 14.sp,
+                              ),
+                              border: OutlineInputBorder(
+                                borderSide: BorderSide(
+                                  color: Colors.black.withOpacity(0.7),
+                                ),
+                              ),
+                              prefixIcon: const Icon(Icons.remove_circle_outline,
+                                  color: Colors.red),
+                            ),
+                            onChanged: (value) {
+                              if (value.isNotEmpty) {
+                                _addBalanceController.clear();
+                              }
+                            },
                           ),
                         ),
-                        prefixIcon: const Icon(Icons.attach_money_rounded),
-                      ),
-                      onChanged: (value) {
-                        setState(() {
-                          _enteredBalance = double.tryParse(value) ?? 0.0;
-                        });
-                      },
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: TextField(
+                            controller: _addBalanceController,
+                            keyboardType: TextInputType.number,
+                            enabled: !_isSaving,
+                            decoration: InputDecoration(
+                              focusedBorder: OutlineInputBorder(
+                                borderSide: BorderSide(
+                                    color: Colors.black.withOpacity(0.7)),
+                              ),
+                              filled: true,
+                              fillColor: Colors.grey.withOpacity(0.1),
+                              labelText: 'إضافة إلى الرصيد',
+                              labelStyle: TextStyle(
+                                color: Colors.black.withOpacity(0.7),
+                                fontSize: 14.sp,
+                              ),
+                              border: OutlineInputBorder(
+                                borderSide: BorderSide(
+                                  color: Colors.black.withOpacity(0.7),
+                                ),
+                              ),
+                              prefixIcon: const Icon(Icons.add_circle_outline,
+                                  color: Colors.green),
+                            ),
+                            onChanged: (value) {
+                              if (value.isNotEmpty) {
+                                _balanceController.clear();
+                              }
+                            },
+                          ),
+                        ),
+                      ],
                     ),
                     SizedBox(height: 10),
                     Row(
@@ -1579,9 +1585,10 @@ Future<void> _saveBalance() async {
                               shape: RoundedRectangleBorder(
                                 borderRadius: BorderRadius.circular(8.0),
                               ),
-                              backgroundColor: (_isSaving || _generatingStatement)
-                                  ? Colors.grey
-                                  : Colors.orange.shade800),
+                              backgroundColor:
+                                  (_isSaving || _generatingStatement)
+                                      ? Colors.grey
+                                      : Colors.orange.shade800),
                           onPressed: (_isSaving || _generatingStatement)
                               ? null
                               : _showAccountStatementDialog,
@@ -1611,14 +1618,17 @@ Future<void> _saveBalance() async {
                               backgroundColor: _isSaving
                                   ? Colors.grey
                                   : Colors.black.withOpacity(0.7)),
-                          onPressed: _isSaving ? null : _saveBalance, // Disable when saving
+                          onPressed: _isSaving
+                              ? null
+                              : _saveBalance, // Disable when saving
                           child: _isSaving
                               ? SizedBox(
                                   width: 20,
                                   height: 20,
                                   child: CircularProgressIndicator(
                                     strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(Colors.white),
+                                    valueColor: AlwaysStoppedAnimation<Color>(
+                                        Colors.white),
                                   ),
                                 )
                               : Text(
@@ -1636,12 +1646,15 @@ Future<void> _saveBalance() async {
                                 borderRadius: BorderRadius.circular(8.0),
                               ),
                               backgroundColor: Colors.black.withOpacity(0.7)),
-                          onPressed: _isSaving ? null : () { // Disable when saving
-                            Navigator.of(context).push(MaterialPageRoute(
-                              builder: (context) =>
-                                  BalanceHistoryPage(clientId: widget.clientId),
-                            ));
-                          },
+                          onPressed: _isSaving
+                              ? null
+                              : () {
+                                  // Disable when saving
+                                  Navigator.of(context).push(MaterialPageRoute(
+                                    builder: (context) => BalanceHistoryPage(
+                                        clientId: widget.clientId),
+                                  ));
+                                },
                           child: Text(
                             'عرض تاريخ الرصيد',
                             style: TextStyle(
@@ -1703,7 +1716,6 @@ Future<void> _saveBalance() async {
                 children: [
                   const CircularProgressIndicator(color: Colors.white),
                   SizedBox(height: 12.h),
-                  
                 ],
               ),
             ),
@@ -1739,23 +1751,49 @@ class BalanceHistoryPage extends StatelessWidget {
 
           final history = snapshot.data!.docs;
 
-          return DataTable(
-            columns: const [
-              DataColumn(label: Text('الرصيد المدخل')),
-              DataColumn(label: Text('الرصيد قبل')),
-              DataColumn(label: Text('التاريخ')),
-            ],
-            rows: history.map((doc) {
-              final data = doc.data() as Map<String, dynamic>;
-              final timestamp = (data['timestamp'] as Timestamp).toDate();
-              final formattedDate = intl.DateFormat('yyyy-MM-dd').format(timestamp);
+          return SingleChildScrollView(
+            scrollDirection: Axis.horizontal,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.vertical,
+              child: DataTable(
+                columns: const [
+                  DataColumn(label: Text('نوع العملية')),
+                  DataColumn(label: Text('المبلغ')),
+                  DataColumn(label: Text('الرصيد قبل')),
+                  DataColumn(label: Text('التاريخ')),
+                ],
+                rows: history.map((doc) {
+                  final data = doc.data() as Map<String, dynamic>;
+                  final timestamp = data['timestamp'] != null
+                      ? (data['timestamp'] as Timestamp).toDate()
+                      : DateTime.now();
+                  final formattedDate =
+                      intl.DateFormat('yyyy-MM-dd').format(timestamp);
+                  final type = data['type']?.toString() ?? 'deduction';
+                  final isAddition = type == 'addition';
 
-              return DataRow(cells: [
-                DataCell(Text((data['enteredBalance'] as num).toStringAsFixed(2))), // Format to 2 decimal places
-                DataCell(Text((data['balanceBefore'] as num).toStringAsFixed(2))),
-                DataCell(Text(formattedDate)),
-              ]);
-            }).toList(),
+                  return DataRow(cells: [
+                    DataCell(Text(
+                      isAddition ? 'إضافة رصيد' : 'خصم رصيد (سداد)',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: isAddition ? Colors.green.shade700 : Colors.red.shade700,
+                      ),
+                    )),
+                    DataCell(Text(
+                      '${isAddition ? '+' : '-'}${(data['enteredBalance'] as num).toStringAsFixed(2)}',
+                      style: TextStyle(
+                        fontWeight: FontWeight.bold,
+                        color: isAddition ? Colors.green.shade700 : Colors.red.shade700,
+                      ),
+                    )),
+                    DataCell(
+                        Text((data['balanceBefore'] as num).toStringAsFixed(2))),
+                    DataCell(Text(formattedDate)),
+                  ]);
+                }).toList(),
+              ),
+            ),
           );
         },
       ),
@@ -1851,9 +1889,8 @@ class _PriceTierBtn extends StatelessWidget {
         width: 32,
         height: 32,
         decoration: BoxDecoration(
-          color: selected
-              ? Colors.orange.withOpacity(0.85)
-              : Colors.grey.shade200,
+          color:
+              selected ? Colors.orange.withOpacity(0.85) : Colors.grey.shade200,
           borderRadius: BorderRadius.circular(6),
         ),
         child: Center(

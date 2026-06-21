@@ -8,6 +8,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../Screeens/AddProductPage.dart';
 import '../Widgets/invoice_display_widgets.dart';
 
 class BuyingInvoiceDetailPage extends StatelessWidget {
@@ -52,6 +53,21 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
           style: TextStyle(fontSize: 20.sp, color: Colors.white),
         ),
         backgroundColor: Colors.black.withOpacity(0.7),
+        actions: [
+          // ── Edit button ──
+          IconButton(
+            icon: Icon(Icons.edit_outlined, color: Colors.white, size: 22.sp),
+            tooltip: 'تعديل الفاتورة',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => AddProductPage(invoiceToEdit: invoice),
+                ),
+              );
+            },
+          ),
+        ],
       ),
       body: SingleChildScrollView(
         child: Column(

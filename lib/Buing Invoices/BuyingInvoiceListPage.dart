@@ -61,8 +61,11 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
       if (!mounted) return;
       setState(() {
         _invoices.clear();
-        _invoices.addAll(querySnapshot.docs
-            .map((doc) => doc.data() as Map<String, dynamic>));
+        _invoices.addAll(querySnapshot.docs.map((doc) {
+          final data = Map<String, dynamic>.from(doc.data() as Map);
+          data['id'] = doc.id; // include Firestore doc ID for editing
+          return data;
+        }));
         _filterInvoices(); // Apply filtering after fetching
         _isFetching = false;
       });
