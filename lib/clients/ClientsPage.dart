@@ -2401,6 +2401,204 @@ class _ClientRemainingReportPageState
     }
   }
 
+  Future<void> _generateSingleClientPdf(QueryDocumentSnapshot client) async {
+    setState(() => _generating = true);
+    try {
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
+
+      final now = DateTime.now();
+      final dateStr = DateFormat('dd/MM/yyyy').format(now);
+      final timeStr = DateFormat('hh:mm:ss a').format(now);
+
+      pw.TextStyle cell(
+              {bool bold = false,
+              PdfColor color = PdfColors.black,
+              double fontSize = 11}) =>
+          pw.TextStyle(
+            font: bold ? amiriBold : amiriRegular,
+            fontSize: fontSize,
+            color: color,
+          );
+
+      pw.Widget dataRow(String label, String value, {bool isRed = false, bool isBold = false}) => pw.Padding(
+            padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 8),
+            child: pw.Row(
+              mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+              children: [
+                pw.Text(value,
+                    textDirection: pw.TextDirection.rtl,
+                    style: cell(bold: isBold, color: isRed ? PdfColors.red : PdfColors.black, fontSize: 12)),
+                pw.Text(label,
+                    textDirection: pw.TextDirection.rtl,
+                    style: cell(bold: true, fontSize: 12)),
+              ],
+            ),
+          );
+
+      final clientName = (client['clientName'] ?? '').toString();
+      final balance = (client['balance'] ?? 0.0).toDouble();
+      final phone = (client.data() as Map<String, dynamic>).containsKey('phone') 
+          ? (client['phone'] ?? '').toString() 
+          : '';
+
+      String balanceStatus = 'خالص';
+      double displayBalance = balance;
+      bool isRed = false;
+      if (balance > 0) {
+        balanceStatus = 'عليه (مدين)';
+        isRed = true;
+      } else if (balance < 0) {
+        balanceStatus = 'له (دائن)';
+        displayBalance = balance.abs();
+      }
+
+      final pdf = pw.Document();
+      pdf.addPage(
+        pw.Page(
+          pageFormat: PdfPageFormat.a4,
+          margin: const pw.EdgeInsets.all(32),
+          build: (pw.Context ctx) {
+            return pw.Column(
+              crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+              children: [
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.start,
+                      children: [
+                        pw.Text('Date: $dateStr', style: cell(fontSize: 9)),
+                        pw.Text('Time: $timeStr', style: cell(fontSize: 9)),
+                      ],
+                    ),
+                    pw.Text(
+                      'كشف حساب عميل',
+                      textDirection: pw.TextDirection.rtl,
+                      style: cell(bold: true, fontSize: 16),
+                    ),
+                    pw.SizedBox(width: 50),
+                  ],
+                ),
+                pw.Divider(thickness: 1, color: PdfColors.grey300),
+                pw.SizedBox(height: 20),
+                pw.Container(
+                  decoration: pw.BoxDecoration(
+                    border: pw.Border.all(color: PdfColors.grey400, width: 0.5),
+                    borderRadius: const pw.BorderRadius.all(pw.Radius.circular(8)),
+                  ),
+                  padding: const pw.EdgeInsets.all(16),
+                  child: pw.Column(
+                    children: [
+                      dataRow('اسم العميل:', clientName, isBold: true),
+                      pw.Divider(thickness: 0.5, color: PdfColors.grey200),
+                      dataRow('رقم الهاتف (واتساب):', phone.isNotEmpty ? phone : 'غير متوفر'),
+                      pw.Divider(thickness: 0.5, color: PdfColors.grey200),
+                      dataRow('حالة الحساب:', balanceStatus, isRed: isRed, isBold: true),
+                      pw.Divider(thickness: 0.5, color: PdfColors.grey200),
+                      dataRow('المبلغ المتبقي:', '${displayBalance.toStringAsFixed(2)} ج.م', isRed: isRed, isBold: true),
+                    ],
+                  ),
+                ),
+                pw.SizedBox(height: 50),
+                pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Text('توقيع المستلم',
+                            textDirection: pw.TextDirection.rtl,
+                            style: cell(bold: true)),
+                        pw.SizedBox(height: 40),
+                        pw.Container(width: 120, height: 1, color: PdfColors.black),
+                      ],
+                    ),
+                    pw.Column(
+                      crossAxisAlignment: pw.CrossAxisAlignment.center,
+                      children: [
+                        pw.Text('توقيع المدير',
+                            textDirection: pw.TextDirection.rtl,
+                            style: cell(bold: true)),
+                        pw.SizedBox(height: 40),
+                        pw.Container(width: 120, height: 1, color: PdfColors.black),
+                      ],
+                    ),
+                  ],
+                ),
+              ],
+            );
+          },
+        ),
+      );
+
+      final dir = await getTemporaryDirectory();
+      final file = File(
+          '${dir.path}/client_statement_${clientName}_${dateStr.replaceAll('/', '-')}.pdf');
+      await file.writeAsBytes(await pdf.save());
+
+      await Share.shareXFiles([XFile(file.path)],
+          text: 'كشف حساب العميل $clientName');
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في إنشاء التقرير: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _generating = false);
+    }
+  }
+
+  void _onPdfReportPressed(List<QueryDocumentSnapshot> clients) {
+    showModalBottomSheet(
+      context: context,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (ctx) => Directionality(
+        textDirection: ui.TextDirection.rtl,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(vertical: 16, horizontal: 12),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const Text(
+                'تصدير تقرير PDF',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.person, color: Colors.blue),
+                title: const Text('كشف حساب لعميل محدد'),
+                onTap: () async {
+                  Navigator.pop(ctx);
+                  final selectedClient = await showDialog<QueryDocumentSnapshot>(
+                    context: context,
+                    builder: (context) => _ClientSelectionDialog(clients: clients),
+                  );
+                  if (selectedClient != null) {
+                    _generateSingleClientPdf(selectedClient);
+                  }
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.people, color: Colors.green),
+                title: const Text('تقرير بجميع العملاء (ذمم العملاء)'),
+                onTap: () {
+                  Navigator.pop(ctx);
+                  _generatePdf(clients);
+                },
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Directionality(
@@ -2499,14 +2697,15 @@ class _ClientRemainingReportPageState
         floatingActionButton: StreamBuilder<QuerySnapshot>(
           stream: FirebaseFirestore.instance
               .collection('clients')
-              .where('balance', isGreaterThan: 0)
               .snapshots(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const SizedBox();
-            final clients = snapshot.data!.docs;
+            final clients = snapshot.data!.docs
+                .where((d) => (d['balance'] ?? 0.0) != 0.0)
+                .toList();
             return FloatingActionButton.extended(
               backgroundColor: Colors.black87,
-              onPressed: _generating ? null : () => _generatePdf(clients),
+              onPressed: _generating ? null : () => _onPdfReportPressed(clients),
               icon: const Icon(Icons.picture_as_pdf, color: Colors.white),
               label: const Text('تقرير PDF',
                   style: TextStyle(color: Colors.white)),
@@ -3077,6 +3276,79 @@ class _ClientListPageState extends State<_ClientListPage> {
                 );
               },
             ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ClientSelectionDialog extends StatefulWidget {
+  final List<QueryDocumentSnapshot> clients;
+  const _ClientSelectionDialog({Key? key, required this.clients}) : super(key: key);
+
+  @override
+  State<_ClientSelectionDialog> createState() => _ClientSelectionDialogState();
+}
+
+class _ClientSelectionDialogState extends State<_ClientSelectionDialog> {
+  String _search = '';
+
+  @override
+  Widget build(BuildContext context) {
+    final filtered = widget.clients.where((c) {
+      final name = (c['clientName'] ?? '').toString().toLowerCase();
+      return name.contains(_search.toLowerCase());
+    }).toList();
+
+    return Directionality(
+      textDirection: ui.TextDirection.rtl,
+      child: AlertDialog(
+        title: const Text('اختر عميل لتصدير التقرير'),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                textAlign: TextAlign.right,
+                decoration: const InputDecoration(
+                  hintText: 'بحث عن عميل...',
+                  prefixIcon: Icon(Icons.search),
+                  border: OutlineInputBorder(),
+                  contentPadding: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                ),
+                onChanged: (v) => setState(() => _search = v),
+              ),
+              const SizedBox(height: 12),
+              Flexible(
+                child: filtered.isEmpty
+                    ? const Padding(
+                        padding: EdgeInsets.all(20.0),
+                        child: Text('لا يوجد نتائج'),
+                      )
+                    : ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: filtered.length,
+                        itemBuilder: (context, index) {
+                          final doc = filtered[index];
+                          final name = (doc['clientName'] ?? '').toString();
+                          final balance = (doc['balance'] ?? 0.0).toDouble();
+                          return ListTile(
+                            title: Text(name, style: const TextStyle(fontWeight: FontWeight.bold)),
+                            subtitle: Text('الرصيد: ${balance.toStringAsFixed(2)}'),
+                            onTap: () => Navigator.pop(context, doc),
+                          );
+                        },
+                      ),
+              ),
+            ],
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: const Text('إلغاء'),
           ),
         ],
       ),

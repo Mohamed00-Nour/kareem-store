@@ -814,7 +814,8 @@ class _AddProductPageState extends State<AddProductPage> {
     final Product product = editIndex != null
         ? (() {
             final item = _addedProducts[editIndex];
-            final itemId = item['productId']?.toString() ?? item['id']?.toString();
+            final itemId =
+                item['productId']?.toString() ?? item['id']?.toString();
             final itemName = item['product']?.toString();
             return _products.firstWhere(
               (p) => (itemId != null && p.id == itemId) || p.name == itemName,
@@ -822,10 +823,14 @@ class _AddProductPageState extends State<AddProductPage> {
                 id: itemId ?? '',
                 randomNumber: 0,
                 name: itemName ?? '',
-                sellingPrice1: invoiceNum(item['newSellingPrice1'] ?? item['sellingPrice1']),
-                sellingPrice2: invoiceNum(item['newSellingPrice2'] ?? item['sellingPrice2']),
-                sellingPrice3: invoiceNum(item['newSellingPrice3'] ?? item['sellingPrice3']),
-                costPrice: invoiceNum(item['newCostPrice'] ?? item['cost'] ?? item['costPrice']),
+                sellingPrice1: invoiceNum(
+                    item['newSellingPrice1'] ?? item['sellingPrice1']),
+                sellingPrice2: invoiceNum(
+                    item['newSellingPrice2'] ?? item['sellingPrice2']),
+                sellingPrice3: invoiceNum(
+                    item['newSellingPrice3'] ?? item['sellingPrice3']),
+                costPrice: invoiceNum(
+                    item['newCostPrice'] ?? item['cost'] ?? item['costPrice']),
                 quantity: 0.0,
                 alertAmount: 0,
               ),
@@ -1932,18 +1937,20 @@ class _AddProductPageState extends State<AddProductPage> {
                                   if (addingNewSupplier) {
                                     final name = newSupplierCtrl.text.trim();
                                     if (name.isEmpty) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
-                                          const SnackBar(
-                                              content:
-                                                  Text('يرجى إدخال اسم المورد')));
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(const SnackBar(
+                                              content: Text(
+                                                  'يرجى إدخال اسم المورد')));
                                       return;
                                     }
-                                    finalSupplier = Supplier(id: '', name: name);
+                                    finalSupplier =
+                                        Supplier(id: '', name: name);
                                   }
                                   if (finalSupplier == null) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                         const SnackBar(
-                                            content: Text('يجب اختيار المورد')));
+                                            content:
+                                                Text('يجب اختيار المورد')));
                                     return;
                                   }
                                   // Read controller values BEFORE pop disposes them
@@ -1957,7 +1964,8 @@ class _AddProductPageState extends State<AddProductPage> {
                                     _isSaving = true;
                                   });
                                   Navigator.pop(ctx);
-                                  setState(() => _selectedSupplier = finalSupplier);
+                                  setState(
+                                      () => _selectedSupplier = finalSupplier);
                                   await _fetchAndSetSupplierBalance(
                                       finalSupplier!.name);
                                   _saveData(
@@ -2304,6 +2312,13 @@ class _AddProductPageState extends State<AddProductPage> {
                       child: Row(children: [
                         SizedBox(width: 28.w),
                         Expanded(
+                            flex: 1,
+                            child: Text('#',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                    fontSize: 12.sp,
+                                    fontWeight: FontWeight.bold))),
+                        Expanded(
                             flex: 3,
                             child: Text('الإجمالي',
                                 textAlign: TextAlign.center,
@@ -2396,6 +2411,14 @@ class _AddProductPageState extends State<AddProductPage> {
                                                 size: 20.sp),
                                           ),
                                         ),
+                                        Expanded(
+                                            flex: 1,
+                                            child: Text('${index + 1}',
+                                                textAlign: TextAlign.center,
+                                                style: TextStyle(
+                                                    fontSize: 12.sp,
+                                                    color:
+                                                        Colors.grey.shade600))),
                                         Expanded(
                                             flex: 3,
                                             child: Text(
