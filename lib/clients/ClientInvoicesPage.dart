@@ -48,6 +48,7 @@ class ClientInvoicesPage extends StatefulWidget {
 
 class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   static const int _invoicePageSize = 20;
+  String? _clientName;
 
   final TextEditingController _balanceController = TextEditingController();
   final TextEditingController _addBalanceController = TextEditingController();
@@ -1284,7 +1285,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   Future<void> _shareInvoiceOnWhatsApp(Map<String, dynamic> invoiceData) async {
     final data = Map<String, dynamic>.from(invoiceData);
-    data['clientName'] ??= widget.clientId;
+    data['clientName'] ??= _clientName ?? widget.clientId;
     await WhatsappInvoiceShareService.showShareOptions(
       context,
       invoice: data,
@@ -1316,9 +1317,24 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     super.initState();
     _loadUserRole();
     _fetchAllProds();
+    _fetchClientName();
     _invoiceScrollController.addListener(_onInvoiceScroll);
     _fetchInvoices(reset: true);
     _syncClientInvoiceBalances();
+  }
+
+  Future<void> _fetchClientName() async {
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('clients')
+          .doc(widget.clientId)
+          .get();
+      if (snap.exists && mounted) {
+        setState(() {
+          _clientName = snap.data()?['clientName']?.toString();
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _syncClientInvoiceBalances() async {

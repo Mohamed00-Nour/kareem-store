@@ -231,16 +231,17 @@ class InvoicePrintService {
     final clientName = invoice['clientName']?.toString() ?? '';
 
     if (settings.showCustomerAddressAndPhone && clientName.isNotEmpty) {
-      final snap = await FirebaseFirestore.instance
+      final query = await FirebaseFirestore.instance
           .collection('clients')
-          .doc(clientName)
+          .where('clientName', isEqualTo: clientName)
+          .limit(1)
           .get();
-      if (snap.exists) {
-        final data = snap.data();
-        address = data?['address']?.toString() ??
-            data?['clientAddress']?.toString();
+      if (query.docs.isNotEmpty) {
+        final data = query.docs.first.data();
+        address = data['address']?.toString() ??
+            data['clientAddress']?.toString();
         phone =
-            data?['phone']?.toString() ?? data?['clientPhone']?.toString();
+            data['phone']?.toString() ?? data['clientPhone']?.toString();
       }
     }
 

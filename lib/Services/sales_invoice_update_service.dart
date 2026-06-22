@@ -38,6 +38,38 @@ class SalesInvoiceUpdateService {
     final oldRemaining = oldTotalSum - oldPaid;
     final invoiceNumber = originalInvoice['invoiceNumber'];
 
+    // Resolve oldClientId by name
+    String? oldClientId;
+    if (oldClient.isNotEmpty) {
+      final query = await FirebaseFirestore.instance
+          .collection('clients')
+          .where('clientName', isEqualTo: oldClient)
+          .limit(1)
+          .get();
+      oldClientId = query.docs.isNotEmpty ? query.docs.first.id : oldClient;
+    }
+
+    // Resolve newClientId by name
+    String? newClientId;
+    if (clientName.isNotEmpty) {
+      final query = await FirebaseFirestore.instance
+          .collection('clients')
+          .where('clientName', isEqualTo: clientName)
+          .limit(1)
+          .get();
+      if (query.docs.isNotEmpty) {
+        newClientId = query.docs.first.id;
+      } else {
+        final newRef = FirebaseFirestore.instance.collection('clients').doc();
+        newClientId = newRef.id;
+        await newRef.set({
+          'clientName': clientName,
+          'balance': 0.0,
+          'id': newClientId,
+        });
+      }
+    }
+
     final allLines = [...oldProducts, ...newProducts];
     final catalog =
         await InvoiceStockService.resolveCatalogVerified(lines: allLines);
@@ -68,6 +100,7 @@ class SalesInvoiceUpdateService {
 
     final rootUpdate = <String, dynamic>{
       'clientName': clientName,
+      'clientId': newClientId,
       'date': selectedDate,
       'totalSum': totalSumFinal,
       'profitMargin': profitMargin,
@@ -93,6 +126,7 @@ class SalesInvoiceUpdateService {
     final clientSubFields = <String, dynamic>{
       'invoiceId': rootInvoiceId,
       'invoiceNumber': invoiceNumber,
+      'clientId': newClientId,
       'date': selectedDate,
       'totalSum': totalSumFinal,
       'paidAmount': paidAmount,
@@ -106,15 +140,15 @@ class SalesInvoiceUpdateService {
     DocumentReference<Map<String, dynamic>>? oldSubRef;
     if (clientSubInvoiceDocId != null &&
         clientSubInvoiceDocId.isNotEmpty &&
-        oldClient.isNotEmpty) {
+        oldClientId != null) {
       oldSubRef = FirebaseFirestore.instance
           .collection('clients')
-          .doc(oldClient)
+          .doc(oldClientId)
           .collection('invoices')
           .doc(clientSubInvoiceDocId);
-    } else if (oldClient.isNotEmpty) {
+    } else if (oldClientId != null) {
       final found = await SalesInvoiceActionsService.findClientSubInvoice(
-        clientId: oldClient,
+        clientId: oldClientId,
         rootInvoiceId: rootInvoiceId,
       );
       if (found != null) {
@@ -130,14 +164,14 @@ class SalesInvoiceUpdateService {
         } else {
           await FirebaseFirestore.instance
               .collection('clients')
-              .doc(clientName)
+              .doc(newClientId)
               .collection('invoices')
               .add(clientSubFields);
         }
       } else {
         await FirebaseFirestore.instance
             .collection('clients')
-            .doc(clientName)
+            .doc(newClientId)
             .collection('invoices')
             .add(clientSubFields);
       }
@@ -147,14 +181,14 @@ class SalesInvoiceUpdateService {
       }
       await FirebaseFirestore.instance
           .collection('clients')
-          .doc(clientName)
+          .doc(newClientId)
           .collection('invoices')
           .add(clientSubFields);
     }
 
-    if (oldClient.isNotEmpty) {
+    if (oldClientId != null) {
       final oldClientRef =
-          FirebaseFirestore.instance.collection('clients').doc(oldClient);
+          FirebaseFirestore.instance.collection('clients').doc(oldClientId);
       final oldSnap = await oldClientRef.get();
       if (oldSnap.exists) {
         final current = invoiceNum(oldSnap.data()?['balance']);
@@ -168,25 +202,16 @@ class SalesInvoiceUpdateService {
       }
     }
 
-    if (clientName.isNotEmpty && clientName != oldClient) {
+    if (newClientId != null && oldClient != clientName) {
       final newClientRef =
-          FirebaseFirestore.instance.collection('clients').doc(clientName);
+          FirebaseFirestore.instance.collection('clients').doc(newClientId);
       final newSnap = await newClientRef.get();
       final newCurrent =
           newSnap.exists ? invoiceNum(newSnap.data()?['balance']) : 0.0;
       await newClientRef.set({
         'clientName': clientName,
         'balance': newCurrent + newRemaining,
-      }, SetOptions(merge: true));
-    } else if (clientName.isNotEmpty && oldClient.isEmpty) {
-      final newClientRef =
-          FirebaseFirestore.instance.collection('clients').doc(clientName);
-      final newSnap = await newClientRef.get();
-      final newCurrent =
-          newSnap.exists ? invoiceNum(newSnap.data()?['balance']) : 0.0;
-      await newClientRef.set({
-        'clientName': clientName,
-        'balance': newCurrent + newRemaining,
+        'id': newClientId,
       }, SetOptions(merge: true));
     }
 

@@ -25,6 +25,27 @@ class ReturnInvoiceSaveService {
         : invoiceDiscount;
     final totalSumFinal = totalSumBeforeDiscount - effectiveDiscountAmt;
 
+    final clientQuery = await FirebaseFirestore.instance
+        .collection('clients')
+        .where('clientName', isEqualTo: clientName)
+        .limit(1)
+        .get();
+    
+    DocumentReference<Map<String, dynamic>> clientDocRef;
+    double existingBalance = 0.0;
+    if (clientQuery.docs.isNotEmpty) {
+      final doc = clientQuery.docs.first;
+      clientDocRef = doc.reference;
+      existingBalance = invoiceNum(doc.data()['balance']);
+    } else {
+      clientDocRef = FirebaseFirestore.instance.collection('clients').doc();
+      await clientDocRef.set({
+        'clientName': clientName,
+        'balance': 0.0,
+        'id': clientDocRef.id,
+      });
+    }
+
     final prep = await Future.wait<dynamic>([
       calculateTotalCost(products),
       _fetchNextReturnInvoiceNumber(),
@@ -32,13 +53,11 @@ class ReturnInvoiceSaveService {
         lines: products,
         seed: productCatalog,
       ),
-      _fetchClientBalance(clientName),
     ]);
 
     final totalCost = prep[0] as double;
     final newInvoiceNumber = prep[1] as int;
     final catalog = prep[2] as Map<String, ResolvedInvoiceProduct>;
-    final existingBalance = prep[3] as double;
 
     final profitMargin = -(totalSumFinal - totalCost);
     final balance = totalSumFinal - paidAmount;
@@ -49,6 +68,7 @@ class ReturnInvoiceSaveService {
       'id': docRef.id,
       'invoiceNumber': newInvoiceNumber,
       'clientName': clientName,
+      'clientId': clientDocRef.id,
       'date': selectedDate,
       'totalSum': totalSumFinal,
       'profitMargin': profitMargin,
@@ -62,9 +82,6 @@ class ReturnInvoiceSaveService {
       'isSpecial': false,
       'products': products,
     };
-
-    final clientDocRef =
-        FirebaseFirestore.instance.collection('clients').doc(clientName);
     final boxDocRef = FirebaseFirestore.instance.collection('box').doc('mainBox');
 
     await Future.wait([
@@ -167,12 +184,13 @@ class ReturnInvoiceSaveService {
   }
 
   static Future<double> _fetchClientBalance(String clientName) async {
-    final clientDoc = await FirebaseFirestore.instance
+    final clientQuery = await FirebaseFirestore.instance
         .collection('clients')
-        .doc(clientName)
+        .where('clientName', isEqualTo: clientName)
+        .limit(1)
         .get();
-    if (clientDoc.exists) {
-      return invoiceNum(clientDoc.data()?['balance']);
+    if (clientQuery.docs.isNotEmpty) {
+      return invoiceNum(clientQuery.docs.first.data()['balance']);
     }
     return 0.0;
   }

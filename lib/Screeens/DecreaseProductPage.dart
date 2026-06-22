@@ -361,27 +361,26 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       ? ''
                                       : EgyptPhoneField.toWhatsappDigits(
                                           phoneText);
-                                  await FirebaseFirestore.instance
-                                      .collection('clients')
-                                      .doc(newName)
-                                      .set({
-                                    'clientName': newName,
-                                    'balance': balance,
-                                    'phone': phone,
-                                    'id': newName,
-                                  }, SetOptions(merge: true));
-                                  if (balance != 0) {
-                                    await FirebaseFirestore.instance
-                                        .collection('clients')
-                                        .doc(newName)
-                                        .collection('balanceHistory')
-                                        .add({
-                                      'enteredBalance': balance,
-                                      'balanceBefore': 0.0,
-                                      'type': 'opening',
-                                      'timestamp': FieldValue.serverTimestamp(),
-                                    });
-                                  }
+                                  final docRef = FirebaseFirestore.instance
+                                       .collection('clients')
+                                       .doc();
+                                   final clientId = docRef.id;
+                                   await docRef.set({
+                                     'clientName': newName,
+                                     'balance': balance,
+                                     'phone': phone,
+                                     'id': clientId,
+                                   }, SetOptions(merge: true));
+                                   if (balance != 0) {
+                                     await docRef
+                                         .collection('balanceHistory')
+                                         .add({
+                                       'enteredBalance': balance,
+                                       'balanceBefore': 0.0,
+                                       'type': 'opening',
+                                       'timestamp': FieldValue.serverTimestamp(),
+                                     });
+                                   }
 
                                   if (!ctx.mounted) return;
                                   setSheet(() {
@@ -974,6 +973,26 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     });
 
     try {
+      String? resolvedClientId;
+      if (effectiveClient.isNotEmpty) {
+        final clientQuery = await FirebaseFirestore.instance
+            .collection('clients')
+            .where('clientName', isEqualTo: effectiveClient)
+            .limit(1)
+            .get();
+        if (clientQuery.docs.isNotEmpty) {
+          resolvedClientId = clientQuery.docs.first.id;
+        } else {
+          final newRef = FirebaseFirestore.instance.collection('clients').doc();
+          resolvedClientId = newRef.id;
+          await newRef.set({
+            'clientName': effectiveClient,
+            'balance': 0.0,
+            'id': resolvedClientId,
+          });
+        }
+      }
+
       if (_isEditing &&
           _originalInvoice != null &&
           _editingRootInvoiceId != null) {
@@ -1063,6 +1082,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'id': docRef.id,
           'invoiceNumber': newInvoiceNumber,
           'clientName': effectiveClient,
+          'clientId': resolvedClientId,
           'date': _selectedDate,
           'totalSum': totalSumFinal,
           'profitMargin': profitMargin,
@@ -1081,7 +1101,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
         final clientDocRef = FirebaseFirestore.instance
             .collection('clients')
-            .doc(effectiveClient);
+            .doc(resolvedClientId);
         final boxDocRef =
             FirebaseFirestore.instance.collection('box').doc('mainBox');
 
@@ -1111,8 +1131,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         ]);
       }
 
-      if (effectiveClient.isNotEmpty) {
-        await ClientInvoiceBalanceSyncService.syncForClient(effectiveClient);
+      if (resolvedClientId != null && resolvedClientId.isNotEmpty) {
+        await ClientInvoiceBalanceSyncService.syncForClient(resolvedClientId);
       }
 
       if (!mounted) return;
@@ -1300,18 +1320,24 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final name = clientName.trim();
     if (name.isEmpty) return false;
     if (_clientNameInList(name)) return true;
-    final clientDoc =
-        await FirebaseFirestore.instance.collection('clients').doc(name).get();
-    return clientDoc.exists;
+    final query = await FirebaseFirestore.instance
+        .collection('clients')
+        .where('clientName', isEqualTo: name)
+        .limit(1)
+        .get();
+    return query.docs.isNotEmpty;
   }
 
   Future<double> _fetchClientBalance(String clientName) async {
     final name = clientName.trim();
     if (name.isEmpty) return 0.0;
-    final clientDoc =
-        await FirebaseFirestore.instance.collection('clients').doc(name).get();
-    if (clientDoc.exists) {
-      return invoiceNum(clientDoc.data()?['balance']);
+    final query = await FirebaseFirestore.instance
+        .collection('clients')
+        .where('clientName', isEqualTo: name)
+        .limit(1)
+        .get();
+    if (query.docs.isNotEmpty) {
+      return invoiceNum(query.docs.first.data()['balance']);
     }
     return 0.0;
   }

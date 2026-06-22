@@ -75,8 +75,21 @@ class WhatsappInvoiceShareService {
     final phone = EgyptPhoneField.toWhatsappDigits(localPart);
     if (phone.isEmpty) return;
 
-    await FirebaseFirestore.instance.collection('clients').doc(name).set(
-      {'phone': phone, 'clientName': name},
+    final query = await FirebaseFirestore.instance
+        .collection('clients')
+        .where('clientName', isEqualTo: name)
+        .limit(1)
+        .get();
+    
+    DocumentReference docRef;
+    if (query.docs.isNotEmpty) {
+      docRef = query.docs.first.reference;
+    } else {
+      docRef = FirebaseFirestore.instance.collection('clients').doc();
+    }
+
+    await docRef.set(
+      {'phone': phone, 'clientName': name, 'id': docRef.id},
       SetOptions(merge: true),
     );
   }

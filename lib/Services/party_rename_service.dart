@@ -29,32 +29,29 @@ class PartyRenameService {
     }
 
     final oldData = Map<String, dynamic>.from(oldSnap.data()!);
-    final oldName = (oldData['clientName'] ?? oldClientId).toString().trim();
+    final oldName = (oldData['clientName'] ?? '').toString().trim();
 
-    if (trimmed == oldClientId && trimmed == oldName) return;
+    if (trimmed == oldName) return;
 
-    if (trimmed != oldClientId) {
-      final existing = await _firestore.collection('clients').doc(trimmed).get();
-      if (existing.exists) {
+    // Check for duplicate names
+    final dup = await _firestore
+        .collection('clients')
+        .where('clientName', isEqualTo: trimmed)
+        .limit(2)
+        .get();
+    for (final doc in dup.docs) {
+      if (doc.id != oldClientId) {
         throw PartyRenameException('يوجد عميل بهذا الاسم بالفعل');
       }
     }
 
-    final namesToUpdate = <String>{oldName, oldClientId}
-      ..removeWhere((n) => n.isEmpty);
+    await oldRef.update({'clientName': trimmed});
 
-    if (trimmed != oldClientId) {
-      await _migrateClientDocument(
-        oldClientId: oldClientId,
-        newClientId: trimmed,
-        oldData: oldData,
-      );
-    } else {
-      await oldRef.update({'clientName': trimmed});
+    final namesToUpdate = <String>{oldName}..removeWhere((n) => n.isEmpty);
+    if (namesToUpdate.isNotEmpty) {
+      await _updateClientNameInCollection('invoices', namesToUpdate, trimmed);
+      await _updateClientNameInCollection('returnInvoices', namesToUpdate, trimmed);
     }
-
-    await _updateClientNameInCollection('invoices', namesToUpdate, trimmed);
-    await _updateClientNameInCollection('returnInvoices', namesToUpdate, trimmed);
   }
 
   static Future<void> renameSupplier({

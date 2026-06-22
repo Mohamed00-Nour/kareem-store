@@ -78,7 +78,20 @@ class SalesInvoiceActionsService {
     required Map<String, dynamic> invoice,
     required String rootInvoiceId,
   }) async {
-    final clientId = invoice['clientName']?.toString() ?? '';
+    final clientName = invoice['clientName']?.toString() ?? '';
+    String clientId = '';
+    if (clientName.isNotEmpty) {
+      if (invoice.containsKey('clientId') && invoice['clientId'] != null && invoice['clientId'].toString().isNotEmpty) {
+        clientId = invoice['clientId'].toString();
+      } else {
+        final query = await FirebaseFirestore.instance
+            .collection('clients')
+            .where('clientName', isEqualTo: clientName)
+            .limit(1)
+            .get();
+        clientId = query.docs.isNotEmpty ? query.docs.first.id : clientName;
+      }
+    }
     final products = List<Map<String, dynamic>>.from(
       (invoice['products'] as List?) ?? [],
     );

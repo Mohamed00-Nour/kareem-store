@@ -230,6 +230,20 @@ class ClientsPage extends StatelessWidget {
                   );
                   return;
                 }
+                // Check if client name already exists
+                final query = await FirebaseFirestore.instance
+                    .collection('clients')
+                    .where('clientName', isEqualTo: name)
+                    .limit(1)
+                    .get();
+                if (query.docs.isNotEmpty) {
+                  if (ctx.mounted) {
+                    ScaffoldMessenger.of(ctx).showSnackBar(
+                      const SnackBar(content: Text('يوجد عميل بهذا الاسم بالفعل')),
+                    );
+                  }
+                  return;
+                }
                 final phoneLocal = phoneCtrl.text.trim();
                 if (phoneLocal.isNotEmpty &&
                     !EgyptPhoneField.isValidLocalPart(phoneCtrl.text)) {
@@ -242,23 +256,22 @@ class ClientsPage extends StatelessWidget {
                   return;
                 }
                 final balance = double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
+                
+                final docRef = FirebaseFirestore.instance.collection('clients').doc();
+                final clientId = docRef.id;
+                
                 final data = <String, dynamic>{
                   'clientName': name,
                   'balance': balance,
-                  'id': name,
+                  'id': clientId,
                 };
                 if (phoneLocal.isNotEmpty) {
                   data['phone'] =
                       EgyptPhoneField.toWhatsappDigits(phoneCtrl.text);
                 }
-                await FirebaseFirestore.instance
-                    .collection('clients')
-                    .doc(name)
-                    .set(data, SetOptions(merge: true));
+                await docRef.set(data, SetOptions(merge: true));
                 if (balance != 0) {
-                  await FirebaseFirestore.instance
-                      .collection('clients')
-                      .doc(name)
+                  await docRef
                       .collection('balanceHistory')
                       .add({
                     'enteredBalance': balance,
