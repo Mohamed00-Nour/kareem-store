@@ -13,7 +13,35 @@ import 'printer_settings_service.dart';
 
 class SalesInvoicePdfService {
   static Future<File> generate(Map<String, dynamic> rawInvoice) async {
-    final invoice = invoiceForPdfExport(rawInvoice);
+    final clientName = rawInvoice['clientName']?.toString() ?? '';
+    final clientId = rawInvoice['clientId']?.toString() ?? '';
+    double? clientBalance;
+    if (clientId.isNotEmpty) {
+      try {
+        final snap = await FirebaseFirestore.instance.collection('clients').doc(clientId).get();
+        if (snap.exists) {
+          clientBalance = (snap.data()?['balance'] as num?)?.toDouble();
+        }
+      } catch (_) {}
+    }
+    if (clientBalance == null && clientName.isNotEmpty) {
+      try {
+        final query = await FirebaseFirestore.instance
+            .collection('clients')
+            .where('clientName', isEqualTo: clientName)
+            .limit(1)
+            .get();
+        if (query.docs.isNotEmpty) {
+          clientBalance = (query.docs.first.data()['balance'] as num?)?.toDouble();
+        }
+      } catch (_) {}
+    }
+    final rawCopy = Map<String, dynamic>.from(rawInvoice);
+    if (clientBalance != null) {
+      rawCopy['currentClientBalance'] = clientBalance;
+    }
+
+    final invoice = invoiceForPdfExport(rawCopy);
     final settings = await PrinterSettingsService.load();
     final amiriRegular =
         pw.Font.ttf((await rootBundle.load('fonts/Amiri-Regular.ttf'))

@@ -1386,12 +1386,26 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       'isSpecial': false,
       'products': products,
     });
+    // Entry 1: Invoice total (debt increase)
     batch.set(clientDocRef.collection('balanceHistory').doc(), {
-      'enteredBalance': effectivePaid,
+      'enteredBalance': totalSumFinal,
       'balanceBefore': existingBalance,
       'timestamp': FieldValue.serverTimestamp(),
       'type': 'sale',
+      'invoiceId': invoiceId,
+      'invoiceNumber': newInvoiceNumber,
     });
+    // Entry 2: Payment received (debt decrease) — only if > 0
+    if (effectivePaid > 0) {
+      batch.set(clientDocRef.collection('balanceHistory').doc(), {
+        'enteredBalance': effectivePaid,
+        'balanceBefore': existingBalance + totalSumFinal,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'sale_payment',
+        'invoiceId': invoiceId,
+        'invoiceNumber': newInvoiceNumber,
+      });
+    }
     batch.set(
       boxDocRef,
       {'value': FieldValue.increment(effectivePaid)},

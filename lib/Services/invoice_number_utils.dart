@@ -57,11 +57,17 @@ double invoiceUnpaidAmount(Map<String, dynamic> invoice) {
 
 /// Synced client total owed — same [balance] on all invoices (المتبقي عليكم).
 double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
+  if (invoice.containsKey('currentClientBalance') && invoice['currentClientBalance'] != null) {
+    return invoiceNum(invoice['currentClientBalance']);
+  }
   return invoiceNum(invoice['balance']);
 }
 
 /// Synced supplier running balance — same [balance] on all buying invoices.
 double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
+  if (invoice.containsKey('currentSupplierBalance') && invoice['currentSupplierBalance'] != null) {
+    return invoiceNum(invoice['currentSupplierBalance']);
+  }
   return invoiceNum(invoice['balance']);
 }
 

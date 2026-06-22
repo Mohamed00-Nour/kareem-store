@@ -72,9 +72,40 @@ class DailyInvoicesPdfService {
       );
     } else {
       for (final raw in invoices) {
+        final clientName = raw['clientName']?.toString() ?? '';
+        final clientId = raw['clientId']?.toString() ?? '';
+        double? clientBalance;
+        if (clientId.isNotEmpty) {
+          try {
+            final snap = await FirebaseFirestore.instance
+                .collection('clients')
+                .doc(clientId)
+                .get();
+            if (snap.exists) {
+              clientBalance = (snap.data()?['balance'] as num?)?.toDouble();
+            }
+          } catch (_) {}
+        }
+        if (clientBalance == null && clientName.isNotEmpty) {
+          try {
+            final query = await FirebaseFirestore.instance
+                .collection('clients')
+                .where('clientName', isEqualTo: clientName)
+                .limit(1)
+                .get();
+            if (query.docs.isNotEmpty) {
+              clientBalance = (query.docs.first.data()['balance'] as num?)?.toDouble();
+            }
+          } catch (_) {}
+        }
+        final invoiceCopy = Map<String, dynamic>.from(raw);
+        if (clientBalance != null) {
+          invoiceCopy['currentClientBalance'] = clientBalance;
+        }
+
         _addInvoicePage(
           pdf: pdf,
-          data: invoiceForPdfExport(raw),
+          data: invoiceForPdfExport(invoiceCopy),
           periodStr: periodStr,
           nowStr: nowStr,
           salesInvoiceFooter: settings.salesInvoiceFooter,

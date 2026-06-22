@@ -162,12 +162,26 @@ class ReturnInvoiceSaveService {
       'isSpecial': false,
       'products': products,
     });
+    // Entry 1: Return total (debt decrease)
     batch.set(clientDocRef.collection('balanceHistory').doc(), {
-      'enteredBalance': paidAmount,
+      'enteredBalance': totalSumFinal,
       'balanceBefore': existingBalance,
       'timestamp': FieldValue.serverTimestamp(),
       'type': 'return',
+      'invoiceId': invoiceId,
+      'invoiceNumber': newInvoiceNumber,
     });
+    // Entry 2: Refund paid back (debt increase) — only if > 0
+    if (paidAmount > 0) {
+      batch.set(clientDocRef.collection('balanceHistory').doc(), {
+        'enteredBalance': paidAmount,
+        'balanceBefore': existingBalance - totalSumFinal,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'return_payment',
+        'invoiceId': invoiceId,
+        'invoiceNumber': newInvoiceNumber,
+      });
+    }
     batch.set(
       boxDocRef,
       {'value': FieldValue.increment(-paidAmount)},

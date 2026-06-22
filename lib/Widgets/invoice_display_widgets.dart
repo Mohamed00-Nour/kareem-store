@@ -180,73 +180,146 @@ class InvoiceTotalsFooter extends StatelessWidget {
 
   const InvoiceTotalsFooter({super.key, required this.invoice});
 
+  Future<double> _fetchBalance() async {
+    final isBuying = invoiceIsSupplierPurchase(invoice);
+    if (isBuying) {
+      if (invoice.containsKey('currentSupplierBalance') &&
+          invoice['currentSupplierBalance'] != null) {
+        return invoiceNum(invoice['currentSupplierBalance']);
+      }
+      final supplierName = invoice['supplierName']?.toString() ?? '';
+      final supplierId = invoice['supplierId']?.toString() ?? '';
+      double? totalBalance;
+      try {
+        if (supplierId.isNotEmpty) {
+          final snap = await FirebaseFirestore.instance
+              .collection('suppliers')
+              .doc(supplierId)
+              .get();
+          if (snap.exists) {
+            totalBalance = (snap.data()?['totalBalance'] as num?)?.toDouble();
+          }
+        }
+        if (totalBalance == null && supplierName.isNotEmpty) {
+          final query = await FirebaseFirestore.instance
+              .collection('suppliers')
+              .where('name', isEqualTo: supplierName)
+              .limit(1)
+              .get();
+          if (query.docs.isNotEmpty) {
+            totalBalance =
+                (query.docs.first.data()['totalBalance'] as num?)?.toDouble();
+          }
+        }
+      } catch (_) {}
+      return totalBalance ?? invoiceNum(invoice['balance']);
+    } else {
+      if (invoice.containsKey('currentClientBalance') &&
+          invoice['currentClientBalance'] != null) {
+        return invoiceNum(invoice['currentClientBalance']);
+      }
+      final clientName = invoice['clientName']?.toString() ?? '';
+      final clientId = invoice['clientId']?.toString() ?? '';
+      double? clientBalance;
+      try {
+        if (clientId.isNotEmpty) {
+          final snap = await FirebaseFirestore.instance
+              .collection('clients')
+              .doc(clientId)
+              .get();
+          if (snap.exists) {
+            clientBalance = (snap.data()?['balance'] as num?)?.toDouble();
+          }
+        }
+        if (clientBalance == null && clientName.isNotEmpty) {
+          final query = await FirebaseFirestore.instance
+              .collection('clients')
+              .where('clientName', isEqualTo: clientName)
+              .limit(1)
+              .get();
+          if (query.docs.isNotEmpty) {
+            clientBalance =
+                (query.docs.first.data()['balance'] as num?)?.toDouble();
+          }
+        }
+      } catch (_) {}
+      return clientBalance ?? invoiceNum(invoice['balance']);
+    }
+  }
+
   @override
   Widget build(BuildContext context) {
     final previous = invoiceNum(invoice['previousBalance']);
     final total = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
-    final remaining = invoiceIsSupplierPurchase(invoice)
-        ? invoiceSupplierRemainingOwed(invoice)
-        : invoiceClientRemainingOwed(invoice);
     final remainingLabel = invoiceIsSupplierPurchase(invoice)
         ? 'المتبقي للمورد'
         : 'المتبقي عليكم';
 
-    return Padding(
-      padding: EdgeInsets.symmetric(vertical: 10.h),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.end,
-        children: [
-          Column(
-            crossAxisAlignment: CrossAxisAlignment.end,
+    return FutureBuilder<double>(
+      future: _fetchBalance(),
+      initialData: invoiceIsSupplierPurchase(invoice)
+          ? invoiceSupplierRemainingOwed(invoice)
+          : invoiceClientRemainingOwed(invoice),
+      builder: (context, snapshot) {
+        final remaining = snapshot.data ?? 0.0;
+        return Padding(
+          padding: EdgeInsets.symmetric(vertical: 10.h),
+          child: Row(
+            mainAxisAlignment: MainAxisAlignment.end,
             children: [
-              Row(
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
+                  Row(
+                    children: [
+                      Text(
+                        'الرصيد السابق: ${invoiceAmount(previous)}',
+                        style: TextStyle(
+                          fontSize: 14.sp,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                      SizedBox(width: 20.w),
+                      Text(
+                        'إجمالي الفاتورة: ${invoiceAmount(total)}',
+                        style: TextStyle(
+                          fontSize: 14.sp,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ],
+                  ),
                   Text(
-                    'الرصيد السابق: ${invoiceAmount(previous)}',
+                    'المدفوع: ${invoiceAmount(paid)}',
                     style: TextStyle(
-                      fontSize: 14.sp,
+                      fontSize: 16.sp,
                       fontWeight: FontWeight.bold,
+                      color: Colors.green,
                     ),
                   ),
-                  SizedBox(width: 20.w),
                   Text(
-                    'إجمالي الفاتورة: ${invoiceAmount(total)}',
+                    'المتبقي من الفاتورة: ${invoiceAmount(total - paid)}',
                     style: TextStyle(
                       fontSize: 14.sp,
                       fontWeight: FontWeight.bold,
+                      color: Colors.orange,
+                    ),
+                  ),
+                  Text(
+                    '$remainingLabel: ${invoiceAmount(remaining)}',
+                    style: TextStyle(
+                      fontSize: 14.sp,
+                      fontWeight: FontWeight.bold,
+                      color: Colors.redAccent,
                     ),
                   ),
                 ],
               ),
-              Text(
-                'المدفوع: ${invoiceAmount(paid)}',
-                style: TextStyle(
-                  fontSize: 16.sp,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.green,
-                ),
-              ),
-              Text(
-                'المتبقي من الفاتورة: ${invoiceAmount(total - paid)}',
-                style: TextStyle(
-                  fontSize: 14.sp,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.orange,
-                ),
-              ),
-              Text(
-                '$remainingLabel: ${invoiceAmount(remaining)}',
-                style: TextStyle(
-                  fontSize: 14.sp,
-                  fontWeight: FontWeight.bold,
-                  color: Colors.redAccent,
-                ),
-              ),
             ],
           ),
-        ],
-      ),
+        );
+      },
     );
   }
 }

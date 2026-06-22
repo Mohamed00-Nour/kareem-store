@@ -169,6 +169,71 @@ class InvoicePrintService {
       }
     }
 
+    // Fetch and inject current balance of client or supplier
+    final clientName = invoice['clientName']?.toString() ?? '';
+    final supplierName = invoice['supplierName']?.toString() ?? '';
+    final isSupplier = supplierName.isNotEmpty && clientName.isEmpty;
+
+    if (isSupplier) {
+      final supplierId = invoice['supplierId']?.toString() ?? '';
+      double? totalBalance;
+      if (supplierId.isNotEmpty) {
+        try {
+          final snap = await FirebaseFirestore.instance
+              .collection('suppliers')
+              .doc(supplierId)
+              .get();
+          if (snap.exists) {
+            totalBalance = (snap.data()?['totalBalance'] as num?)?.toDouble();
+          }
+        } catch (_) {}
+      }
+      if (totalBalance == null && supplierName.isNotEmpty) {
+        try {
+          final query = await FirebaseFirestore.instance
+              .collection('suppliers')
+              .where('name', isEqualTo: supplierName)
+              .limit(1)
+              .get();
+          if (query.docs.isNotEmpty) {
+            totalBalance = (query.docs.first.data()['totalBalance'] as num?)?.toDouble();
+          }
+        } catch (_) {}
+      }
+      if (totalBalance != null) {
+        invoice['currentSupplierBalance'] = totalBalance;
+      }
+    } else {
+      final resolvedClientId = invoice['clientId']?.toString() ?? '';
+      double? clientBalance;
+      if (resolvedClientId.isNotEmpty) {
+        try {
+          final snap = await FirebaseFirestore.instance
+              .collection('clients')
+              .doc(resolvedClientId)
+              .get();
+          if (snap.exists) {
+            clientBalance = (snap.data()?['balance'] as num?)?.toDouble();
+          }
+        } catch (_) {}
+      }
+      if (clientBalance == null && clientName.isNotEmpty) {
+        try {
+          final query = await FirebaseFirestore.instance
+              .collection('clients')
+              .where('clientName', isEqualTo: clientName)
+              .limit(1)
+              .get();
+          if (query.docs.isNotEmpty) {
+            clientBalance = (query.docs.first.data()['balance'] as num?)?.toDouble();
+          }
+        } catch (_) {}
+      }
+      if (clientBalance != null) {
+        invoice['currentClientBalance'] = clientBalance;
+      }
+    }
+
     return invoice;
   }
 

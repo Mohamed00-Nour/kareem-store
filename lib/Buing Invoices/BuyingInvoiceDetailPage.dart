@@ -1,6 +1,7 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
 import 'package:flutter/services.dart';
@@ -10,12 +11,62 @@ import 'package:share_plus/share_plus.dart';
 
 import '../Screeens/AddProductPage.dart';
 import '../Widgets/invoice_display_widgets.dart';
+import '../Services/invoice_number_utils.dart';
 
-class BuyingInvoiceDetailPage extends StatelessWidget {
+class BuyingInvoiceDetailPage extends StatefulWidget {
   final Map<String, dynamic> invoice;
-  final GlobalKey _globalKey = GlobalKey();
 
-  BuyingInvoiceDetailPage({super.key, required this.invoice});
+  const BuyingInvoiceDetailPage({super.key, required this.invoice});
+
+  @override
+  State<BuyingInvoiceDetailPage> createState() => _BuyingInvoiceDetailPageState();
+}
+
+class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
+  final GlobalKey _globalKey = GlobalKey();
+  double? _currentSupplierBalance;
+  bool _isLoadingBalance = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _fetchSupplierBalance();
+  }
+
+  Future<void> _fetchSupplierBalance() async {
+    final supplierName = widget.invoice['supplierName']?.toString() ?? '';
+    final supplierId = widget.invoice['supplierId']?.toString() ?? '';
+    double? totalBalance;
+    try {
+      if (supplierId.isNotEmpty) {
+        final snap = await FirebaseFirestore.instance
+            .collection('suppliers')
+            .doc(supplierId)
+            .get();
+        if (snap.exists) {
+          totalBalance = (snap.data()?['totalBalance'] as num?)?.toDouble();
+        }
+      }
+      if (totalBalance == null && supplierName.isNotEmpty) {
+        final query = await FirebaseFirestore.instance
+            .collection('suppliers')
+            .where('name', isEqualTo: supplierName)
+            .limit(1)
+            .get();
+        if (query.docs.isNotEmpty) {
+          totalBalance =
+              (query.docs.first.data()['totalBalance'] as num?)?.toDouble();
+        }
+      }
+    } catch (_) {}
+
+    if (mounted) {
+      setState(() {
+        _currentSupplierBalance = totalBalance;
+        _isLoadingBalance = false;
+      });
+    }
+  }
 
   Future<void> _captureAndShareScreenshot() async {
     try {
@@ -33,7 +84,7 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
 
       await Share.shareFiles(
         [file.path],
-        text: 'إليك فاتورتك من معرض  كريم حماد للحدايد والبويات',
+        text: 'إليك فاتورتك من معرض كريم حماد للحدايد والبويات',
       );
     } catch (e) {
       print(e);
@@ -42,14 +93,20 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final products = invoice['products'] as List<dynamic>? ?? [];
-    final when = InvoiceDateParts.fromDynamic(invoice['date']);
-    final supplierName = invoice['supplierName']?.toString() ?? '';
+    // Inject current supplier balance if resolved
+    final invoiceData = Map<String, dynamic>.from(widget.invoice);
+    if (_currentSupplierBalance != null) {
+      invoiceData['currentSupplierBalance'] = _currentSupplierBalance;
+    }
+
+    final products = invoiceData['products'] as List<dynamic>? ?? [];
+    final when = InvoiceDateParts.fromDynamic(invoiceData['date']);
+    final supplierName = invoiceData['supplierName']?.toString() ?? '';
 
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'رقم الفاتورة #${invoice['invoiceNumber']}',
+          'رقم الفاتورة #${invoiceData['invoiceNumber']}',
           style: TextStyle(fontSize: 20.sp, color: Colors.white),
         ),
         backgroundColor: Colors.black.withOpacity(0.7),
@@ -62,7 +119,7 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
               Navigator.push(
                 context,
                 MaterialPageRoute(
-                  builder: (_) => AddProductPage(invoiceToEdit: invoice),
+                  builder: (_) => AddProductPage(invoiceToEdit: widget.invoice),
                 ),
               );
             },
@@ -118,7 +175,7 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
                                     ),
                                   ),
                                   TextSpan(
-                                    text: '#${invoice['invoiceNumber']}',
+                                    text: '#${invoiceData['invoiceNumber']}',
                                     style: TextStyle(fontSize: 13.sp),
                                   ),
                                 ],
@@ -195,7 +252,7 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
                       products: products,
                       kind: InvoiceDisplayKind.purchase,
                     ),
-                    InvoiceTotalsFooter(invoice: invoice),
+                    InvoiceTotalsFooter(invoice: invoiceData),
                   ],
                 ),
               ),
@@ -209,7 +266,7 @@ class BuyingInvoiceDetailPage extends StatelessWidget {
                   ),
                   backgroundColor: Colors.black.withOpacity(0.7),
                 ),
-                onPressed: _captureAndShareScreenshot,
+                onPressed: _isLoadingBalance ? null : _captureAndShareScreenshot,
                 child: Text(
                   'إرسال الفاتورة',
                   style: TextStyle(

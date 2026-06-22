@@ -170,11 +170,42 @@ class ClientStatementPdfService {
       if (date.isBefore(start) || date.isAfter(end)) continue;
       final entered = (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
       final before = (data['balanceBefore'] as num?)?.toDouble() ?? 0.0;
+
+      final type = data['type']?.toString() ?? 'deduction';
+      final invoiceNumber = data['invoiceNumber']?.toString() ?? '';
+      final notes = (data['notes'] ?? data['description'] ?? '').toString().trim();
+
+      String description = '';
+      if (type == 'sale') {
+        description = invoiceNumber.isNotEmpty ? 'فاتورة مبيعات رقم $invoiceNumber' : 'فاتورة مبيعات';
+      } else if (type == 'sale_payment') {
+        description = invoiceNumber.isNotEmpty ? 'سداد من فاتورة رقم $invoiceNumber' : 'سداد فاتورة';
+      } else if (type == 'return') {
+        description = invoiceNumber.isNotEmpty ? 'مرتجع مبيعات رقم $invoiceNumber' : 'مرتجع مبيعات';
+      } else if (type == 'return_payment') {
+        description = invoiceNumber.isNotEmpty ? 'سداد مرتجع رقم $invoiceNumber' : 'سداد مرتجع';
+      } else if (type == 'opening') {
+        description = 'رصيد افتتاحي';
+      } else if (type == 'addition') {
+        description = 'إضافة رصيد';
+      } else {
+        description = 'خصم رصيد (سداد)';
+      }
+      if (notes.isNotEmpty) {
+        description += ' ($notes)';
+      }
+
+      final isIncrease = type == 'sale' || type == 'addition' || type == 'opening' || type == 'return_payment';
+      final after = isIncrease ? before + entered : before - entered;
+      final sign = isIncrease ? '+' : '-';
+
       payments.add({
         'date': date,
         'entered': entered,
         'before': before,
-        'after': before - entered,
+        'after': after,
+        'description': description,
+        'sign': sign,
       });
     }
 
@@ -230,10 +261,11 @@ class ClientStatementPdfService {
                 pw.Table(
                   border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                   columnWidths: {
-                    0: const pw.FlexColumnWidth(2),
-                    1: const pw.FlexColumnWidth(2),
-                    2: const pw.FlexColumnWidth(2),
-                    3: const pw.FlexColumnWidth(2),
+                    0: const pw.FlexColumnWidth(1.5),
+                    1: const pw.FlexColumnWidth(3.0),
+                    2: const pw.FlexColumnWidth(1.5),
+                    3: const pw.FlexColumnWidth(1.5),
+                    4: const pw.FlexColumnWidth(1.5),
                   },
                   children: [
                     pw.TableRow(
@@ -241,7 +273,8 @@ class ClientStatementPdfService {
                           const pw.BoxDecoration(color: PdfColors.grey200),
                       children: [
                         headerCell('التاريخ'),
-                        headerCell('المبلغ المدفوع'),
+                        headerCell('البيان'),
+                        headerCell('المبلغ'),
                         headerCell('الرصيد قبل'),
                         headerCell('الرصيد بعد'),
                       ],
@@ -251,7 +284,8 @@ class ClientStatementPdfService {
                         children: [
                           dataCell(DateFormat('dd/MM/yyyy')
                               .format(p['date'] as DateTime)),
-                          dataCell((p['entered'] as double).toStringAsFixed(2)),
+                          dataCell(p['description'] as String),
+                          dataCell('${p['sign']}${(p['entered'] as double).toStringAsFixed(2)}'),
                           dataCell((p['before'] as double).toStringAsFixed(2)),
                           dataCell((p['after'] as double).toStringAsFixed(2)),
                         ],
@@ -261,6 +295,7 @@ class ClientStatementPdfService {
                           const pw.BoxDecoration(color: PdfColors.grey100),
                       children: [
                         dataCell('الإجمالي', bold: true),
+                        dataCell(''),
                         dataCell(totalPaid.toStringAsFixed(2), bold: true),
                         dataCell(''),
                         dataCell(''),
@@ -298,6 +333,14 @@ class ClientStatementPdfService {
     required String invoiceTypeLabel,
     required String emptyMessage,
   }) async {
+    final clientDoc = await FirebaseFirestore.instance
+        .collection('clients')
+        .doc(clientId)
+        .get();
+    final clientBalance = clientDoc.exists
+        ? (clientDoc.data()?['balance'] as num?)?.toDouble()
+        : null;
+
     final snap = await FirebaseFirestore.instance
         .collection('clients')
         .doc(clientId)
@@ -336,7 +379,10 @@ class ClientStatementPdfService {
     }
 
     for (final doc in invoices) {
-      final data = doc.data();
+      final data = Map<String, dynamic>.from(doc.data() as Map);
+      if (clientBalance != null) {
+        data['currentClientBalance'] = clientBalance;
+      }
       final date = (data['date'] as Timestamp).toDate();
       final products =
           List<Map<String, dynamic>>.from(data['products'] ?? []);

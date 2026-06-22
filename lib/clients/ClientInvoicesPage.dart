@@ -49,9 +49,11 @@ class ClientInvoicesPage extends StatefulWidget {
 class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   static const int _invoicePageSize = 20;
   String? _clientName;
+  double? _currentClientBalance;
 
   final TextEditingController _balanceController = TextEditingController();
   final TextEditingController _addBalanceController = TextEditingController();
+  final TextEditingController _notesController = TextEditingController();
   final ScrollController _invoiceScrollController = ScrollController();
   bool _isSaving = false; // Add loading state
   bool _generatingStatement = false;
@@ -228,7 +230,10 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   Future<void> _loadMoreInvoices() => _fetchInvoices(reset: false);
 
-  Future<void> _refreshInvoices() => _fetchInvoices(reset: true);
+  Future<void> _refreshInvoices() async {
+    _fetchClientName();
+    await _fetchInvoices(reset: true);
+  }
 
   Future<void> _tryAutoEditInvoice() async {
     if (_autoEditTriggered || widget.autoEditRootInvoiceId == null) return;
@@ -259,6 +264,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   Future<void> _saveBalance() async {
     final deductText = _balanceController.text.trim();
     final addText = _addBalanceController.text.trim();
+    final notesText = _notesController.text.trim();
 
     if (deductText.isEmpty && addText.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -316,6 +322,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         'enteredBalance': enteredBalance,
         'balanceBefore': currentBalance,
         'type': isAddition ? 'addition' : 'deduction',
+        'notes': notesText,
         'timestamp': FieldValue.serverTimestamp(),
       });
 
@@ -345,13 +352,17 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         'value': enteredBalance,
         'type': isAddition ? 'decrement' : 'addition',
         'name': clientName,
+        'notes': notesText,
         'invoiceNumber': null, // No invoice number for balance entries
       });
 
       _balanceController.clear();
       _addBalanceController.clear();
+      _notesController.clear();
 
       await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+      _fetchClientName();
+      _refreshInvoices();
 
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
@@ -1332,6 +1343,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       if (snap.exists && mounted) {
         setState(() {
           _clientName = snap.data()?['clientName']?.toString();
+          _currentClientBalance = (snap.data()?['balance'] as num?)?.toDouble();
         });
       }
     } catch (_) {}
@@ -1352,11 +1364,15 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     _invoiceScrollController.dispose();
     _balanceController.dispose();
     _addBalanceController.dispose();
+    _notesController.dispose();
     super.dispose();
   }
 
   Widget _buildInvoiceCard(QueryDocumentSnapshot invoice) {
-    final invoiceData = invoice.data() as Map<String, dynamic>;
+    final invoiceData = Map<String, dynamic>.from(invoice.data() as Map);
+    if (_currentClientBalance != null) {
+      invoiceData['currentClientBalance'] = _currentClientBalance;
+    }
     final dateField = invoiceData['date'];
     if (dateField is! Timestamp) {
       return const SizedBox.shrink();
@@ -1592,7 +1608,33 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                         ),
                       ],
                     ),
-                    SizedBox(height: 10),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: _notesController,
+                      enabled: !_isSaving,
+                      textAlign: TextAlign.right,
+                      decoration: InputDecoration(
+                        focusedBorder: OutlineInputBorder(
+                          borderSide: BorderSide(
+                              color: Colors.black.withOpacity(0.7)),
+                        ),
+                        filled: true,
+                        fillColor: Colors.grey.withOpacity(0.1),
+                        labelText: 'البيان / ملاحظات العملية (اختياري)',
+                        labelStyle: TextStyle(
+                          color: Colors.black.withOpacity(0.7),
+                          fontSize: 14.sp,
+                        ),
+                        border: OutlineInputBorder(
+                          borderSide: BorderSide(
+                            color: Colors.black.withOpacity(0.7),
+                          ),
+                        ),
+                        prefixIcon: const Icon(Icons.note_alt_outlined,
+                            color: Colors.orange),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
                     Row(
                       mainAxisAlignment: MainAxisAlignment.center,
                       children: [
@@ -1741,78 +1783,736 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   }
 }
 
-class BalanceHistoryPage extends StatelessWidget {
+class BalanceHistoryPage extends StatefulWidget {
   final String clientId;
 
   const BalanceHistoryPage({Key? key, required this.clientId})
       : super(key: key);
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      appBar: AppBar(
-        title: const Text('تاريخ الرصيد'),
+  State<BalanceHistoryPage> createState() => _BalanceHistoryPageState();
+}
+
+class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
+  bool _isBusy = false;
+
+  static int _typePriority(String type) {
+    switch (type) {
+      case 'opening':
+        return 7;
+      case 'sale_payment':
+        return 1;
+      case 'sale':
+        return 2;
+      case 'return_payment':
+        return 3;
+      case 'return':
+        return 4;
+      case 'addition':
+        return 5;
+      case 'deduction':
+        return 6;
+      default:
+        return 8;
+    }
+  }
+
+  static List<QueryDocumentSnapshot> _sortDocs(List<QueryDocumentSnapshot> docs) {
+    final sorted = List<QueryDocumentSnapshot>.from(docs);
+    sorted.sort((a, b) {
+      final dataA = a.data() as Map<String, dynamic>;
+      final dataB = b.data() as Map<String, dynamic>;
+      final typeA = dataA['type']?.toString() ?? '';
+      final typeB = dataB['type']?.toString() ?? '';
+
+      // Opening always last (oldest) in a descending list
+      if (typeA == 'opening' && typeB != 'opening') return 1;
+      if (typeB == 'opening' && typeA != 'opening') return -1;
+
+      // Group by same invoiceId
+      final invA = dataA['invoiceId']?.toString() ?? '';
+      final invB = dataB['invoiceId']?.toString() ?? '';
+      if (invA.isNotEmpty && invA == invB) {
+        return _typePriority(typeA).compareTo(_typePriority(typeB));
+      }
+
+      // Then by timestamp descending (newest first)
+      final tsA = dataA['timestamp'];
+      final tsB = dataB['timestamp'];
+      DateTime? dateA, dateB;
+      if (tsA is Timestamp) dateA = tsA.toDate();
+      if (tsB is Timestamp) dateB = tsB.toDate();
+
+      if (dateA != null && dateB != null) {
+        final cmp = dateB.compareTo(dateA); // Descending!
+        if (cmp != 0) return cmp;
+      } else if (dateA != null) {
+        return -1;
+      } else if (dateB != null) {
+        return 1;
+      }
+
+      return _typePriority(typeA).compareTo(_typePriority(typeB));
+    });
+    return sorted;
+  }
+
+  static String _descriptionForEntry(Map<String, dynamic> data) {
+    final type = data['type']?.toString() ?? 'deduction';
+    final invoiceNumber = data['invoiceNumber']?.toString() ?? '';
+    final notes =
+        (data['notes'] ?? data['description'] ?? '').toString().trim();
+
+    String description = '';
+    if (type == 'sale') {
+      description = invoiceNumber.isNotEmpty
+          ? 'فاتورة مبيعات رقم $invoiceNumber'
+          : 'فاتورة مبيعات';
+    } else if (type == 'sale_payment') {
+      description = invoiceNumber.isNotEmpty
+          ? 'سداد من فاتورة رقم $invoiceNumber'
+          : 'سداد فاتورة';
+    } else if (type == 'return') {
+      description = invoiceNumber.isNotEmpty
+          ? 'مرتجع مبيعات رقم $invoiceNumber'
+          : 'مرتجع مبيعات';
+    } else if (type == 'return_payment') {
+      description = invoiceNumber.isNotEmpty
+          ? 'سداد مرتجع رقم $invoiceNumber'
+          : 'سداد مرتجع';
+    } else if (type == 'opening') {
+      description = 'رصيد افتتاحي';
+    } else if (type == 'addition') {
+      description = 'إضافة رصيد';
+    } else {
+      description = 'خصم رصيد (سداد)';
+    }
+    if (notes.isNotEmpty) {
+      description += ' ($notes)';
+    }
+    return description;
+  }
+
+  static bool _isIncreaseType(String type) {
+    return type == 'sale' ||
+        type == 'addition' ||
+        type == 'opening' ||
+        type == 'return_payment';
+  }
+
+  static Color _colorForType(String type, bool isIncrease) {
+    if (type == 'opening') return Colors.blue.shade700;
+    return isIncrease ? Colors.green.shade700 : Colors.red.shade700;
+  }
+
+
+
+  Future<void> _editEntry(QueryDocumentSnapshot doc) async {
+    final data = doc.data() as Map<String, dynamic>;
+    final type = data['type']?.toString() ?? 'deduction';
+    final invoiceId = data['invoiceId']?.toString() ?? '';
+    final currentAmount =
+        (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
+    final currentNotes = (data['notes'] ?? '').toString();
+
+    final amountCtrl =
+        TextEditingController(text: currentAmount.toStringAsFixed(2));
+    final notesCtrl = TextEditingController(text: currentNotes);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          backgroundColor: const Color(0xffead1ac),
+          title: const Text('تعديل السجل',
+              style: TextStyle(fontWeight: FontWeight.bold)),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amountCtrl,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.center,
+                decoration: InputDecoration(
+                  labelText: 'المبلغ',
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: notesCtrl,
+                textAlign: TextAlign.right,
+                decoration: InputDecoration(
+                  labelText: 'ملاحظات',
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(8)),
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              style: ElevatedButton.styleFrom(
+                backgroundColor: Colors.black87,
+                foregroundColor: Colors.white,
+              ),
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
-            .collection('clients')
-            .doc(clientId)
-            .collection('balanceHistory')
-            .orderBy('timestamp', descending: true)
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return Center(child: CircularProgressIndicator());
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    final newAmount = double.tryParse(amountCtrl.text) ?? currentAmount;
+    final newNotes = notesCtrl.text.trim();
+    if ((newAmount - currentAmount).abs() < 0.001 && newNotes == currentNotes.trim()) {
+      return; // No changes
+    }
+
+    setState(() => _isBusy = true);
+    try {
+      final diff = newAmount - currentAmount;
+      final batch = FirebaseFirestore.instance.batch();
+
+      // Update history doc
+      batch.update(doc.reference, {
+        'enteredBalance': newAmount,
+        'notes': newNotes,
+      });
+
+      double boxDelta = 0.0;
+      String boxChangeName = '';
+      String boxChangeNotes = '';
+
+      if (type == 'addition') {
+        boxDelta = -diff;
+        boxChangeName = 'تعديل إضافة رصيد للعميل';
+        boxChangeNotes = 'تعديل من $currentAmount إلى $newAmount ($newNotes)';
+      } else if (type == 'deduction') {
+        boxDelta = diff;
+        boxChangeName = 'تعديل خصم رصيد للعميل';
+        boxChangeNotes = 'تعديل من $currentAmount إلى $newAmount ($newNotes)';
+      } else if (type == 'sale_payment') {
+        boxDelta = diff;
+        boxChangeName = 'تعديل سداد فاتورة رقم ${data['invoiceNumber']}';
+        boxChangeNotes = 'تعديل سداد من $currentAmount إلى $newAmount';
+
+        if (invoiceId.isNotEmpty) {
+          final clientInvRef = FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('invoices')
+              .doc(invoiceId);
+          batch.update(clientInvRef, {'paidAmount': newAmount});
+
+          final rootInvRef = FirebaseFirestore.instance
+              .collection('invoices')
+              .doc(invoiceId);
+          batch.update(rootInvRef, {'paidAmount': newAmount});
+        }
+      } else if (type == 'return_payment') {
+        boxDelta = -diff;
+        boxChangeName = 'تعديل سداد مرتجع رقم ${data['invoiceNumber']}';
+        boxChangeNotes = 'تعديل سداد من $currentAmount إلى $newAmount';
+
+        if (invoiceId.isNotEmpty) {
+          final clientRetRef = FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('returnInvoices')
+              .doc(invoiceId);
+          batch.update(clientRetRef, {'paidAmount': newAmount});
+
+          final rootRetRef = FirebaseFirestore.instance
+              .collection('returnInvoices')
+              .doc(invoiceId);
+          batch.update(rootRetRef, {'paidAmount': newAmount});
+        }
+      } else if (type == 'sale') {
+        if (invoiceId.isNotEmpty) {
+          final clientInvRef = FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('invoices')
+              .doc(invoiceId);
+          batch.update(clientInvRef, {'totalSum': newAmount});
+
+          final rootInvRef = FirebaseFirestore.instance
+              .collection('invoices')
+              .doc(invoiceId);
+          batch.update(rootInvRef, {'totalSum': newAmount});
+        }
+      } else if (type == 'return') {
+        if (invoiceId.isNotEmpty) {
+          final clientRetRef = FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('returnInvoices')
+              .doc(invoiceId);
+          batch.update(clientRetRef, {'totalSum': newAmount});
+
+          final rootRetRef = FirebaseFirestore.instance
+              .collection('returnInvoices')
+              .doc(invoiceId);
+          batch.update(rootRetRef, {'totalSum': newAmount});
+        }
+      }
+
+      await batch.commit();
+
+      if (boxDelta.abs() > 0.001) {
+        final boxDocRef = FirebaseFirestore.instance.collection('box').doc('mainBox');
+        await FirebaseFirestore.instance.runTransaction((transaction) async {
+          final boxSnapshot = await transaction.get(boxDocRef);
+          if (boxSnapshot.exists) {
+            double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
+            transaction.update(boxDocRef, {'value': currentBoxValue + boxDelta});
+          }
+        });
+
+        await boxDocRef.collection('changes').add({
+          'date': FieldValue.serverTimestamp(),
+          'value': diff.abs(),
+          'type': boxDelta >= 0 ? 'addition' : 'subtraction',
+          'name': boxChangeName,
+          'notes': boxChangeNotes,
+        });
+      }
+
+      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم تعديل السجل وإعادة حساب الرصيد')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isBusy = false);
+    }
+  }
+
+  Future<void> _deleteEntry(QueryDocumentSnapshot doc) async {
+    final data = doc.data() as Map<String, dynamic>;
+    final type = data['type']?.toString() ?? 'deduction';
+    final invoiceId = data['invoiceId']?.toString() ?? '';
+    final enteredBalance = (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
+    final desc = _descriptionForEntry(data);
+
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('تأكيد الحذف'),
+          content: Text(
+              'هل أنت متأكد من حذف "$desc"؟\nسيتم إعادة حساب الرصيد.'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child:
+                  const Text('حذف', style: TextStyle(color: Colors.red)),
+            ),
+          ],
+        ),
+      ),
+    );
+
+    if (confirmed != true || !mounted) return;
+
+    setState(() => _isBusy = true);
+    try {
+      final batch = FirebaseFirestore.instance.batch();
+
+      // Delete history doc
+      batch.delete(doc.reference);
+
+      double boxDelta = 0.0;
+      String boxChangeName = '';
+      String boxChangeNotes = '';
+
+      if (type == 'addition') {
+        boxDelta = enteredBalance;
+        boxChangeName = 'حذف إضافة رصيد للعميل';
+        boxChangeNotes = 'حذف سجل بقيمة $enteredBalance';
+      } else if (type == 'deduction') {
+        boxDelta = -enteredBalance;
+        boxChangeName = 'حذف خصم رصيد للعميل';
+        boxChangeNotes = 'حذف سجل بقيمة $enteredBalance';
+      } else if (type == 'sale_payment') {
+        boxDelta = -enteredBalance;
+        boxChangeName = 'حذف سداد فاتورة رقم ${data['invoiceNumber']}';
+        boxChangeNotes = 'حذف سداد بقيمة $enteredBalance';
+
+        if (invoiceId.isNotEmpty) {
+          final clientInvRef = FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('invoices')
+              .doc(invoiceId);
+          batch.update(clientInvRef, {'paidAmount': 0.0});
+
+          final rootInvRef = FirebaseFirestore.instance
+              .collection('invoices')
+              .doc(invoiceId);
+          batch.update(rootInvRef, {'paidAmount': 0.0});
+        }
+      } else if (type == 'return_payment') {
+        boxDelta = enteredBalance;
+        boxChangeName = 'حذف سداد مرتجع رقم ${data['invoiceNumber']}';
+        boxChangeNotes = 'حذف سداد بقيمة $enteredBalance';
+
+        if (invoiceId.isNotEmpty) {
+          final clientRetRef = FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('returnInvoices')
+              .doc(invoiceId);
+          batch.update(clientRetRef, {'paidAmount': 0.0});
+
+          final rootRetRef = FirebaseFirestore.instance
+              .collection('returnInvoices')
+              .doc(invoiceId);
+          batch.update(rootRetRef, {'paidAmount': 0.0});
+        }
+      } else if (type == 'sale') {
+        if (invoiceId.isNotEmpty) {
+          final clientInvRef = FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('invoices')
+              .doc(invoiceId);
+          final clientInvSnap = await clientInvRef.get();
+          if (clientInvSnap.exists) {
+            final products = List<Map<String, dynamic>>.from(clientInvSnap.data()?['products'] ?? []);
+            for (var product in products) {
+              final name = product['product']?.toString() ?? '';
+              if (name.isEmpty) continue;
+              final amount = double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
+              if (amount <= 0) continue;
+
+              final q = await FirebaseFirestore.instance
+                  .collection('products')
+                  .where('name', isEqualTo: name)
+                  .get();
+              for (var pDoc in q.docs) {
+                double qty = (pDoc['quantity'] as num?)?.toDouble() ?? 0.0;
+                batch.update(pDoc.reference, {'quantity': qty + amount});
+                batch.set(pDoc.reference.collection('changes').doc(), {
+                  'date': DateTime.now(),
+                  'amount': amount,
+                  'type': 'increase',
+                });
+              }
+            }
+            batch.delete(clientInvRef);
           }
 
-          final history = snapshot.data!.docs;
+          final rootInvRef = FirebaseFirestore.instance
+              .collection('invoices')
+              .doc(invoiceId);
+          batch.delete(rootInvRef);
+        }
+      } else if (type == 'return') {
+        if (invoiceId.isNotEmpty) {
+          final clientRetRef = FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('returnInvoices')
+              .doc(invoiceId);
+          final clientRetSnap = await clientRetRef.get();
+          if (clientRetSnap.exists) {
+            final products = List<Map<String, dynamic>>.from(clientRetSnap.data()?['products'] ?? []);
+            for (var product in products) {
+              final name = product['product']?.toString() ?? '';
+              if (name.isEmpty) continue;
+              final amount = double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
+              if (amount <= 0) continue;
 
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: SingleChildScrollView(
-              scrollDirection: Axis.vertical,
-              child: DataTable(
-                columns: const [
-                  DataColumn(label: Text('نوع العملية')),
-                  DataColumn(label: Text('المبلغ')),
-                  DataColumn(label: Text('الرصيد قبل')),
-                  DataColumn(label: Text('التاريخ')),
-                ],
-                rows: history.map((doc) {
-                  final data = doc.data() as Map<String, dynamic>;
-                  final timestamp = data['timestamp'] != null
-                      ? (data['timestamp'] as Timestamp).toDate()
-                      : DateTime.now();
-                  final formattedDate =
-                      intl.DateFormat('yyyy-MM-dd').format(timestamp);
-                  final type = data['type']?.toString() ?? 'deduction';
-                  final isAddition = type == 'addition';
+              final q = await FirebaseFirestore.instance
+                  .collection('products')
+                  .where('name', isEqualTo: name)
+                  .get();
+              for (var pDoc in q.docs) {
+                double qty = (pDoc['quantity'] as num?)?.toDouble() ?? 0.0;
+                batch.update(pDoc.reference, {'quantity': qty - amount});
+                batch.set(pDoc.reference.collection('changes').doc(), {
+                  'date': DateTime.now(),
+                  'amount': amount,
+                  'type': 'decrease',
+                });
+              }
+            }
+            batch.delete(clientRetRef);
+          }
 
-                  return DataRow(cells: [
-                    DataCell(Text(
-                      isAddition ? 'إضافة رصيد' : 'خصم رصيد (سداد)',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: isAddition ? Colors.green.shade700 : Colors.red.shade700,
+          final rootRetRef = FirebaseFirestore.instance
+              .collection('returnInvoices')
+              .doc(invoiceId);
+          batch.delete(rootRetRef);
+        }
+      }
+
+      await batch.commit();
+
+      if (boxDelta.abs() > 0.001) {
+        final boxDocRef = FirebaseFirestore.instance.collection('box').doc('mainBox');
+        await FirebaseFirestore.instance.runTransaction((transaction) async {
+          final boxSnapshot = await transaction.get(boxDocRef);
+          if (boxSnapshot.exists) {
+            double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
+            transaction.update(boxDocRef, {'value': currentBoxValue + boxDelta});
+          }
+        });
+
+        await boxDocRef.collection('changes').add({
+          'date': FieldValue.serverTimestamp(),
+          'value': enteredBalance,
+          'type': boxDelta >= 0 ? 'addition' : 'subtraction',
+          'name': boxChangeName,
+          'notes': boxChangeNotes,
+        });
+      }
+
+      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم حذف السجل وإعادة حساب الرصيد')),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isBusy = false);
+    }
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      children: [
+        Scaffold(
+          appBar: AppBar(
+            title: const Text('تاريخ الرصيد'),
+            backgroundColor: Colors.black.withOpacity(0.7),
+            foregroundColor: Colors.white,
+          ),
+          body: StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance
+                .collection('clients')
+                .doc(widget.clientId)
+                .collection('balanceHistory')
+                .orderBy('timestamp')
+                .snapshots(),
+            builder: (context, snapshot) {
+              if (!snapshot.hasData) {
+                return Center(
+                    child: CircularProgressIndicator(
+                        color: Colors.orange.shade700));
+              }
+
+              final sorted = _sortDocs(snapshot.data!.docs);
+
+              if (sorted.isEmpty) {
+                return const Center(
+                    child: Text('لا يوجد سجلات',
+                        style: TextStyle(fontSize: 16)));
+              }
+
+              return Directionality(
+                textDirection: TextDirection.rtl,
+                child: Padding(
+                  padding: const EdgeInsets.all(8.0),
+                  child: Card(
+                    elevation: 3,
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    clipBehavior: Clip.antiAlias,
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.vertical,
+                      child: SingleChildScrollView(
+                        scrollDirection: Axis.horizontal,
+                        child: Theme(
+                          data: Theme.of(context).copyWith(
+                            dividerColor: Colors.grey.shade300,
+                          ),
+                          child: DataTable(
+                            headingRowColor: MaterialStateProperty.all(Colors.black87),
+                            headingTextStyle: const TextStyle(
+                              color: Colors.white,
+                              fontWeight: FontWeight.bold,
+                              fontSize: 13,
+                            ),
+                            dataRowMaxHeight: 52,
+                            dataRowMinHeight: 44,
+                            columnSpacing: 20,
+                            columns: const [
+                              DataColumn(
+                                label: SizedBox(
+                                  width: 150,
+                                  child: Text('البيان', textAlign: TextAlign.right),
+                                ),
+                              ),
+                              DataColumn(
+                                label: Text('الحركة', textAlign: TextAlign.right),
+                              ),
+                              DataColumn(
+                                label: Text('الرصيد قبل', textAlign: TextAlign.right),
+                              ),
+                              DataColumn(
+                                label: Text('الرصيد بعد', textAlign: TextAlign.right),
+                              ),
+                              DataColumn(
+                                label: Text('التاريخ', textAlign: TextAlign.right),
+                              ),
+                              DataColumn(
+                                label: Text('إجراءات', textAlign: TextAlign.right),
+                              ),
+                            ],
+                            rows: sorted.map((doc) {
+                              final data = doc.data() as Map<String, dynamic>;
+                              final type = data['type']?.toString() ?? 'deduction';
+                              final entered =
+                                  (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
+                              final before =
+                                  (data['balanceBefore'] as num?)?.toDouble() ?? 0.0;
+                              final isIncrease = _isIncreaseType(type);
+                              final after =
+                                  isIncrease ? before + entered : before - entered;
+                              final sign = isIncrease ? '+' : '-';
+                              final color = _colorForType(type, isIncrease);
+                              final description = _descriptionForEntry(data);
+
+                              final timestamp = data['timestamp'] != null
+                                  ? (data['timestamp'] as Timestamp).toDate()
+                                  : DateTime.now();
+                              final formattedDate =
+                                  intl.DateFormat('yyyy-MM-dd hh:mm a')
+                                      .format(timestamp);
+
+                              return DataRow(
+                                cells: [
+                                  DataCell(
+                                    SizedBox(
+                                      width: 150,
+                                      child: Text(
+                                        description,
+                                        style: TextStyle(
+                                          fontWeight: FontWeight.w600,
+                                          fontSize: 12,
+                                          color: Colors.grey.shade800,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
+                                        maxLines: 2,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      '$sign${entered.toStringAsFixed(2)}',
+                                      style: TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        fontSize: 13,
+                                        color: color,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      before.toStringAsFixed(2),
+                                      style: TextStyle(
+                                        color: Colors.grey.shade700,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      after.toStringAsFixed(2),
+                                      style: const TextStyle(
+                                        fontWeight: FontWeight.bold,
+                                        color: Colors.black87,
+                                        fontSize: 12,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Text(
+                                      formattedDate,
+                                      style: TextStyle(
+                                        color: Colors.grey.shade600,
+                                        fontSize: 11,
+                                      ),
+                                    ),
+                                  ),
+                                  DataCell(
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        IconButton(
+                                          icon: Icon(Icons.edit_outlined,
+                                              color: Colors.blue.shade700, size: 18),
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          tooltip: 'تعديل',
+                                          onPressed: _isBusy ? null : () => _editEntry(doc),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        IconButton(
+                                          icon: Icon(Icons.delete_outline,
+                                              color: Colors.red.shade700, size: 18),
+                                          padding: EdgeInsets.zero,
+                                          constraints: const BoxConstraints(),
+                                          tooltip: 'حذف',
+                                          onPressed: _isBusy ? null : () => _deleteEntry(doc),
+                                        ),
+                                      ],
+                                    ),
+                                  ),
+                                ],
+                              );
+                            }).toList(),
+                          ),
+                        ),
                       ),
-                    )),
-                    DataCell(Text(
-                      '${isAddition ? '+' : '-'}${(data['enteredBalance'] as num).toStringAsFixed(2)}',
-                      style: TextStyle(
-                        fontWeight: FontWeight.bold,
-                        color: isAddition ? Colors.green.shade700 : Colors.red.shade700,
-                      ),
-                    )),
-                    DataCell(
-                        Text((data['balanceBefore'] as num).toStringAsFixed(2))),
-                    DataCell(Text(formattedDate)),
-                  ]);
-                }).toList(),
-              ),
+                    ),
+                  ),
+                ),
+              );
+            },
+          ),
+        ),
+        if (_isBusy)
+          Container(
+            color: Colors.black.withOpacity(0.4),
+            child: const Center(
+              child: CircularProgressIndicator(color: Colors.white),
             ),
-          );
-        },
-      ),
+          ),
+      ],
     );
   }
 }
