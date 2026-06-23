@@ -249,7 +249,6 @@ class InvoiceTotalsFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final previous = invoiceNum(invoice['previousBalance']);
     final total = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
     final remainingLabel = invoiceIsSupplierPurchase(invoice)
@@ -263,6 +262,10 @@ class InvoiceTotalsFooter extends StatelessWidget {
           : invoiceClientRemainingOwed(invoice),
       builder: (context, snapshot) {
         final remaining = snapshot.data ?? 0.0;
+        final unpaid = total - paid;
+        final isReturn = invoiceIsReturn(invoice);
+        final dynamicPrevious = isReturn ? remaining + unpaid : remaining - unpaid;
+
         return Padding(
           padding: EdgeInsets.symmetric(vertical: 10.h),
           child: Row(
@@ -274,7 +277,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
                   Row(
                     children: [
                       Text(
-                        'الرصيد السابق: ${invoiceAmount(previous)}',
+                        'الرصيد السابق: ${invoiceAmount(dynamicPrevious)}',
                         style: TextStyle(
                           fontSize: 14.sp,
                           fontWeight: FontWeight.bold,

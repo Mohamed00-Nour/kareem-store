@@ -341,8 +341,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                 : currentBoxValue + enteredBalance
           });
         } else {
-          transaction.set(
-              boxDocRef, {'value': isAddition ? -enteredBalance : enteredBalance});
+          transaction.set(boxDocRef,
+              {'value': isAddition ? -enteredBalance : enteredBalance});
         }
       });
 
@@ -1382,7 +1382,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     final formattedDate = invoiceDate.toString().split(' ')[0];
     final formattedTime = intl.DateFormat('hh:mm a').format(invoiceDate);
 
-    final previousBalance = invoiceNum(invoiceData['previousBalance']);
+    final previousBalance = invoiceDynamicPreviousBalance(invoiceData);
     final remainingOwed = invoiceClientRemainingOwed(invoiceData);
 
     final totalSum = invoiceData.containsKey('totalSum')
@@ -1563,7 +1563,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                   color: Colors.black.withOpacity(0.7),
                                 ),
                               ),
-                              prefixIcon: const Icon(Icons.remove_circle_outline,
+                              prefixIcon: const Icon(
+                                  Icons.remove_circle_outline,
                                   color: Colors.red),
                             ),
                             onChanged: (value) {
@@ -1615,8 +1616,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                       textAlign: TextAlign.right,
                       decoration: InputDecoration(
                         focusedBorder: OutlineInputBorder(
-                          borderSide: BorderSide(
-                              color: Colors.black.withOpacity(0.7)),
+                          borderSide:
+                              BorderSide(color: Colors.black.withOpacity(0.7)),
                         ),
                         filled: true,
                         fillColor: Colors.grey.withOpacity(0.1),
@@ -1817,7 +1818,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     }
   }
 
-  static List<QueryDocumentSnapshot> _sortDocs(List<QueryDocumentSnapshot> docs) {
+  static List<QueryDocumentSnapshot> _sortDocs(
+      List<QueryDocumentSnapshot> docs) {
     final sorted = List<QueryDocumentSnapshot>.from(docs);
     sorted.sort((a, b) {
       final dataA = a.data() as Map<String, dynamic>;
@@ -1905,14 +1907,11 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     return isIncrease ? Colors.green.shade700 : Colors.red.shade700;
   }
 
-
-
   Future<void> _editEntry(QueryDocumentSnapshot doc) async {
     final data = doc.data() as Map<String, dynamic>;
     final type = data['type']?.toString() ?? 'deduction';
     final invoiceId = data['invoiceId']?.toString() ?? '';
-    final currentAmount =
-        (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
+    final currentAmount = (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
     final currentNotes = (data['notes'] ?? '').toString();
 
     final amountCtrl =
@@ -1975,7 +1974,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
 
     final newAmount = double.tryParse(amountCtrl.text) ?? currentAmount;
     final newNotes = notesCtrl.text.trim();
-    if ((newAmount - currentAmount).abs() < 0.001 && newNotes == currentNotes.trim()) {
+    if ((newAmount - currentAmount).abs() < 0.001 &&
+        newNotes == currentNotes.trim()) {
       return; // No changes
     }
 
@@ -2015,9 +2015,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
               .doc(invoiceId);
           batch.update(clientInvRef, {'paidAmount': newAmount});
 
-          final rootInvRef = FirebaseFirestore.instance
-              .collection('invoices')
-              .doc(invoiceId);
+          final rootInvRef =
+              FirebaseFirestore.instance.collection('invoices').doc(invoiceId);
           batch.update(rootInvRef, {'paidAmount': newAmount});
         }
       } else if (type == 'return_payment') {
@@ -2047,9 +2046,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
               .doc(invoiceId);
           batch.update(clientInvRef, {'totalSum': newAmount});
 
-          final rootInvRef = FirebaseFirestore.instance
-              .collection('invoices')
-              .doc(invoiceId);
+          final rootInvRef =
+              FirebaseFirestore.instance.collection('invoices').doc(invoiceId);
           batch.update(rootInvRef, {'totalSum': newAmount});
         }
       } else if (type == 'return') {
@@ -2071,12 +2069,14 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       await batch.commit();
 
       if (boxDelta.abs() > 0.001) {
-        final boxDocRef = FirebaseFirestore.instance.collection('box').doc('mainBox');
+        final boxDocRef =
+            FirebaseFirestore.instance.collection('box').doc('mainBox');
         await FirebaseFirestore.instance.runTransaction((transaction) async {
           final boxSnapshot = await transaction.get(boxDocRef);
           if (boxSnapshot.exists) {
             double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-            transaction.update(boxDocRef, {'value': currentBoxValue + boxDelta});
+            transaction
+                .update(boxDocRef, {'value': currentBoxValue + boxDelta});
           }
         });
 
@@ -2119,8 +2119,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
         textDirection: TextDirection.rtl,
         child: AlertDialog(
           title: const Text('تأكيد الحذف'),
-          content: Text(
-              'هل أنت متأكد من حذف "$desc"؟\nسيتم إعادة حساب الرصيد.'),
+          content:
+              Text('هل أنت متأكد من حذف "$desc"؟\nسيتم إعادة حساب الرصيد.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -2128,8 +2128,7 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
             ),
             TextButton(
               onPressed: () => Navigator.pop(ctx, true),
-              child:
-                  const Text('حذف', style: TextStyle(color: Colors.red)),
+              child: const Text('حذف', style: TextStyle(color: Colors.red)),
             ),
           ],
         ),
@@ -2170,9 +2169,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
               .doc(invoiceId);
           batch.update(clientInvRef, {'paidAmount': 0.0});
 
-          final rootInvRef = FirebaseFirestore.instance
-              .collection('invoices')
-              .doc(invoiceId);
+          final rootInvRef =
+              FirebaseFirestore.instance.collection('invoices').doc(invoiceId);
           batch.update(rootInvRef, {'paidAmount': 0.0});
         }
       } else if (type == 'return_payment') {
@@ -2202,11 +2200,13 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
               .doc(invoiceId);
           final clientInvSnap = await clientInvRef.get();
           if (clientInvSnap.exists) {
-            final products = List<Map<String, dynamic>>.from(clientInvSnap.data()?['products'] ?? []);
+            final products = List<Map<String, dynamic>>.from(
+                clientInvSnap.data()?['products'] ?? []);
             for (var product in products) {
               final name = product['product']?.toString() ?? '';
               if (name.isEmpty) continue;
-              final amount = double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
+              final amount =
+                  double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
               if (amount <= 0) continue;
 
               final q = await FirebaseFirestore.instance
@@ -2226,9 +2226,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
             batch.delete(clientInvRef);
           }
 
-          final rootInvRef = FirebaseFirestore.instance
-              .collection('invoices')
-              .doc(invoiceId);
+          final rootInvRef =
+              FirebaseFirestore.instance.collection('invoices').doc(invoiceId);
           batch.delete(rootInvRef);
         }
       } else if (type == 'return') {
@@ -2240,11 +2239,13 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
               .doc(invoiceId);
           final clientRetSnap = await clientRetRef.get();
           if (clientRetSnap.exists) {
-            final products = List<Map<String, dynamic>>.from(clientRetSnap.data()?['products'] ?? []);
+            final products = List<Map<String, dynamic>>.from(
+                clientRetSnap.data()?['products'] ?? []);
             for (var product in products) {
               final name = product['product']?.toString() ?? '';
               if (name.isEmpty) continue;
-              final amount = double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
+              final amount =
+                  double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
               if (amount <= 0) continue;
 
               final q = await FirebaseFirestore.instance
@@ -2274,12 +2275,14 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       await batch.commit();
 
       if (boxDelta.abs() > 0.001) {
-        final boxDocRef = FirebaseFirestore.instance.collection('box').doc('mainBox');
+        final boxDocRef =
+            FirebaseFirestore.instance.collection('box').doc('mainBox');
         await FirebaseFirestore.instance.runTransaction((transaction) async {
           final boxSnapshot = await transaction.get(boxDocRef);
           if (boxSnapshot.exists) {
             double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-            transaction.update(boxDocRef, {'value': currentBoxValue + boxDelta});
+            transaction
+                .update(boxDocRef, {'value': currentBoxValue + boxDelta});
           }
         });
 
@@ -2337,8 +2340,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
 
               if (sorted.isEmpty) {
                 return const Center(
-                    child: Text('لا يوجد سجلات',
-                        style: TextStyle(fontSize: 16)));
+                    child:
+                        Text('لا يوجد سجلات', style: TextStyle(fontSize: 16)));
               }
 
               return Directionality(
@@ -2360,7 +2363,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                             dividerColor: Colors.grey.shade300,
                           ),
                           child: DataTable(
-                            headingRowColor: MaterialStateProperty.all(Colors.black87),
+                            headingRowColor:
+                                MaterialStateProperty.all(Colors.black87),
                             headingTextStyle: const TextStyle(
                               color: Colors.white,
                               fontWeight: FontWeight.bold,
@@ -2373,35 +2377,45 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                               DataColumn(
                                 label: SizedBox(
                                   width: 150,
-                                  child: Text('البيان', textAlign: TextAlign.right),
+                                  child: Text('البيان',
+                                      textAlign: TextAlign.right),
                                 ),
                               ),
                               DataColumn(
-                                label: Text('الحركة', textAlign: TextAlign.right),
+                                label:
+                                    Text('الحركة', textAlign: TextAlign.right),
                               ),
                               DataColumn(
-                                label: Text('الرصيد قبل', textAlign: TextAlign.right),
+                                label: Text('الرصيد قبل',
+                                    textAlign: TextAlign.right),
                               ),
                               DataColumn(
-                                label: Text('الرصيد بعد', textAlign: TextAlign.right),
+                                label: Text('الرصيد بعد',
+                                    textAlign: TextAlign.right),
                               ),
                               DataColumn(
-                                label: Text('التاريخ', textAlign: TextAlign.right),
+                                label:
+                                    Text('التاريخ', textAlign: TextAlign.right),
                               ),
                               DataColumn(
-                                label: Text('إجراءات', textAlign: TextAlign.right),
+                                label:
+                                    Text('إجراءات', textAlign: TextAlign.right),
                               ),
                             ],
                             rows: sorted.map((doc) {
                               final data = doc.data() as Map<String, dynamic>;
-                              final type = data['type']?.toString() ?? 'deduction';
-                              final entered =
-                                  (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
+                              final type =
+                                  data['type']?.toString() ?? 'deduction';
+                              final entered = (data['enteredBalance'] as num?)
+                                      ?.toDouble() ??
+                                  0.0;
                               final before =
-                                  (data['balanceBefore'] as num?)?.toDouble() ?? 0.0;
+                                  (data['balanceBefore'] as num?)?.toDouble() ??
+                                      0.0;
                               final isIncrease = _isIncreaseType(type);
-                              final after =
-                                  isIncrease ? before + entered : before - entered;
+                              final after = isIncrease
+                                  ? before + entered
+                                  : before - entered;
                               final sign = isIncrease ? '+' : '-';
                               final color = _colorForType(type, isIncrease);
                               final description = _descriptionForEntry(data);
@@ -2474,20 +2488,26 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                                       children: [
                                         IconButton(
                                           icon: Icon(Icons.edit_outlined,
-                                              color: Colors.blue.shade700, size: 18),
+                                              color: Colors.blue.shade700,
+                                              size: 18),
                                           padding: EdgeInsets.zero,
                                           constraints: const BoxConstraints(),
                                           tooltip: 'تعديل',
-                                          onPressed: _isBusy ? null : () => _editEntry(doc),
+                                          onPressed: _isBusy
+                                              ? null
+                                              : () => _editEntry(doc),
                                         ),
                                         const SizedBox(width: 8),
                                         IconButton(
                                           icon: Icon(Icons.delete_outline,
-                                              color: Colors.red.shade700, size: 18),
+                                              color: Colors.red.shade700,
+                                              size: 18),
                                           padding: EdgeInsets.zero,
                                           constraints: const BoxConstraints(),
                                           tooltip: 'حذف',
-                                          onPressed: _isBusy ? null : () => _deleteEntry(doc),
+                                          onPressed: _isBusy
+                                              ? null
+                                              : () => _deleteEntry(doc),
                                         ),
                                       ],
                                     ),

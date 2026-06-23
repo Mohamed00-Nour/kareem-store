@@ -195,7 +195,7 @@ class _SpecialInvoiceGridCard extends StatelessWidget {
     final total = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
     final invoiceRemainder = invoiceUnpaidAmount(invoice);
-    final previous = invoiceNum(invoice['previousBalance']);
+    final previous = invoiceDynamicPreviousBalance(invoice);
     final balanceAfter = invoiceClientRemainingOwed(invoice);
     final balanceDiff = balanceAfter - previous;
 

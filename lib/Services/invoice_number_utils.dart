@@ -71,14 +71,28 @@ double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
   return invoiceNum(invoice['balance']);
 }
 
+/// Dynamically calculates previous balance based on the current live balance and unpaid invoice total.
+double invoiceDynamicPreviousBalance(Map<String, dynamic> invoice) {
+  final isSupplier = invoiceIsSupplierPurchase(invoice);
+  final liveBalance = isSupplier
+      ? invoiceSupplierRemainingOwed(invoice)
+      : invoiceClientRemainingOwed(invoice);
+  final unpaid = invoiceUnpaidAmount(invoice);
+  final isReturn = invoiceIsReturn(invoice);
+
+  if (isReturn) {
+    return liveBalance + unpaid;
+  } else {
+    return liveBalance - unpaid;
+  }
+}
+
 /// Running balance after this invoice (المتبقي عليكم / للمورد).
 double invoiceBalanceAfter(Map<String, dynamic> invoice) {
-  final previous = invoiceNum(invoice['previousBalance']);
-  final unpaid = invoiceUnpaidAmount(invoice);
-  if (invoiceIsReturn(invoice) || invoiceIsSupplierPurchase(invoice)) {
-    return previous - unpaid;
-  }
-  return previous + unpaid;
+  final isSupplier = invoiceIsSupplierPurchase(invoice);
+  return isSupplier
+      ? invoiceSupplierRemainingOwed(invoice)
+      : invoiceClientRemainingOwed(invoice);
 }
 
 /// Product line label on invoices: [customProductName] if set, else catalog [product],

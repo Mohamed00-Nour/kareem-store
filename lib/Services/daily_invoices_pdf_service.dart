@@ -138,7 +138,7 @@ class DailyInvoicesPdfService {
     final products = List<Map<String, dynamic>>.from(data['products'] ?? []);
     final totalSum = _num(data['totalSum']);
     final paid = _num(data['paidAmount']);
-    final previous = _num(data['previousBalance']);
+    final previous = invoiceDynamicPreviousBalance(data);
     final balance = invoiceClientRemainingOwed(data);
     final invoiceNumber = data['invoiceNumber']?.toString() ?? '-';
     final clientName = data['clientName']?.toString() ?? '';

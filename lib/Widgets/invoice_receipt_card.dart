@@ -56,7 +56,7 @@ class InvoiceReceiptCard extends StatelessWidget {
   Widget build(BuildContext context) {
     final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
     final lineProducts = _products;
-    final previousBalance = invoiceNum(invoice['previousBalance']);
+    final previousBalance = invoiceDynamicPreviousBalance(invoice);
     final totalSum = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
     final clientBalance = isBuying

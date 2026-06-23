@@ -76,8 +76,7 @@ class SalesInvoicePdfService {
         List<Map<String, dynamic>>.from(invoice['products'] ?? []);
     final totalSum = (invoice['totalSum'] as num?)?.toDouble() ?? 0.0;
     final paid = (invoice['paidAmount'] as num?)?.toDouble() ?? 0.0;
-    final previous =
-        (invoice['previousBalance'] as num?)?.toDouble() ?? 0.0;
+    final previous = invoiceDynamicPreviousBalance(invoice);
     final balance = invoiceClientRemainingOwed(invoice);
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);

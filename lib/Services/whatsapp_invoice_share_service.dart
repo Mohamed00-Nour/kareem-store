@@ -19,7 +19,7 @@ class WhatsappInvoiceShareService {
     final dateStr = _formatDate(invoice['date']);
     final total = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final previousBalance = _num(invoice['previousBalance']);
+
     final balance = isSupplier
         ? invoiceSupplierRemainingOwed(invoice)
         : invoiceClientRemainingOwed(invoice);

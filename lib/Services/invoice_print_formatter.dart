@@ -189,7 +189,7 @@ class InvoicePrintFormatter {
     line(sep);
 
     // ── Totals ──
-    final previous = _num(invoice['previousBalance']);
+    final previous = invoiceDynamicPreviousBalance(invoice);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
     final balance = isBuying
@@ -317,7 +317,7 @@ class InvoicePrintFormatter {
       );
     }
 
-    final previous = _num(invoice['previousBalance']);
+    final previous = invoiceDynamicPreviousBalance(invoice);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
     final balance = isBuying
