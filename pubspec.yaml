@@ -61,3 +61,6 @@ flutter:
      - family: cairo
        fonts:
          - asset: fonts/Cairo-Medium.ttf
+     - family: tajawal
+       fonts:
+         - asset: fonts/Tajawal-Medium.ttf

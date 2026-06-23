@@ -30,25 +30,25 @@ class ClientStatementPdfService {
     final clientName =
         (clientDoc.data()?['clientName'] ?? clientId).toString();
 
-    final amiriRegular =
-        pw.Font.ttf((await rootBundle.load('fonts/Amiri-Regular.ttf'))
-            .buffer
-            .asByteData());
+    final amiriRegular = pw.Font.ttf(
+        (await rootBundle.load('fonts/Amiri-Regular.ttf')).buffer.asByteData());
     final amiriBold = pw.Font.ttf(
         (await rootBundle.load('fonts/Amiri-Bold.ttf')).buffer.asByteData());
+    final tajawalFont = pw.Font.ttf(
+        (await rootBundle.load('fonts/Tajawal-Medium.ttf')).buffer.asByteData());
 
-    pw.TextStyle cell({bool bold = false, double fontSize = 10}) =>
+    pw.TextStyle cell({bool bold = false, double fontSize = 10, bool useTajawal = false}) =>
         pw.TextStyle(
-          font: bold ? amiriBold : amiriRegular,
+          font: useTajawal ? tajawalFont : (bold ? amiriBold : amiriRegular),
           fontSize: fontSize,
         );
 
-    pw.Widget rtl(String text, {bool bold = false, double fontSize = 10}) =>
+    pw.Widget rtl(String text, {bool bold = false, double fontSize = 10, bool useTajawal = false}) =>
         pw.Text(
           text,
           textDirection: pw.TextDirection.rtl,
           textAlign: pw.TextAlign.right,
-          style: cell(bold: bold, fontSize: fontSize),
+          style: cell(bold: bold, fontSize: fontSize, useTajawal: useTajawal),
         );
 
     final periodStr =
@@ -58,22 +58,26 @@ class ClientStatementPdfService {
     final invoiceFooter = settings.salesInvoiceFooter;
     final reportFooter = settings.a4ReportFooter;
 
-    pw.Widget center(String text, {bool bold = false, double fontSize = 10}) =>
+    pw.Widget center(String text, {bool bold = false, double fontSize = 10, bool useTajawal = false}) =>
         pw.Text(
           text,
           textDirection: pw.TextDirection.rtl,
           textAlign: pw.TextAlign.center,
-          style: cell(bold: bold, fontSize: fontSize),
+          style: cell(bold: bold, fontSize: fontSize, useTajawal: useTajawal),
         );
 
     final pdf = pw.Document();
 
     switch (type) {
       case ClientStatementType.financial:
+        final clientBalance = clientDoc.exists
+            ? (clientDoc.data()?['balance'] as num?)?.toDouble() ?? 0.0
+            : 0.0;
         await _addFinancialPages(
           pdf: pdf,
           clientId: clientId,
           clientName: clientName,
+          clientBalance: clientBalance,
           start: startInclusive,
           end: endInclusive,
           periodStr: periodStr,
@@ -145,14 +149,15 @@ class ClientStatementPdfService {
     required pw.Document pdf,
     required String clientId,
     required String clientName,
+    required double clientBalance,
     required DateTime start,
     required DateTime end,
     required String periodStr,
     required String nowStr,
     required String reportFooter,
-    required pw.TextStyle Function({bool bold, double fontSize}) cell,
-    required pw.Widget Function(String text, {bool bold, double fontSize}) rtl,
-    required pw.Widget Function(String text, {bool bold, double fontSize}) center,
+    required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
+    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
+    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
   }) async {
     final snap = await FirebaseFirestore.instance
         .collection('clients')
@@ -206,11 +211,66 @@ class ClientStatementPdfService {
         'after': after,
         'description': description,
         'sign': sign,
+        'type': type,
+        'invoiceId': data['invoiceId']?.toString() ?? '',
+        'timestamp': ts,
       });
     }
 
-    final totalPaid =
-        payments.fold<double>(0, (s, p) => s + (p['entered'] as double));
+    int typePriority(String t) {
+      switch (t) {
+        case 'opening':
+          return 7;
+        case 'sale_payment':
+          return 1;
+        case 'sale':
+          return 2;
+        case 'return_payment':
+          return 3;
+        case 'return':
+          return 4;
+        case 'addition':
+          return 5;
+        case 'deduction':
+          return 6;
+        default:
+          return 8;
+      }
+    }
+
+    payments.sort((a, b) {
+      final typeA = a['type']?.toString() ?? '';
+      final typeB = b['type']?.toString() ?? '';
+
+      // Opening always last (oldest) in a descending list
+      if (typeA == 'opening' && typeB != 'opening') return 1;
+      if (typeB == 'opening' && typeA != 'opening') return -1;
+
+      // Group by same invoiceId
+      final invA = a['invoiceId']?.toString() ?? '';
+      final invB = b['invoiceId']?.toString() ?? '';
+      if (invA.isNotEmpty && invA == invB) {
+        return typePriority(typeA).compareTo(typePriority(typeB));
+      }
+
+      // Then by timestamp descending (newest first)
+      final tsA = a['timestamp'];
+      final tsB = b['timestamp'];
+      DateTime? dateA, dateB;
+      if (tsA is Timestamp) dateA = tsA.toDate();
+      if (tsB is Timestamp) dateB = tsB.toDate();
+
+      if (dateA != null && dateB != null) {
+        final cmp = dateB.compareTo(dateA); // Descending!
+        if (cmp != 0) return cmp;
+      } else if (dateA != null) {
+        return -1;
+      } else if (dateB != null) {
+        return 1;
+      }
+
+      return typePriority(typeA).compareTo(typePriority(typeB));
+    });
 
     pw.Widget headerCell(String t) => pw.Padding(
           padding: const pw.EdgeInsets.all(6),
@@ -225,7 +285,7 @@ class ClientStatementPdfService {
           child: pw.Text(t,
               textDirection: pw.TextDirection.rtl,
               textAlign: pw.TextAlign.center,
-              style: cell(bold: bold, fontSize: 9)),
+              style: cell(bold: bold, fontSize: 9, useTajawal: true)),
         );
 
     pdf.addPage(
@@ -250,7 +310,7 @@ class ClientStatementPdfService {
               pw.SizedBox(height: 4),
               pw.Align(
                 alignment: pw.Alignment.centerLeft,
-                child: pw.Text('تاريخ التقرير: $nowStr', style: cell(fontSize: 8)),
+                child: pw.Text('تاريخ التقرير: $nowStr', textDirection: pw.TextDirection.rtl, style: cell(fontSize: 8, useTajawal: true)),
               ),
               pw.SizedBox(height: 16),
               if (payments.isEmpty)
@@ -290,20 +350,27 @@ class ClientStatementPdfService {
                           dataCell((p['after'] as double).toStringAsFixed(2)),
                         ],
                       ),
-                    pw.TableRow(
-                      decoration:
-                          const pw.BoxDecoration(color: PdfColors.grey100),
-                      children: [
-                        dataCell('الإجمالي', bold: true),
-                        dataCell(''),
-                        dataCell(totalPaid.toStringAsFixed(2), bold: true),
-                        dataCell(''),
-                        dataCell(''),
-                      ],
-                    ),
                   ],
                 ),
               pw.Spacer(),
+              pw.Container(
+                padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+                decoration: const pw.BoxDecoration(
+                  color: PdfColors.grey100,
+                  border: pw.Border(
+                    top: pw.BorderSide(color: PdfColors.grey400, width: 1),
+                    bottom: pw.BorderSide(color: PdfColors.grey400, width: 1),
+                  ),
+                ),
+                child: pw.Row(
+                  mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
+                  children: [
+                    rtl(invoiceAmount(clientBalance), bold: true, fontSize: 11),
+                    rtl('الرصيد الحالي عليكم:', bold: true, fontSize: 11),
+                  ],
+                ),
+              ),
+              pw.SizedBox(height: 8),
               for (final line in InvoiceAppFooter.resolveLines(reportFooter))
                 pw.Padding(
                   padding: const pw.EdgeInsets.only(top: 3),
@@ -325,9 +392,9 @@ class ClientStatementPdfService {
     required String periodStr,
     required String nowStr,
     required String invoiceFooter,
-    required pw.TextStyle Function({bool bold, double fontSize}) cell,
-    required pw.Widget Function(String text, {bool bold, double fontSize}) rtl,
-    required pw.Widget Function(String text, {bool bold, double fontSize}) center,
+    required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
+    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
+    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
     required String invoicesSubcollection,
     required String statementHeader,
     required String invoiceTypeLabel,
