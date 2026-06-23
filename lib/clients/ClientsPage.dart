@@ -172,6 +172,7 @@ import '../Services/party_rename_service.dart';
 import '../Widgets/egypt_phone_field.dart';
 import '../Widgets/app_responsive.dart';
 import 'ClientInvoicesPage.dart';
+import '../Services/client_invoice_balance_sync_service.dart';
 
 // ─── Main Menu Page ──────────────────────────────────────────────────────────
 
@@ -1172,6 +1173,7 @@ class _ClientOpeningBalancesPageState
     final amountCtrl = TextEditingController(text: '0');
     final descCtrl = TextEditingController();
     final voucherCtrl = TextEditingController(text: nextVoucher.toString());
+    bool isSaving = false;
 
     await showDialog(
       context: context,
@@ -1216,7 +1218,9 @@ class _ClientOpeningBalancesPageState
                                 value: 'عليه',
                                 groupValue: direction,
                                 activeColor: Colors.green,
-                                onChanged: (v) => setDlg(() => direction = v!),
+                                onChanged: isSaving
+                                    ? null
+                                    : (v) => setDlg(() => direction = v!),
                               ),
                               const Text('عليه',
                                   style: TextStyle(fontSize: 15)),
@@ -1226,7 +1230,9 @@ class _ClientOpeningBalancesPageState
                                 value: 'له',
                                 groupValue: direction,
                                 activeColor: Colors.green,
-                                onChanged: (v) => setDlg(() => direction = v!),
+                                onChanged: isSaving
+                                    ? null
+                                    : (v) => setDlg(() => direction = v!),
                               ),
                               const Text('له', style: TextStyle(fontSize: 15)),
                             ]),
@@ -1241,6 +1247,7 @@ class _ClientOpeningBalancesPageState
                               controller: voucherCtrl,
                               textAlign: TextAlign.center,
                               keyboardType: TextInputType.number,
+                              enabled: !isSaving,
                               decoration: InputDecoration(
                                 border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(8)),
@@ -1251,14 +1258,15 @@ class _ClientOpeningBalancesPageState
                           ),
                           const SizedBox(width: 12),
                           const Text('رقم السند',
-                              style: TextStyle(
-                                  fontSize: 15, fontWeight: FontWeight.bold)),
+                                style: TextStyle(
+                                    fontSize: 15, fontWeight: FontWeight.bold)),
                         ],
                       ),
                       const SizedBox(height: 10),
                       TextField(
                         controller: descCtrl,
                         textAlign: TextAlign.right,
+                        enabled: !isSaving,
                         decoration: InputDecoration(
                           hintText: 'البيان : تفاصيل السند',
                           border: OutlineInputBorder(
@@ -1269,16 +1277,19 @@ class _ClientOpeningBalancesPageState
                       ),
                       const SizedBox(height: 10),
                       InkWell(
-                        onTap: () async {
-                          final picked = await showDatePicker(
-                            context: ctx,
-                            initialDate: selectedDate,
-                            firstDate: DateTime(2020),
-                            lastDate: DateTime(2030),
-                          );
-                          if (picked != null)
-                            setDlg(() => selectedDate = picked);
-                        },
+                        onTap: isSaving
+                            ? null
+                            : () async {
+                                final picked = await showDatePicker(
+                                  context: ctx,
+                                  initialDate: selectedDate,
+                                  firstDate: DateTime(2020),
+                                  lastDate: DateTime(2030),
+                                );
+                                if (picked != null) {
+                                  setDlg(() => selectedDate = picked);
+                                }
+                              },
                         child: Container(
                           decoration: BoxDecoration(
                             border: Border.all(color: Colors.blue.shade300),
@@ -1327,8 +1338,9 @@ class _ClientOpeningBalancesPageState
                                 value: 'شيك',
                                 groupValue: paymentMethod,
                                 activeColor: Colors.green,
-                                onChanged: (v) =>
-                                    setDlg(() => paymentMethod = v!),
+                                onChanged: isSaving
+                                    ? null
+                                    : (v) => setDlg(() => paymentMethod = v!),
                               ),
                               const Text('شيك'),
                             ]),
@@ -1337,8 +1349,9 @@ class _ClientOpeningBalancesPageState
                                 value: 'بطاقة',
                                 groupValue: paymentMethod,
                                 activeColor: Colors.green,
-                                onChanged: (v) =>
-                                    setDlg(() => paymentMethod = v!),
+                                onChanged: isSaving
+                                    ? null
+                                    : (v) => setDlg(() => paymentMethod = v!),
                               ),
                               const Text('بطاقة'),
                             ]),
@@ -1347,8 +1360,9 @@ class _ClientOpeningBalancesPageState
                                 value: 'نقداً',
                                 groupValue: paymentMethod,
                                 activeColor: Colors.green,
-                                onChanged: (v) =>
-                                    setDlg(() => paymentMethod = v!),
+                                onChanged: isSaving
+                                    ? null
+                                    : (v) => setDlg(() => paymentMethod = v!),
                               ),
                               const Text('نقداً'),
                             ]),
@@ -1368,13 +1382,16 @@ class _ClientOpeningBalancesPageState
                               keyboardType:
                                   const TextInputType.numberWithOptions(
                                       decimal: true),
+                              enabled: !isSaving,
                               style: const TextStyle(
                                   fontSize: 18,
                                   color: Colors.red,
                                   fontWeight: FontWeight.bold),
                               decoration: InputDecoration(
                                 filled: true,
-                                fillColor: Colors.yellow.shade200,
+                                fillColor: isSaving
+                                    ? Colors.grey.shade200
+                                    : Colors.yellow.shade200,
                                 border: OutlineInputBorder(
                                     borderRadius: BorderRadius.circular(8)),
                                 contentPadding: const EdgeInsets.symmetric(
@@ -1393,53 +1410,170 @@ class _ClientOpeningBalancesPageState
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
                           TextButton(
-                            onPressed: () => Navigator.pop(ctx),
+                            onPressed: isSaving ? null : () => Navigator.pop(ctx),
                             child: const Text('تراجع',
                                 style: TextStyle(
                                     color: Colors.pink, fontSize: 15)),
                           ),
                           TextButton(
-                            onPressed: () async {
-                              final amount =
-                                  double.tryParse(amountCtrl.text) ?? 0.0;
-                              if (amount == 0) return;
+                            onPressed: isSaving
+                                ? null
+                                : () async {
+                                    final amount =
+                                        double.tryParse(amountCtrl.text) ?? 0.0;
+                                    if (amount == 0) return;
 
-                              double delta =
-                                  direction == 'عليه' ? amount : -amount;
-                              double newBalance = currentBalance + delta;
+                                    setDlg(() => isSaving = true);
 
-                              await FirebaseFirestore.instance
-                                  .collection('clients')
-                                  .doc(clientId)
-                                  .update({'balance': newBalance});
+                                    try {
+                                      final isAddition = direction == 'عليه';
+                                      double delta =
+                                          isAddition ? amount : -amount;
 
-                              await FirebaseFirestore.instance
-                                  .collection('client_vouchers')
-                                  .add({
-                                'clientId': clientId,
-                                'clientName': clientName,
-                                'voucherNumber':
-                                    int.tryParse(voucherCtrl.text) ??
-                                        nextVoucher,
-                                'direction': direction,
-                                'amount': amount,
-                                'description': descCtrl.text,
-                                'date': selectedDate,
-                                'paymentMethod': paymentMethod,
-                                'timestamp': FieldValue.serverTimestamp(),
-                              });
+                                      // Get current client balance
+                                      DocumentSnapshot clientDoc =
+                                          await FirebaseFirestore.instance
+                                              .collection('clients')
+                                              .doc(clientId)
+                                              .get();
 
-                              if (ctx.mounted) Navigator.pop(ctx);
-                              if (context.mounted) {
-                                ScaffoldMessenger.of(context).showSnackBar(
-                                  const SnackBar(
-                                      content: Text('تم إضافة المبلغ بنجاح')),
-                                );
-                              }
-                            },
-                            child: const Text('اضافة المبلغ',
-                                style: TextStyle(
-                                    color: Colors.pink, fontSize: 15)),
+                                      double latestBalance = 0.0;
+                                      if (clientDoc.exists) {
+                                        latestBalance = (clientDoc['balance'] ??
+                                                0.0)
+                                            .toDouble();
+                                      } else {
+                                        latestBalance = currentBalance;
+                                      }
+
+                                      double newBalance = latestBalance + delta;
+
+                                      // Update client balance
+                                      await FirebaseFirestore.instance
+                                          .collection('clients')
+                                          .doc(clientId)
+                                          .update({'balance': newBalance});
+
+                                      final vNumber =
+                                          int.tryParse(voucherCtrl.text) ??
+                                              nextVoucher;
+                                      await FirebaseFirestore.instance
+                                          .collection('client_vouchers')
+                                          .add({
+                                        'clientId': clientId,
+                                        'clientName': clientName,
+                                        'voucherNumber': vNumber,
+                                        'direction': direction,
+                                        'amount': amount,
+                                        'description': descCtrl.text,
+                                        'date': selectedDate,
+                                        'paymentMethod': paymentMethod,
+                                        'timestamp': FieldValue.serverTimestamp(),
+                                      });
+
+                                      // Construct notes for the balance history
+                                      String noteStr = 'سند $direction';
+                                      noteStr += ' رقم $vNumber';
+                                      final dText = descCtrl.text.trim();
+                                      if (dText.isNotEmpty) {
+                                        noteStr += ' ($dText)';
+                                      }
+
+                                      await FirebaseFirestore.instance
+                                          .collection('clients')
+                                          .doc(clientId)
+                                          .collection('balanceHistory')
+                                          .add({
+                                        'enteredBalance': amount,
+                                        'balanceBefore': latestBalance,
+                                        'type': isAddition
+                                            ? 'addition'
+                                            : 'deduction',
+                                        'notes': noteStr,
+                                        'timestamp': selectedDate,
+                                      });
+
+                                      // Update the box collection
+                                      DocumentReference boxDocRef =
+                                          FirebaseFirestore.instance
+                                              .collection('box')
+                                              .doc('mainBox');
+
+                                      await FirebaseFirestore.instance
+                                          .runTransaction((transaction) async {
+                                        DocumentSnapshot boxSnapshot =
+                                            await transaction.get(boxDocRef);
+
+                                        if (boxSnapshot.exists) {
+                                          double currentBoxValue =
+                                              (boxSnapshot['value'] ?? 0.0)
+                                                  .toDouble();
+                                          transaction.update(boxDocRef, {
+                                            'value': isAddition
+                                                ? currentBoxValue - amount
+                                                : currentBoxValue + amount
+                                          });
+                                        } else {
+                                          transaction.set(boxDocRef, {
+                                            'value': isAddition
+                                                ? -amount
+                                                : amount
+                                          });
+                                        }
+                                      });
+
+                                      // Add change to the subcollection
+                                      await boxDocRef.collection('changes').add({
+                                        'date': FieldValue.serverTimestamp(),
+                                        'value': amount,
+                                        'type': isAddition
+                                            ? 'decrement'
+                                            : 'addition',
+                                        'name': clientName,
+                                        'notes': noteStr,
+                                        'invoiceNumber': null,
+                                      });
+
+                                      await ClientInvoiceBalanceSyncService
+                                          .syncForClient(clientId);
+
+                                      if (ctx.mounted) Navigator.pop(ctx);
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          const SnackBar(
+                                              content: Text(
+                                                  'تم إضافة المبلغ بنجاح')),
+                                        );
+                                      }
+                                    } catch (e) {
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
+                                          SnackBar(
+                                              content: Text(
+                                                  'حدث خطأ أثناء الإضافة: $e')),
+                                        );
+                                      }
+                                    } finally {
+                                      if (ctx.mounted) {
+                                        setDlg(() => isSaving = false);
+                                      }
+                                    }
+                                  },
+                            child: isSaving
+                                ? const SizedBox(
+                                    width: 18,
+                                    height: 18,
+                                    child: CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      valueColor: AlwaysStoppedAnimation<Color>(
+                                          Colors.pink),
+                                    ),
+                                  )
+                                : const Text('اضافة المبلغ',
+                                    style: TextStyle(
+                                        color: Colors.pink, fontSize: 15)),
                           ),
                         ],
                       ),
