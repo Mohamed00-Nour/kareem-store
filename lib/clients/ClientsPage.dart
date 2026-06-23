@@ -544,6 +544,24 @@ class _ClientOpeningBalancesPageState
     extends State<_ClientOpeningBalancesPage> {
   String _search = '';
   bool _generating = false;
+  Box<String>? _deletedClientsBox;
+
+  @override
+  void initState() {
+    super.initState();
+    _initializeHive();
+  }
+
+  Future<void> _initializeHive() async {
+    final dir = await getApplicationDocumentsDirectory();
+    Hive.init(dir.path);
+    final box = await Hive.openBox<String>('deletedClients');
+    if (mounted) {
+      setState(() {
+        _deletedClientsBox = box;
+      });
+    }
+  }
 
   void _showReportChoiceDialog() {
     showModalBottomSheet(
@@ -1666,10 +1684,11 @@ class _ClientOpeningBalancesPageState
                     .collection('clients')
                     .snapshots(),
                 builder: (context, snapshot) {
-                  if (!snapshot.hasData) {
+                  if (!snapshot.hasData || _deletedClientsBox == null) {
                     return const Center(child: CircularProgressIndicator());
                   }
                   final clients = snapshot.data!.docs.where((d) {
+                    if (_deletedClientsBox!.containsKey(d.id)) return false;
                     if (_search.isEmpty) return true;
                     return (d['clientName'] ?? '')
                         .toString()

@@ -1,10 +1,12 @@
 import 'package:flutter/material.dart';
+import 'package:cloud_firestore/cloud_firestore.dart';
 
 class DeletedClientsPage extends StatelessWidget {
   final Set<String> deletedClients;
   final Function(String) onRestoreClient;
 
-  const DeletedClientsPage({Key? key, required this.deletedClients, required this.onRestoreClient})
+  const DeletedClientsPage(
+      {Key? key, required this.deletedClients, required this.onRestoreClient})
       : super(key: key);
 
   @override
@@ -30,7 +32,30 @@ class DeletedClientsPage extends StatelessWidget {
             color: Colors.orange.withOpacity(0.7),
             margin: const EdgeInsets.all(10.0),
             child: ListTile(
-              title: Center(child: Text('اسم العميل: $clientId')),
+              title: Center(
+                child: FutureBuilder<DocumentSnapshot>(
+                  future: FirebaseFirestore.instance
+                      .collection('clients')
+                      .doc(clientId)
+                      .get(),
+                  builder: (context, snapshot) {
+                    String displayName = clientId;
+                    if (snapshot.hasData && snapshot.data!.exists) {
+                      final data =
+                          snapshot.data!.data() as Map<String, dynamic>?;
+                      displayName = data?['clientName']?.toString() ?? clientId;
+                    }
+                    return Text(
+                      'اسم العميل: $displayName',
+                      style: const TextStyle(
+                        color: Colors.white,
+                        fontWeight: FontWeight.bold,
+                        fontSize: 16,
+                      ),
+                    );
+                  },
+                ),
+              ),
               trailing: IconButton(
                 icon: const Icon(Icons.restore, color: Colors.white),
                 onPressed: () {
