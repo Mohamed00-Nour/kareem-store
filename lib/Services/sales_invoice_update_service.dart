@@ -134,6 +134,7 @@ class SalesInvoiceUpdateService {
       'previousBalance': previousBalance,
       'paymentMethod': paymentMethod,
       'notes': notes,
+      'invoiceDiscount': effectiveDiscountAmt,
       'products': newProducts,
     };
 

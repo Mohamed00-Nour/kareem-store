@@ -29,6 +29,7 @@ class SalesInvoiceCard extends StatelessWidget {
     final client = invoice['clientName']?.toString() ?? '';
     final number = invoice['invoiceNumber']?.toString() ?? '';
     final total = invoiceNum(invoice['totalSum']);
+    final discount = invoiceNum(invoice['invoiceDiscount']);
 
     return Card(
       elevation: 2,
@@ -67,6 +68,17 @@ class SalesInvoiceCard extends StatelessWidget {
                 ),
               ],
               const Spacer(),
+              if (discount > 0) ...[
+                Text(
+                  'خصم: ${invoiceAmount(discount)} ج.م',
+                  style: TextStyle(
+                    fontSize: 11.sp,
+                    color: Colors.red.shade700,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 2.h),
+              ],
               Text(
                 '${invoiceAmount(total)} ج.م',
                 style: TextStyle(

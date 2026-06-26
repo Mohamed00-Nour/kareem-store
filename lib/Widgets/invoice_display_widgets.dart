@@ -255,6 +255,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
     final remainingLabel = isBuying
         ? 'المتبقي للمورد'
         : 'المتبقي عليكم';
+    final discount = invoiceNum(invoice['invoiceDiscount']);
 
     if (isBuying) {
       return FutureBuilder<double>(
@@ -272,6 +273,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
             paid: paid,
             remainingLabel: remainingLabel,
             remaining: remaining,
+            discount: discount,
           );
         },
       );
@@ -284,6 +286,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
         paid: paid,
         remainingLabel: remainingLabel,
         remaining: remaining,
+        discount: discount,
       );
     }
   }
@@ -294,6 +297,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
     required double paid,
     required String remainingLabel,
     required double remaining,
+    required double discount,
   }) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 10.h),
@@ -322,6 +326,15 @@ class InvoiceTotalsFooter extends StatelessWidget {
                   ),
                 ],
               ),
+              if (discount > 0)
+                Text(
+                  'الخصم: ${invoiceAmount(discount)}',
+                  style: TextStyle(
+                    fontSize: 14.sp,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red,
+                  ),
+                ),
               Text(
                 'المدفوع: ${invoiceAmount(paid)}',
                 style: TextStyle(

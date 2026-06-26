@@ -1199,6 +1199,134 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
+  void _showBalanceActionDialog() {
+    _balanceController.clear();
+    _addBalanceController.clear();
+    _notesController.clear();
+
+    showDialog(
+      context: context,
+      builder: (ctx) {
+        return Directionality(
+          textDirection: ui.TextDirection.rtl,
+          child: AlertDialog(
+            backgroundColor: const Color(0xffead1ac),
+            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+            title: const Text(
+              'تعديل رصيد العميل',
+              style: TextStyle(fontWeight: FontWeight.bold),
+            ),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: _balanceController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      focusedBorder: const OutlineInputBorder(
+                        borderSide: BorderSide(color: Colors.orange),
+                      ),
+                      labelText: 'خصم من الرصيد (سداد)',
+                      labelStyle: TextStyle(
+                        color: Colors.black.withOpacity(0.7),
+                        fontSize: 14.sp,
+                      ),
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(
+                        Icons.remove_circle_outline,
+                        color: Colors.red,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      if (value.isNotEmpty) {
+                        _addBalanceController.clear();
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _addBalanceController,
+                    keyboardType: TextInputType.number,
+                    decoration: InputDecoration(
+                      focusedBorder: const OutlineInputBorder(
+                        borderSide: BorderSide(color: Colors.orange),
+                      ),
+                      labelText: 'إضافة إلى الرصيد',
+                      labelStyle: TextStyle(
+                        color: Colors.black.withOpacity(0.7),
+                        fontSize: 14.sp,
+                      ),
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(
+                        Icons.add_circle_outline,
+                        color: Colors.green,
+                      ),
+                    ),
+                    onChanged: (value) {
+                      if (value.isNotEmpty) {
+                        _balanceController.clear();
+                      }
+                    },
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: _notesController,
+                    textAlign: TextAlign.right,
+                    decoration: InputDecoration(
+                      focusedBorder: const OutlineInputBorder(
+                        borderSide: BorderSide(color: Colors.orange),
+                      ),
+                      labelText: 'البيان / ملاحظات العملية (اختياري)',
+                      labelStyle: TextStyle(
+                        color: Colors.black.withOpacity(0.7),
+                        fontSize: 14.sp,
+                      ),
+                      border: const OutlineInputBorder(),
+                      prefixIcon: const Icon(
+                        Icons.note_alt_outlined,
+                        color: Colors.orange,
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            actions: [
+              TextButton(
+                onPressed: () {
+                  Navigator.pop(ctx);
+                },
+                child: Text(
+                  'إلغاء',
+                  style: TextStyle(color: Colors.black.withOpacity(0.7)),
+                ),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.black87,
+                  foregroundColor: Colors.white,
+                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.r)),
+                ),
+                onPressed: () {
+                  Navigator.pop(ctx);
+                  _saveBalance();
+                },
+                child: const Text('حفظ'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
+  void _navigateToBalanceHistory() {
+    Navigator.of(context).push(MaterialPageRoute(
+      builder: (context) => BalanceHistoryPage(clientId: widget.clientId),
+    ));
+  }
+
   Widget _buildInvoiceProductsTable(List<dynamic> products) {
     final rows = products
         .whereType<Map>()
@@ -1385,6 +1513,21 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     final totalSum = invoiceData.containsKey('totalSum')
         ? (double.tryParse(invoiceData['totalSum'].toString()) ?? 0.0)
         : 0.0;
+    double discount = invoiceNum(invoiceData['invoiceDiscount']);
+    if (discount <= 0) {
+      final double productsSum = (invoiceData['products'] as List? ?? []).fold<double>(
+        0.0,
+        (sum, item) {
+          if (item is! Map) return sum;
+          final itemTotal = double.tryParse((item['total'] ?? item['totalCost'])?.toString() ?? '') ?? 0.0;
+          return sum + itemTotal;
+        },
+      );
+      final diff = productsSum - totalSum;
+      if (diff > 0.01) {
+        discount = diff;
+      }
+    }
 
     return Card(
       margin: const EdgeInsets.all(10.0),
@@ -1472,6 +1615,15 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                           ),
                         ],
                       ),
+                      if (discount > 0)
+                        Text(
+                          'الخصم: ${invoiceAmount(discount)}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.red,
+                          ),
+                        ),
                       Text(
                         'المدفوع: ${invoiceAmount(invoice['paidAmount'])}',
                         style: const TextStyle(
@@ -1522,6 +1674,20 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                 )),
             actions: [
               IconButton(
+                icon: const Icon(Icons.history, color: Colors.white),
+                tooltip: 'تاريخ الرصيد',
+                onPressed: (_isSaving || _generatingStatement)
+                    ? null
+                    : _navigateToBalanceHistory,
+              ),
+              IconButton(
+                icon: const Icon(Icons.account_balance_wallet, color: Colors.white),
+                tooltip: 'تعديل الرصيد',
+                onPressed: (_isSaving || _generatingStatement)
+                    ? null
+                    : _showBalanceActionDialog,
+              ),
+              IconButton(
                 icon: const Icon(Icons.picture_as_pdf, color: Colors.white),
                 tooltip: 'كشف حساب PDF',
                 onPressed: (_isSaving || _generatingStatement)
@@ -1530,237 +1696,39 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
               ),
             ],
           ),
-          body: Column(
-            children: [
-              Padding(
-                padding: const EdgeInsets.all(10.0),
-                child: Column(
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: _balanceController,
-                            keyboardType: TextInputType.number,
-                            enabled: !_isSaving,
-                            decoration: InputDecoration(
-                              focusedBorder: OutlineInputBorder(
-                                borderSide: BorderSide(
-                                    color: Colors.black.withOpacity(0.7)),
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey.withOpacity(0.1),
-                              labelText: 'خصم من الرصيد (سداد)',
-                              labelStyle: TextStyle(
-                                color: Colors.black.withOpacity(0.7),
-                                fontSize: 14.sp,
-                              ),
-                              border: OutlineInputBorder(
-                                borderSide: BorderSide(
-                                  color: Colors.black.withOpacity(0.7),
+          body: _isLoadingInvoices && _invoices.isEmpty
+              ? Center(
+                  child: CircularProgressIndicator(
+                    color: Colors.orange.withOpacity(0.7),
+                  ),
+                )
+              : _invoices.isEmpty
+                  ? const Center(child: Text('لا توجد فواتير'))
+                  : RefreshIndicator(
+                      onRefresh: _refreshInvoices,
+                      color: Colors.orange,
+                      child: ListView.builder(
+                        controller: _invoiceScrollController,
+                        physics: const AlwaysScrollableScrollPhysics(),
+                        itemCount: _invoices.length +
+                            (_hasMoreInvoices || _isLoadingMoreInvoices
+                                ? 1
+                                : 0),
+                        itemBuilder: (context, index) {
+                          if (index >= _invoices.length) {
+                            return Padding(
+                              padding: const EdgeInsets.all(16.0),
+                              child: Center(
+                                child: CircularProgressIndicator(
+                                  color: Colors.orange.withOpacity(0.7),
                                 ),
                               ),
-                              prefixIcon: const Icon(
-                                  Icons.remove_circle_outline,
-                                  color: Colors.red),
-                            ),
-                            onChanged: (value) {
-                              if (value.isNotEmpty) {
-                                _addBalanceController.clear();
-                              }
-                            },
-                          ),
-                        ),
-                        const SizedBox(width: 10),
-                        Expanded(
-                          child: TextField(
-                            controller: _addBalanceController,
-                            keyboardType: TextInputType.number,
-                            enabled: !_isSaving,
-                            decoration: InputDecoration(
-                              focusedBorder: OutlineInputBorder(
-                                borderSide: BorderSide(
-                                    color: Colors.black.withOpacity(0.7)),
-                              ),
-                              filled: true,
-                              fillColor: Colors.grey.withOpacity(0.1),
-                              labelText: 'إضافة إلى الرصيد',
-                              labelStyle: TextStyle(
-                                color: Colors.black.withOpacity(0.7),
-                                fontSize: 14.sp,
-                              ),
-                              border: OutlineInputBorder(
-                                borderSide: BorderSide(
-                                  color: Colors.black.withOpacity(0.7),
-                                ),
-                              ),
-                              prefixIcon: const Icon(Icons.add_circle_outline,
-                                  color: Colors.green),
-                            ),
-                            onChanged: (value) {
-                              if (value.isNotEmpty) {
-                                _balanceController.clear();
-                              }
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: _notesController,
-                      enabled: !_isSaving,
-                      textAlign: TextAlign.right,
-                      decoration: InputDecoration(
-                        focusedBorder: OutlineInputBorder(
-                          borderSide:
-                              BorderSide(color: Colors.black.withOpacity(0.7)),
-                        ),
-                        filled: true,
-                        fillColor: Colors.grey.withOpacity(0.1),
-                        labelText: 'البيان / ملاحظات العملية (اختياري)',
-                        labelStyle: TextStyle(
-                          color: Colors.black.withOpacity(0.7),
-                          fontSize: 14.sp,
-                        ),
-                        border: OutlineInputBorder(
-                          borderSide: BorderSide(
-                            color: Colors.black.withOpacity(0.7),
-                          ),
-                        ),
-                        prefixIcon: const Icon(Icons.note_alt_outlined,
-                            color: Colors.orange),
+                            );
+                          }
+                          return _buildInvoiceCard(_invoices[index]);
+                        },
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.center,
-                      children: [
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8.0),
-                              ),
-                              backgroundColor:
-                                  (_isSaving || _generatingStatement)
-                                      ? Colors.grey
-                                      : Colors.orange.shade800),
-                          onPressed: (_isSaving || _generatingStatement)
-                              ? null
-                              : _showAccountStatementDialog,
-                          child: _generatingStatement
-                              ? const SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : Text(
-                                  'كشف حساب PDF',
-                                  style: TextStyle(
-                                    fontSize: 13.sp,
-                                    color: Colors.white,
-                                  ),
-                                ),
-                        ),
-                        SizedBox(width: 8),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8.0),
-                              ),
-                              backgroundColor: _isSaving
-                                  ? Colors.grey
-                                  : Colors.black.withOpacity(0.7)),
-                          onPressed: _isSaving
-                              ? null
-                              : _saveBalance, // Disable when saving
-                          child: _isSaving
-                              ? SizedBox(
-                                  width: 20,
-                                  height: 20,
-                                  child: CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    valueColor: AlwaysStoppedAnimation<Color>(
-                                        Colors.white),
-                                  ),
-                                )
-                              : Text(
-                                  'حفظ',
-                                  style: TextStyle(
-                                    fontSize: 14.sp,
-                                    color: Colors.white.withOpacity(1),
-                                  ),
-                                ),
-                        ),
-                        SizedBox(width: 10),
-                        ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                              shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8.0),
-                              ),
-                              backgroundColor: Colors.black.withOpacity(0.7)),
-                          onPressed: _isSaving
-                              ? null
-                              : () {
-                                  // Disable when saving
-                                  Navigator.of(context).push(MaterialPageRoute(
-                                    builder: (context) => BalanceHistoryPage(
-                                        clientId: widget.clientId),
-                                  ));
-                                },
-                          child: Text(
-                            'عرض تاريخ الرصيد',
-                            style: TextStyle(
-                              fontSize: 14.sp,
-                              color: Colors.white.withOpacity(1),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
-              Expanded(
-                child: _isLoadingInvoices && _invoices.isEmpty
-                    ? Center(
-                        child: CircularProgressIndicator(
-                          color: Colors.orange.withOpacity(0.7),
-                        ),
-                      )
-                    : _invoices.isEmpty
-                        ? const Center(child: Text('لا توجد فواتير'))
-                        : RefreshIndicator(
-                            onRefresh: _refreshInvoices,
-                            color: Colors.orange,
-                            child: ListView.builder(
-                              controller: _invoiceScrollController,
-                              physics: const AlwaysScrollableScrollPhysics(),
-                              itemCount: _invoices.length +
-                                  (_hasMoreInvoices || _isLoadingMoreInvoices
-                                      ? 1
-                                      : 0),
-                              itemBuilder: (context, index) {
-                                if (index >= _invoices.length) {
-                                  return Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Center(
-                                      child: CircularProgressIndicator(
-                                        color: Colors.orange.withOpacity(0.7),
-                                      ),
-                                    ),
-                                  );
-                                }
-                                return _buildInvoiceCard(_invoices[index]);
-                              },
-                            ),
-                          ),
-              ),
-            ],
-          ),
         ),
         // Loading overlay
         if (_isSaving || _generatingStatement)

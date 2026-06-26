@@ -107,6 +107,7 @@ class DailyInvoicesPdfService {
     final products = List<Map<String, dynamic>>.from(data['products'] ?? []);
     final totalSum = _num(data['totalSum']);
     final paid = _num(data['paidAmount']);
+    final discount = _num(data['invoiceDiscount']);
     final previous = invoiceDynamicPreviousBalance(data);
     final balance = invoiceClientRemainingOwed(data);
     final invoiceNumber = data['invoiceNumber']?.toString() ?? '-';
@@ -193,6 +194,8 @@ class DailyInvoicesPdfService {
               if (previous != 0) rtl('الرصيد السابق: ${invoiceAmount(previous)}'),
               rtl('إجمالي الفاتورة: ${invoiceAmount(totalSum)} ج.م',
                   bold: true),
+              if (discount > 0)
+                rtl('الخصم: ${invoiceAmount(discount)} ج.م'),
               rtl('المدفوع: ${invoiceAmount(paid)} ج.م'),
               rtl('المتبقي من الفاتورة: ${invoiceAmount(totalSum - paid)} ج.م'),
               rtl('المتبقي عليكم: ${invoiceAmount(balance)} ج.م'),

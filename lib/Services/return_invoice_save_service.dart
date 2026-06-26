@@ -109,6 +109,7 @@ class ReturnInvoiceSaveService {
         notes: notes,
         products: products,
         existingBalance: existingBalance,
+        invoiceDiscount: effectiveDiscountAmt,
       ),
     ]);
 
@@ -141,6 +142,7 @@ class ReturnInvoiceSaveService {
     required String notes,
     required List<Map<String, dynamic>> products,
     required double existingBalance,
+    required double invoiceDiscount,
   }) async {
     final batch = FirebaseFirestore.instance.batch();
     batch.set(
@@ -158,6 +160,7 @@ class ReturnInvoiceSaveService {
       'previousBalance': previousBalanceSnapshot,
       'paymentMethod': paymentMethod,
       'notes': notes,
+      'invoiceDiscount': invoiceDiscount,
       'invoiceType': 'return',
       'isSpecial': false,
       'products': products,

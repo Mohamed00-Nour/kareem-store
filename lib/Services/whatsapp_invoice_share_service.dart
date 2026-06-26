@@ -19,6 +19,7 @@ class WhatsappInvoiceShareService {
     final dateStr = _formatDate(invoice['date']);
     final total = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
+    final discount = _num(invoice['invoiceDiscount']);
 
     final balance = isSupplier
         ? invoiceSupplierRemainingOwed(invoice)
@@ -35,6 +36,9 @@ class WhatsappInvoiceShareService {
     }
     buffer.writeln('التاريخ $dateStr');
     buffer.writeln('بإجمالي ${invoiceAmount(total)} ج.م');
+    if (discount > 0) {
+      buffer.writeln('الخصم ${invoiceAmount(discount)} ج.م');
+    }
     buffer.writeln('المدفوع ${invoiceAmount(paid)} ج.م');
     buffer.writeln('المتبقي من الفاتورة ${invoiceAmount(total - paid)} ج.م');
     if (isSupplier) {

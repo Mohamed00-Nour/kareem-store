@@ -1127,6 +1127,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             notes: notes,
             products: lines,
             existingBalance: existingBalance,
+            invoiceDiscount: effectiveDiscountAmt,
           ),
         ]);
       }
@@ -1366,6 +1367,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     required String notes,
     required List<Map<String, dynamic>> products,
     required double existingBalance,
+    required double invoiceDiscount,
   }) async {
     final batch = FirebaseFirestore.instance.batch();
     batch.set(
@@ -1383,6 +1385,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       'previousBalance': _clientBalance,
       'paymentMethod': paymentMethod,
       'notes': notes,
+      'invoiceDiscount': invoiceDiscount,
       'isSpecial': false,
       'products': products,
     });

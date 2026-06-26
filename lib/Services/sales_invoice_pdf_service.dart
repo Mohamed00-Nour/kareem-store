@@ -48,6 +48,7 @@ class SalesInvoicePdfService {
         List<Map<String, dynamic>>.from(invoice['products'] ?? []);
     final totalSum = (invoice['totalSum'] as num?)?.toDouble() ?? 0.0;
     final paid = (invoice['paidAmount'] as num?)?.toDouble() ?? 0.0;
+    final discount = (invoice['invoiceDiscount'] as num?)?.toDouble() ?? 0.0;
     final previous = invoiceDynamicPreviousBalance(invoice);
     final balance = invoiceClientRemainingOwed(invoice);
     final when = _parseDateTime(invoice['date']);
@@ -167,6 +168,8 @@ class SalesInvoicePdfService {
               rtl(
                   '${settings.labels.previousBalance} : ${invoiceAmount(previous)}'),
               rtl('إجمالي ف. : ${invoiceAmount(totalSum)}', bold: true),
+              if (discount > 0)
+                rtl('الخصم : ${invoiceAmount(discount)}'),
               rtl('${settings.labels.paid} : ${invoiceAmount(paid)}'),
               rtl('المتبقي من الفاتورة : ${invoiceAmount(totalSum - paid)}'),
               rtl('الرصيد الحالي (عليكم) : ${invoiceAmount(balance)}',
