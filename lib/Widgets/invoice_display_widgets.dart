@@ -368,12 +368,13 @@ class InvoiceTotalsFooter extends StatelessWidget {
 }
 
 /// Standard invoice card body (header + optional actions + table + totals).
-class InvoiceDisplayCard extends StatelessWidget {
+class InvoiceDisplayCard extends StatefulWidget {
   final Map<String, dynamic> invoice;
   final InvoiceDisplayKind kind;
   final Widget? actions;
   final EdgeInsetsGeometry margin;
   final EdgeInsetsGeometry padding;
+  final bool initiallyExpanded;
 
   const InvoiceDisplayCard({
     super.key,
@@ -382,50 +383,91 @@ class InvoiceDisplayCard extends StatelessWidget {
     this.actions,
     this.margin = const EdgeInsets.all(10),
     this.padding = const EdgeInsets.all(10),
+    this.initiallyExpanded = false,
   });
 
   @override
+  State<InvoiceDisplayCard> createState() => _InvoiceDisplayCardState();
+}
+
+class _InvoiceDisplayCardState extends State<InvoiceDisplayCard> {
+  late bool _isExpanded;
+
+  @override
+  void initState() {
+    super.initState();
+    _isExpanded = widget.initiallyExpanded;
+  }
+
+  @override
   Widget build(BuildContext context) {
-    final when = InvoiceDateParts.fromDynamic(invoice['date']);
-    final products = invoice['products'] as List<dynamic>? ?? [];
+    final when = InvoiceDateParts.fromDynamic(widget.invoice['date']);
+    final products = widget.invoice['products'] as List<dynamic>? ?? [];
 
     return Card(
-      margin: margin,
+      margin: widget.margin,
       elevation: 1,
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.r)),
       child: Padding(
-        padding: padding,
+        padding: widget.padding,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'رقم الفاتورة: #${invoice['invoiceNumber']}',
-                  style: TextStyle(
-                    fontSize: 14.sp,
-                    fontWeight: FontWeight.bold,
+                Expanded(
+                  child: InkWell(
+                    onTap: () {
+                      setState(() {
+                        _isExpanded = !_isExpanded;
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(4.r),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 4.h),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'رقم الفاتورة: #${widget.invoice['invoiceNumber']}',
+                              style: TextStyle(
+                                fontSize: 14.sp,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          Icon(
+                            _isExpanded
+                                ? Icons.keyboard_arrow_up
+                                : Icons.keyboard_arrow_down,
+                            color: Colors.orange.shade800,
+                          ),
+                          SizedBox(width: 8.w),
+                        ],
+                      ),
+                    ),
                   ),
                 ),
-                if (actions != null)
-                  Flexible(child: actions!),
+                if (widget.actions != null)
+                  Flexible(child: widget.actions!),
               ],
             ),
-            SizedBox(height: 5.h),
-            if (when.date.isNotEmpty)
-              Text(
-                'التاريخ: ${when.date}',
-                style: TextStyle(fontSize: 14.sp),
-              ),
-            if (when.time.isNotEmpty)
-              Text(
-                '${when.time} :الوقت',
-                style: TextStyle(fontSize: 14.sp),
-              ),
-            SizedBox(height: 10.h),
-            InvoiceProductsTable(products: products, kind: kind),
-            InvoiceTotalsFooter(invoice: invoice),
+            if (_isExpanded) ...[
+              SizedBox(height: 5.h),
+              if (when.date.isNotEmpty)
+                Text(
+                  'التاريخ: ${when.date}',
+                  style: TextStyle(fontSize: 14.sp),
+                ),
+              if (when.time.isNotEmpty)
+                Text(
+                  '${when.time} :الوقت',
+                  style: TextStyle(fontSize: 14.sp),
+                ),
+              SizedBox(height: 10.h),
+              InvoiceProductsTable(products: products, kind: widget.kind),
+              InvoiceTotalsFooter(invoice: widget.invoice),
+            ],
           ],
         ),
       ),

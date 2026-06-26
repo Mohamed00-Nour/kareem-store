@@ -66,6 +66,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   bool _isLoadingMoreInvoices = false;
   bool _hasMoreInvoices = true;
   final Set<String> _expandedInvoiceIds = {};
+  final TextEditingController _searchController = TextEditingController();
+  String _searchQuery = '';
 
   Future<void> _fetchAllProds() async {
     try {
@@ -172,7 +174,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       .orderBy('date', descending: true);
 
   void _onInvoiceScroll() {
-    if (!_invoiceScrollController.hasClients) return;
+    if (!_invoiceScrollController.hasClients || _searchQuery.isNotEmpty) return;
     final pos = _invoiceScrollController.position;
     if (pos.pixels < pos.maxScrollExtent - 300) return;
     _loadMoreInvoices();
@@ -1457,6 +1459,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   @override
   void initState() {
     super.initState();
+    _searchController.addListener(() {
+      if (mounted) {
+        setState(() {
+          _searchQuery = _searchController.text.trim();
+        });
+      }
+    });
     _loadUserRole();
     _fetchAllProds();
     _fetchClientName();
@@ -1491,12 +1500,31 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   @override
   void dispose() {
+    _searchController.dispose();
     _invoiceScrollController.removeListener(_onInvoiceScroll);
     _invoiceScrollController.dispose();
     _balanceController.dispose();
     _addBalanceController.dispose();
     _notesController.dispose();
     super.dispose();
+  }
+
+  List<QueryDocumentSnapshot> get _filteredInvoices {
+    if (_searchQuery.isEmpty) return _invoices;
+    final q = _searchQuery.toLowerCase();
+    return _invoices.where((doc) {
+      final data = doc.data() as Map<String, dynamic>;
+      final num = data['invoiceNumber']?.toString() ?? '';
+      if (num.contains(q)) return true;
+      final products = data['products'] as List? ?? [];
+      for (final p in products) {
+        if (p is Map) {
+          final prodName = (p['product'] ?? '').toString().toLowerCase();
+          if (prodName.contains(q)) return true;
+        }
+      }
+      return false;
+    }).toList();
   }
 
   Widget _buildInvoiceCard(QueryDocumentSnapshot invoice) {
@@ -1546,46 +1574,47 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             Row(
-              mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                GestureDetector(
-                  onTap: () {
-                    setState(() {
-                      if (isExpanded) {
-                        _expandedInvoiceIds.remove(invoiceId);
-                      } else {
-                        _expandedInvoiceIds.add(invoiceId);
-                      }
-                    });
-                  },
-                  child: Text(
-                    'رقم الفاتورة: #${invoice['invoiceNumber']} (${invoiceAmount(totalSum)} ج.م)',
-                    style: const TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.bold,
+                Expanded(
+                  child: InkWell(
+                    onTap: () {
+                      setState(() {
+                        if (isExpanded) {
+                          _expandedInvoiceIds.remove(invoiceId);
+                        } else {
+                          _expandedInvoiceIds.add(invoiceId);
+                        }
+                      });
+                    },
+                    borderRadius: BorderRadius.circular(4.r),
+                    child: Padding(
+                      padding: EdgeInsets.symmetric(vertical: 4.h),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              'رقم الفاتورة: #${invoice['invoiceNumber']} (${invoiceAmount(totalSum)} ج.م)',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ),
+                          Icon(
+                            isExpanded
+                                ? Icons.keyboard_arrow_up
+                                : Icons.keyboard_arrow_down,
+                            color: Colors.orange.shade800,
+                          ),
+                          SizedBox(width: 8.w),
+                        ],
+                      ),
                     ),
                   ),
                 ),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    IconButton(
-                      icon: Icon(
-                        isExpanded
-                            ? Icons.keyboard_arrow_up
-                            : Icons.keyboard_arrow_down,
-                        color: Colors.orange.shade800,
-                      ),
-                      onPressed: () {
-                        setState(() {
-                          if (isExpanded) {
-                            _expandedInvoiceIds.remove(invoiceId);
-                          } else {
-                            _expandedInvoiceIds.add(invoiceId);
-                          }
-                        });
-                      },
-                    ),
                     IconButton(
                       icon: const Icon(Icons.print_outlined,
                           color: Colors.black87),
@@ -1736,39 +1765,80 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
               ),
             ],
           ),
-          body: _isLoadingInvoices && _invoices.isEmpty
-              ? Center(
-                  child: CircularProgressIndicator(
-                    color: Colors.orange.withOpacity(0.7),
-                  ),
-                )
-              : _invoices.isEmpty
-                  ? const Center(child: Text('لا توجد فواتير'))
-                  : RefreshIndicator(
-                      onRefresh: _refreshInvoices,
-                      color: Colors.orange,
-                      child: ListView.builder(
-                        controller: _invoiceScrollController,
-                        physics: const AlwaysScrollableScrollPhysics(),
-                        itemCount: _invoices.length +
-                            (_hasMoreInvoices || _isLoadingMoreInvoices
-                                ? 1
-                                : 0),
-                        itemBuilder: (context, index) {
-                          if (index >= _invoices.length) {
-                            return Padding(
-                              padding: const EdgeInsets.all(16.0),
-                              child: Center(
-                                child: CircularProgressIndicator(
-                                  color: Colors.orange.withOpacity(0.7),
-                                ),
-                              ),
-                            );
-                          }
-                          return _buildInvoiceCard(_invoices[index]);
-                        },
+          body: Column(
+            children: [
+              Padding(
+                padding: EdgeInsets.fromLTRB(12.w, 10.h, 12.w, 6.h),
+                child: Directionality(
+                  textDirection: TextDirection.rtl,
+                  child: TextField(
+                    controller: _searchController,
+                    textAlign: TextAlign.right,
+                    decoration: InputDecoration(
+                      hintText: 'ابحث برقم الفاتورة أو اسم المنتج...',
+                      hintStyle: TextStyle(fontSize: 14.sp),
+                      prefixIcon:
+                          const Icon(Icons.search, color: Colors.orange),
+                      suffixIcon: _searchQuery.isNotEmpty
+                          ? IconButton(
+                              icon: const Icon(Icons.clear),
+                              onPressed: () {
+                                _searchController.clear();
+                              },
+                            )
+                          : null,
+                      filled: true,
+                      fillColor: Colors.white,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10.r),
+                      ),
+                      focusedBorder: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(10.r),
+                        borderSide:
+                            const BorderSide(color: Colors.orange, width: 2),
                       ),
                     ),
+                  ),
+                ),
+              ),
+              Expanded(
+                child: _isLoadingInvoices && _invoices.isEmpty
+                    ? Center(
+                        child: CircularProgressIndicator(
+                          color: Colors.orange.withOpacity(0.7),
+                        ),
+                      )
+                    : _filteredInvoices.isEmpty
+                        ? const Center(child: Text('لا توجد فواتير مطابقة'))
+                        : RefreshIndicator(
+                            onRefresh: _refreshInvoices,
+                            color: Colors.orange,
+                            child: ListView.builder(
+                              controller: _invoiceScrollController,
+                              physics: const AlwaysScrollableScrollPhysics(),
+                              itemCount: _filteredInvoices.length +
+                                  (_hasMoreInvoices || _isLoadingMoreInvoices
+                                      ? 1
+                                      : 0),
+                              itemBuilder: (context, index) {
+                                if (index >= _filteredInvoices.length) {
+                                  return Padding(
+                                    padding: const EdgeInsets.all(16.0),
+                                    child: Center(
+                                      child: CircularProgressIndicator(
+                                        color: Colors.orange.withOpacity(0.7),
+                                      ),
+                                    ),
+                                  );
+                                }
+                                return _buildInvoiceCard(
+                                    _filteredInvoices[index]);
+                              },
+                            ),
+                          ),
+              ),
+            ],
+          ),
         ),
         // Loading overlay
         if (_isSaving || _generatingStatement)
