@@ -65,6 +65,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   bool _isLoadingInvoices = true;
   bool _isLoadingMoreInvoices = false;
   bool _hasMoreInvoices = true;
+  final Set<String> _expandedInvoiceIds = {};
 
   Future<void> _fetchAllProds() async {
     try {
@@ -1211,7 +1212,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           textDirection: ui.TextDirection.rtl,
           child: AlertDialog(
             backgroundColor: const Color(0xffead1ac),
-            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16.r)),
+            shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(16.r)),
             title: const Text(
               'تعديل رصيد العميل',
               style: TextStyle(fontWeight: FontWeight.bold),
@@ -1306,7 +1308,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                 style: ElevatedButton.styleFrom(
                   backgroundColor: Colors.black87,
                   foregroundColor: Colors.white,
-                  shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8.r)),
+                  shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(8.r)),
                 ),
                 onPressed: () {
                   Navigator.pop(ctx);
@@ -1515,11 +1518,14 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         : 0.0;
     double discount = invoiceNum(invoiceData['invoiceDiscount']);
     if (discount <= 0) {
-      final double productsSum = (invoiceData['products'] as List? ?? []).fold<double>(
+      final double productsSum =
+          (invoiceData['products'] as List? ?? []).fold<double>(
         0.0,
         (sum, item) {
           if (item is! Map) return sum;
-          final itemTotal = double.tryParse((item['total'] ?? item['totalCost'])?.toString() ?? '') ?? 0.0;
+          final itemTotal = double.tryParse(
+                  (item['total'] ?? item['totalCost'])?.toString() ?? '') ??
+              0.0;
           return sum + itemTotal;
         },
       );
@@ -1528,6 +1534,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         discount = diff;
       }
     }
+
+    final invoiceId = invoice.id;
+    final isExpanded = _expandedInvoiceIds.contains(invoiceId);
 
     return Card(
       margin: const EdgeInsets.all(10.0),
@@ -1539,16 +1548,44 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
             Row(
               mainAxisAlignment: MainAxisAlignment.spaceBetween,
               children: [
-                Text(
-                  'رقم الفاتورة: #${invoice['invoiceNumber']}',
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.bold,
+                GestureDetector(
+                  onTap: () {
+                    setState(() {
+                      if (isExpanded) {
+                        _expandedInvoiceIds.remove(invoiceId);
+                      } else {
+                        _expandedInvoiceIds.add(invoiceId);
+                      }
+                    });
+                  },
+                  child: Text(
+                    'رقم الفاتورة: #${invoice['invoiceNumber']} (${invoiceAmount(totalSum)} ج.م)',
+                    style: const TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.bold,
+                    ),
                   ),
                 ),
                 Row(
                   mainAxisSize: MainAxisSize.min,
                   children: [
+                    IconButton(
+                      icon: Icon(
+                        isExpanded
+                            ? Icons.keyboard_arrow_up
+                            : Icons.keyboard_arrow_down,
+                        color: Colors.orange.shade800,
+                      ),
+                      onPressed: () {
+                        setState(() {
+                          if (isExpanded) {
+                            _expandedInvoiceIds.remove(invoiceId);
+                          } else {
+                            _expandedInvoiceIds.add(invoiceId);
+                          }
+                        });
+                      },
+                    ),
                     IconButton(
                       icon: const Icon(Icons.print_outlined,
                           color: Colors.black87),
@@ -1579,80 +1616,82 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                 ),
               ],
             ),
-            const SizedBox(height: 5),
-            Text('التاريخ: $formattedDate',
-                style: const TextStyle(fontSize: 14)),
-            Text('$formattedTime :الوقت ',
-                style: const TextStyle(fontSize: 14)),
-            SizedBox(height: 10.h),
-            _buildInvoiceProductsTable(
-              List<dynamic>.from(invoiceData['products'] ?? []),
-            ),
-            Padding(
-              padding: const EdgeInsets.symmetric(vertical: 10.0),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.end,
-                children: [
-                  Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
-                    children: [
-                      Row(
-                        children: [
+            if (isExpanded) ...[
+              const SizedBox(height: 5),
+              Text('التاريخ: $formattedDate',
+                  style: const TextStyle(fontSize: 14)),
+              Text('$formattedTime :الوقت ',
+                  style: const TextStyle(fontSize: 14)),
+              SizedBox(height: 10.h),
+              _buildInvoiceProductsTable(
+                List<dynamic>.from(invoiceData['products'] ?? []),
+              ),
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 10.0),
+                child: Row(
+                  mainAxisAlignment: MainAxisAlignment.end,
+                  children: [
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'الرصيد السابق: ${invoiceAmount(previousBalance)}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            SizedBox(width: 20.w),
+                            Text(
+                              'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (discount > 0)
                           Text(
-                            'الرصيد السابق: ${invoiceAmount(previousBalance)}',
+                            'الخصم: ${invoiceAmount(discount)}',
                             style: const TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.bold,
+                              color: Colors.red,
                             ),
                           ),
-                          SizedBox(width: 20.w),
-                          Text(
-                            'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                            ),
-                          ),
-                        ],
-                      ),
-                      if (discount > 0)
                         Text(
-                          'الخصم: ${invoiceAmount(discount)}',
+                          'المدفوع: ${invoiceAmount(invoice['paidAmount'])}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green,
+                          ),
+                        ),
+                        Text(
+                          'المتبقي من الفاتورة: ${invoiceAmount(totalSum - invoiceNum(invoice['paidAmount']))}',
                           style: const TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
-                            color: Colors.red,
+                            color: Colors.orange,
                           ),
                         ),
-                      Text(
-                        'المدفوع: ${invoiceAmount(invoice['paidAmount'])}',
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.green,
+                        Text(
+                          'المتبقي عليكم: ${invoiceAmount(remainingOwed)}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.redAccent,
+                          ),
                         ),
-                      ),
-                      Text(
-                        'المتبقي من الفاتورة: ${invoiceAmount(totalSum - invoiceNum(invoice['paidAmount']))}',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.orange,
-                        ),
-                      ),
-                      Text(
-                        'المتبقي عليكم: ${invoiceAmount(remainingOwed)}',
-                        style: const TextStyle(
-                          fontSize: 14,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.redAccent,
-                        ),
-                      ),
-                    ],
-                  ),
-                ],
+                      ],
+                    ),
+                  ],
+                ),
               ),
-            ),
+            ],
           ],
         ),
       ),
@@ -1681,7 +1720,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                     : _navigateToBalanceHistory,
               ),
               IconButton(
-                icon: const Icon(Icons.account_balance_wallet, color: Colors.white),
+                icon: const Icon(Icons.account_balance_wallet,
+                    color: Colors.white),
                 tooltip: 'تعديل الرصيد',
                 onPressed: (_isSaving || _generatingStatement)
                     ? null
