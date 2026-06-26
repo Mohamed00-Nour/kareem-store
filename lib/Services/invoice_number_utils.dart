@@ -54,7 +54,6 @@ bool invoiceIsSupplierPurchase(Map<String, dynamic> invoice) {
 double invoiceUnpaidAmount(Map<String, dynamic> invoice) {
   return invoiceNum(invoice['totalSum']) - invoiceNum(invoice['paidAmount']);
 }
-
 /// Synced client total owed — same [balance] on all invoices (المتبقي عليكم).
 double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
   if (invoice.containsKey('currentClientBalance') && invoice['currentClientBalance'] != null) {
@@ -71,8 +70,11 @@ double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
   return invoiceNum(invoice['balance']);
 }
 
-/// Dynamically calculates previous balance based on the current live balance and unpaid invoice total.
+/// Calculates previous balance based on stored historical previousBalance or dynamic calculation fallback.
 double invoiceDynamicPreviousBalance(Map<String, dynamic> invoice) {
+  if (invoice.containsKey('previousBalance') && invoice['previousBalance'] != null) {
+    return invoiceNum(invoice['previousBalance']);
+  }
   final isSupplier = invoiceIsSupplierPurchase(invoice);
   final liveBalance = isSupplier
       ? invoiceSupplierRemainingOwed(invoice)

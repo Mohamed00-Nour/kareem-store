@@ -262,100 +262,100 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
         if (!didPop) _popToParent();
       },
       child: Scaffold(
-      appBar: AppBar(
-        leading: IconButton(
-          icon: const Icon(Icons.arrow_back, color: Colors.white),
-          onPressed: _popToParent,
-        ),
-        automaticallyImplyLeading: false,
-        title: Text(
-          '#${invoice['invoiceNumber']}',
-          style: TextStyle(fontSize: 20.sp, color: Colors.white),
-        ),
-        backgroundColor: Colors.black.withOpacity(0.7),
-        actions: [
-          IconButton(
-            tooltip: _isSpecial ? 'إلغاء التمييز' : 'تمييز كفاتورة مميزة',
-            onPressed: _togglingSpecial ? null : _toggleSpecial,
-            icon: _togglingSpecial
-                ? SizedBox(
-                    width: 22.w,
-                    height: 22.w,
-                    child: const CircularProgressIndicator(
-                      strokeWidth: 2,
-                      color: Colors.amber,
-                    ),
-                  )
-                : Icon(
-                    _isSpecial ? Icons.star : Icons.star_border,
-                    color: Colors.amber,
-                    size: 26.sp,
-                  ),
+        appBar: AppBar(
+          leading: IconButton(
+            icon: const Icon(Icons.arrow_back, color: Colors.white),
+            onPressed: _popToParent,
           ),
-          InvoiceActionButtons(
-            showEditDelete: _isAdmin,
-            onPrint: _print,
-            onShare: _share,
-            onEdit: _edit,
-            onDelete: _delete,
+          automaticallyImplyLeading: false,
+          title: Text(
+            '#${invoice['invoiceNumber']}',
+            style: TextStyle(fontSize: 20.sp, color: Colors.white),
           ),
-        ],
-      ),
-      body: Stack(
-        children: [
-          SingleChildScrollView(
-            child: Column(
-              children: [
-                Container(
-                  color: Colors.white,
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 15.w, vertical: 15.h),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Center(
-                        child: Image.asset(
-                          'assets/images/boxes_11365317.png',
-                          width: 200.w,
-                          height: 80.h,
-                          fit: BoxFit.fill,
-                        ),
+          backgroundColor: Colors.black.withOpacity(0.7),
+          actions: [
+            IconButton(
+              tooltip: _isSpecial ? 'إلغاء التمييز' : 'تمييز كفاتورة مميزة',
+              onPressed: _togglingSpecial ? null : _toggleSpecial,
+              icon: _togglingSpecial
+                  ? SizedBox(
+                      width: 22.w,
+                      height: 22.w,
+                      child: const CircularProgressIndicator(
+                        strokeWidth: 2,
+                        color: Colors.amber,
                       ),
-                      SizedBox(height: 5.h),
-                      Center(
-                        child: Text(
-                          'فاتورة مبيعات',
-                          style: TextStyle(
-                            fontSize: 20.sp,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.black.withOpacity(0.7),
+                    )
+                  : Icon(
+                      _isSpecial ? Icons.star : Icons.star_border,
+                      color: Colors.amber,
+                      size: 26.sp,
+                    ),
+            ),
+            InvoiceActionButtons(
+              showEditDelete: _isAdmin,
+              onPrint: _print,
+              onShare: _share,
+              onEdit: _edit,
+              onDelete: _delete,
+            ),
+          ],
+        ),
+        body: Stack(
+          children: [
+            SingleChildScrollView(
+              child: Column(
+                children: [
+                  Container(
+                    color: Colors.white,
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 15.w, vertical: 15.h),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Center(
+                          child: Image.asset(
+                            'assets/images/boxes_11365317.png',
+                            width: 200.w,
+                            height: 80.h,
+                            fit: BoxFit.fill,
                           ),
                         ),
-                      ),
-                      SizedBox(height: 8.h),
-                      _partyHeader(
-                        label: 'اسم العميل',
-                        name: _clientId,
-                      ),
-                      SizedBox(height: 10.h),
-                      InvoiceProductsTable(products: products),
-                      InvoiceTotalsFooter(invoice: invoice),
-                    ],
+                        SizedBox(height: 5.h),
+                        Center(
+                          child: Text(
+                            'فاتورة مبيعات',
+                            style: TextStyle(
+                              fontSize: 20.sp,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.black.withOpacity(0.7),
+                            ),
+                          ),
+                        ),
+                        SizedBox(height: 8.h),
+                        _partyHeader(
+                          label: 'اسم العميل',
+                          name: _clientId,
+                        ),
+                        SizedBox(height: 10.h),
+                        InvoiceProductsTable(products: products),
+                        InvoiceTotalsFooter(invoice: invoice),
+                      ],
+                    ),
                   ),
-                ),
-              ],
-            ),
-          ),
-          if (_reloadInProgress)
-            Container(
-              color: Colors.black26,
-              child: const Center(
-                child: CircularProgressIndicator(color: Colors.orange),
+                ],
               ),
             ),
-        ],
+            if (_reloadInProgress)
+              Container(
+                color: Colors.black26,
+                child: const Center(
+                  child: CircularProgressIndicator(color: Colors.orange),
+                ),
+              ),
+          ],
+        ),
       ),
-    ),
     );
   }
 
@@ -390,7 +390,8 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
               Text.rich(
                 TextSpan(
                   children: [
-                    TextSpan(text: when.time, style: TextStyle(fontSize: 13.sp)),
+                    TextSpan(
+                        text: when.time, style: TextStyle(fontSize: 13.sp)),
                     TextSpan(
                       text: ' :الوقت',
                       style: TextStyle(
@@ -433,7 +434,8 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
                         fontWeight: FontWeight.bold,
                       ),
                     ),
-                    TextSpan(text: when.date, style: TextStyle(fontSize: 13.sp)),
+                    TextSpan(
+                        text: when.date, style: TextStyle(fontSize: 13.sp)),
                   ],
                 ),
               ),

@@ -249,80 +249,107 @@ class InvoiceTotalsFooter extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    final isBuying = invoiceIsSupplierPurchase(invoice);
     final total = invoiceNum(invoice['totalSum']);
     final paid = invoiceNum(invoice['paidAmount']);
-    final remainingLabel = invoiceIsSupplierPurchase(invoice)
+    final remainingLabel = isBuying
         ? 'المتبقي للمورد'
         : 'المتبقي عليكم';
 
-    return FutureBuilder<double>(
-      future: _fetchBalance(),
-      initialData: invoiceIsSupplierPurchase(invoice)
-          ? invoiceSupplierRemainingOwed(invoice)
-          : invoiceClientRemainingOwed(invoice),
-      builder: (context, snapshot) {
-        final remaining = snapshot.data ?? 0.0;
-        final unpaid = total - paid;
-        final isReturn = invoiceIsReturn(invoice);
-        final dynamicPrevious = isReturn ? remaining + unpaid : remaining - unpaid;
+    if (isBuying) {
+      return FutureBuilder<double>(
+        future: _fetchBalance(),
+        initialData: invoiceSupplierRemainingOwed(invoice),
+        builder: (context, snapshot) {
+          final remaining = snapshot.data ?? 0.0;
+          final unpaid = total - paid;
+          final isReturn = invoiceIsReturn(invoice);
+          final dynamicPrevious = isReturn ? remaining + unpaid : remaining - unpaid;
 
-        return Padding(
-          padding: EdgeInsets.symmetric(vertical: 10.h),
-          child: Row(
-            mainAxisAlignment: MainAxisAlignment.end,
+          return _buildTotalsLayout(
+            previous: dynamicPrevious,
+            total: total,
+            paid: paid,
+            remainingLabel: remainingLabel,
+            remaining: remaining,
+          );
+        },
+      );
+    } else {
+      final remaining = invoiceClientRemainingOwed(invoice);
+      final previous = invoiceDynamicPreviousBalance(invoice);
+      return _buildTotalsLayout(
+        previous: previous,
+        total: total,
+        paid: paid,
+        remainingLabel: remainingLabel,
+        remaining: remaining,
+      );
+    }
+  }
+
+  Widget _buildTotalsLayout({
+    required double previous,
+    required double total,
+    required double paid,
+    required String remainingLabel,
+    required double remaining,
+  }) {
+    return Padding(
+      padding: EdgeInsets.symmetric(vertical: 10.h),
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.end,
+        children: [
+          Column(
+            crossAxisAlignment: CrossAxisAlignment.end,
             children: [
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.end,
+              Row(
                 children: [
-                  Row(
-                    children: [
-                      Text(
-                        'الرصيد السابق: ${invoiceAmount(dynamicPrevious)}',
-                        style: TextStyle(
-                          fontSize: 14.sp,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                      SizedBox(width: 20.w),
-                      Text(
-                        'إجمالي الفاتورة: ${invoiceAmount(total)}',
-                        style: TextStyle(
-                          fontSize: 14.sp,
-                          fontWeight: FontWeight.bold,
-                        ),
-                      ),
-                    ],
-                  ),
                   Text(
-                    'المدفوع: ${invoiceAmount(paid)}',
-                    style: TextStyle(
-                      fontSize: 16.sp,
-                      fontWeight: FontWeight.bold,
-                      color: Colors.green,
-                    ),
-                  ),
-                  Text(
-                    'المتبقي من الفاتورة: ${invoiceAmount(total - paid)}',
+                    'الرصيد السابق: ${invoiceAmount(previous)}',
                     style: TextStyle(
                       fontSize: 14.sp,
                       fontWeight: FontWeight.bold,
-                      color: Colors.orange,
                     ),
                   ),
+                  SizedBox(width: 20.w),
                   Text(
-                    '$remainingLabel: ${invoiceAmount(remaining)}',
+                    'إجمالي الفاتورة: ${invoiceAmount(total)}',
                     style: TextStyle(
                       fontSize: 14.sp,
                       fontWeight: FontWeight.bold,
-                      color: Colors.redAccent,
                     ),
                   ),
                 ],
               ),
+              Text(
+                'المدفوع: ${invoiceAmount(paid)}',
+                style: TextStyle(
+                  fontSize: 16.sp,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.green,
+                ),
+              ),
+              Text(
+                'المتبقي من الفاتورة: ${invoiceAmount(total - paid)}',
+                style: TextStyle(
+                  fontSize: 14.sp,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.orange,
+                ),
+              ),
+              Text(
+                '$remainingLabel: ${invoiceAmount(remaining)}',
+                style: TextStyle(
+                  fontSize: 14.sp,
+                  fontWeight: FontWeight.bold,
+                  color: Colors.redAccent,
+                ),
+              ),
             ],
           ),
-        );
-      },
+        ],
+      ),
     );
   }
 }

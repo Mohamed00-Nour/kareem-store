@@ -1370,9 +1370,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   Widget _buildInvoiceCard(QueryDocumentSnapshot invoice) {
     final invoiceData = Map<String, dynamic>.from(invoice.data() as Map);
-    if (_currentClientBalance != null) {
-      invoiceData['currentClientBalance'] = _currentClientBalance;
-    }
     final dateField = invoiceData['date'];
     if (dateField is! Timestamp) {
       return const SizedBox.shrink();

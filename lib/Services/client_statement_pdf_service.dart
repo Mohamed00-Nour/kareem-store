@@ -400,14 +400,6 @@ class ClientStatementPdfService {
     required String invoiceTypeLabel,
     required String emptyMessage,
   }) async {
-    final clientDoc = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(clientId)
-        .get();
-    final clientBalance = clientDoc.exists
-        ? (clientDoc.data()?['balance'] as num?)?.toDouble()
-        : null;
-
     final snap = await FirebaseFirestore.instance
         .collection('clients')
         .doc(clientId)
@@ -447,9 +439,6 @@ class ClientStatementPdfService {
 
     for (final doc in invoices) {
       final data = Map<String, dynamic>.from(doc.data() as Map);
-      if (clientBalance != null) {
-        data['currentClientBalance'] = clientBalance;
-      }
       final date = (data['date'] as Timestamp).toDate();
       final products =
           List<Map<String, dynamic>>.from(data['products'] ?? []);

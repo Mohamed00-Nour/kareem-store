@@ -282,6 +282,8 @@ class ClientInvoiceBalanceSyncService {
     final sorted = _sortDocsAscending(finalHistoryDocs);
 
     var running = 0.0;
+    final Map<String, double> invPreviousBalances = {};
+    final Map<String, double> invAfterBalances = {};
     WriteBatch recalculateBatch = _firestore.batch();
     var recCount = 0;
 
@@ -290,6 +292,7 @@ class ClientInvoiceBalanceSyncService {
       final type = data['type']?.toString() ?? '';
       final entered = invoiceNum(data['enteredBalance']);
       final currentBefore = invoiceNum(data['balanceBefore']);
+      final invId = data['invoiceId']?.toString() ?? '';
 
       if ((currentBefore - running).abs() > 0.001) {
         recalculateBatch.update(doc.reference, {'balanceBefore': running});
@@ -306,10 +309,20 @@ class ClientInvoiceBalanceSyncService {
           type == 'opening' ||
           type == 'return_payment';
 
+      if (invId.isNotEmpty) {
+        if (type == 'sale' || type == 'return') {
+          invPreviousBalances[invId] = running;
+        }
+      }
+
       if (isIncrease) {
         running += entered;
       } else {
         running -= entered;
+      }
+
+      if (invId.isNotEmpty) {
+        invAfterBalances[invId] = running;
       }
     }
 
@@ -319,12 +332,6 @@ class ClientInvoiceBalanceSyncService {
 
     // Update client balance on main doc
     await clientRef.set({'balance': running}, SetOptions(merge: true));
-
-    // Update the balance on all client and root invoice copies
-    final clientInvoicesFields = <String, dynamic>{
-      'balance': running,
-      'clientBalance': FieldValue.delete(),
-    };
 
     WriteBatch finalBatch = _firestore.batch();
     var finalOpCount = 0;
@@ -338,6 +345,16 @@ class ClientInvoiceBalanceSyncService {
     }
 
     for (final doc in saleDocs) {
+      final invoiceId = doc.id;
+      final prevBal = invPreviousBalances[invoiceId] ?? 0.0;
+      final afterBal = invAfterBalances[invoiceId] ?? 0.0;
+
+      final clientInvoicesFields = <String, dynamic>{
+        'previousBalance': prevBal,
+        'balance': afterBal,
+        'clientBalance': FieldValue.delete(),
+      };
+
       finalBatch.update(doc.reference, clientInvoicesFields);
       finalOpCount++;
       await commitFinalBatchIfNeeded();
@@ -355,6 +372,16 @@ class ClientInvoiceBalanceSyncService {
     }
 
     for (final doc in returnDocs) {
+      final invoiceId = doc.id;
+      final prevBal = invPreviousBalances[invoiceId] ?? 0.0;
+      final afterBal = invAfterBalances[invoiceId] ?? 0.0;
+
+      final clientInvoicesFields = <String, dynamic>{
+        'previousBalance': prevBal,
+        'balance': afterBal,
+        'clientBalance': FieldValue.delete(),
+      };
+
       finalBatch.update(doc.reference, clientInvoicesFields);
       finalOpCount++;
       await commitFinalBatchIfNeeded();

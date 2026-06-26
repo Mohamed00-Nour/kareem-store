@@ -203,35 +203,6 @@ class InvoicePrintService {
       if (totalBalance != null) {
         invoice['currentSupplierBalance'] = totalBalance;
       }
-    } else {
-      final resolvedClientId = invoice['clientId']?.toString() ?? '';
-      double? clientBalance;
-      if (resolvedClientId.isNotEmpty) {
-        try {
-          final snap = await FirebaseFirestore.instance
-              .collection('clients')
-              .doc(resolvedClientId)
-              .get();
-          if (snap.exists) {
-            clientBalance = (snap.data()?['balance'] as num?)?.toDouble();
-          }
-        } catch (_) {}
-      }
-      if (clientBalance == null && clientName.isNotEmpty) {
-        try {
-          final query = await FirebaseFirestore.instance
-              .collection('clients')
-              .where('clientName', isEqualTo: clientName)
-              .limit(1)
-              .get();
-          if (query.docs.isNotEmpty) {
-            clientBalance = (query.docs.first.data()['balance'] as num?)?.toDouble();
-          }
-        } catch (_) {}
-      }
-      if (clientBalance != null) {
-        invoice['currentClientBalance'] = clientBalance;
-      }
     }
 
     return invoice;
