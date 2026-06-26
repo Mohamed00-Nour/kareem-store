@@ -173,6 +173,8 @@ import '../Widgets/egypt_phone_field.dart';
 import '../Widgets/app_responsive.dart';
 import 'ClientInvoicesPage.dart';
 import '../Services/client_invoice_balance_sync_service.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import '../Services/whatsapp_invoice_share_service.dart';
 
 // ─── Main Menu Page ──────────────────────────────────────────────────────────
 
@@ -2297,8 +2299,8 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
               ..sort((a, b) => b.value.compareTo(a.value));
             final double grandTotal =
                 allEntries.fold(0.0, (s, e) => s + e.value);
-            final clientIds = {
-              for (final d in docs) (d['clientName'] ?? '').toString(): d.id
+            final clientDocs = {
+              for (final d in docs) (d['clientName'] ?? '').toString(): d
             };
 
             final filtered = _search.isEmpty
@@ -2376,7 +2378,8 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final e = filtered[index];
-                      final id = clientIds[e.key] ?? '';
+                      final doc = clientDocs[e.key];
+                      final id = doc?.id ?? '';
                       return ListTile(
                         onTap: () => id.isNotEmpty
                             ? Navigator.push(
@@ -2390,12 +2393,55 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                             textAlign: TextAlign.right,
                             style: const TextStyle(
                                 fontWeight: FontWeight.bold, fontSize: 15)),
-                        trailing: Text(
-                          e.value.toStringAsFixed(2),
-                          style: const TextStyle(
-                              color: Colors.red,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 16),
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              icon: const FaIcon(
+                                FontAwesomeIcons.whatsapp,
+                                color: Colors.green,
+                                size: 22,
+                              ),
+                              onPressed: () async {
+                                final docData = doc?.data() as Map<String, dynamic>?;
+                                final rawPhone = docData != null
+                                    ? (docData['phone'] ?? docData['clientPhone'] ?? docData['whatsapp'])?.toString()
+                                    : null;
+                                final cleanPhone = (rawPhone != null && rawPhone.trim().isNotEmpty)
+                                    ? EgyptPhoneField.toWhatsappDigits(rawPhone)
+                                    : null;
+
+                                final balanceText = e.value > 0
+                                    ? 'المتبقي عليكم للحساب هو: ${e.value.toStringAsFixed(2)} ج.م'
+                                    : 'رصيدكم الدائن لدينا هو: ${e.value.abs().toStringAsFixed(2)} ج.م';
+
+                                final message = 'السلام عليكم ورحمة الله وبركاته،\n'
+                                    'أ/ ${e.key}\n'
+                                    'نود تذكيركم بأن $balanceText.\n'
+                                    'نشكركم لتعاملكم معنا.';
+
+                                final ok = await WhatsappInvoiceShareService.openWhatsappChat(
+                                  phoneDigits: cleanPhone,
+                                  message: message,
+                                );
+                                if (!ok && context.mounted) {
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text('تعذر فتح واتساب. تأكد من تثبيت التطبيق أو صحة الرقم'),
+                                    ),
+                                  );
+                                }
+                              },
+                            ),
+                            const SizedBox(width: 8),
+                            Text(
+                              e.value.toStringAsFixed(2),
+                              style: const TextStyle(
+                                  color: Colors.red,
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16),
+                            ),
+                          ],
                         ),
                         leading: const Icon(Icons.arrow_back_ios,
                             size: 16, color: Colors.grey),
@@ -2851,13 +2897,56 @@ class _ClientRemainingReportPageState
                                 textAlign: TextAlign.right,
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold)),
-                            trailing: Text(
-                              balance.toStringAsFixed(2),
-                              style: TextStyle(
-                                color: balance > 0 ? Colors.red : Colors.green,
-                                fontWeight: FontWeight.bold,
-                                fontSize: 15,
-                              ),
+                            trailing: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                IconButton(
+                                  icon: const FaIcon(
+                                    FontAwesomeIcons.whatsapp,
+                                    color: Colors.green,
+                                    size: 22,
+                                  ),
+                                  onPressed: () async {
+                                    final docData = doc.data() as Map<String, dynamic>?;
+                                    final rawPhone = docData != null
+                                        ? (docData['phone'] ?? docData['clientPhone'] ?? docData['whatsapp'])?.toString()
+                                        : null;
+                                    final cleanPhone = (rawPhone != null && rawPhone.trim().isNotEmpty)
+                                        ? EgyptPhoneField.toWhatsappDigits(rawPhone)
+                                        : null;
+
+                                    final balanceText = balance > 0
+                                        ? 'المتبقي عليكم للحساب هو: ${balance.toStringAsFixed(2)} ج.م'
+                                        : 'رصيدكم الدائن لدينا هو: ${balance.abs().toStringAsFixed(2)} ج.م';
+
+                                    final message = 'السلام عليكم ورحمة الله وبركاته،\n'
+                                        'أ/ ${(doc['clientName'] ?? '').toString()}\n'
+                                        'نود تذكيركم بأن $balanceText.\n'
+                                        'نشكركم لتعاملكم معنا.';
+
+                                    final ok = await WhatsappInvoiceShareService.openWhatsappChat(
+                                      phoneDigits: cleanPhone,
+                                      message: message,
+                                    );
+                                    if (!ok && context.mounted) {
+                                      ScaffoldMessenger.of(context).showSnackBar(
+                                        const SnackBar(
+                                          content: Text('تعذر فتح واتساب. تأكد من تثبيت التطبيق أو صحة الرقم'),
+                                        ),
+                                      );
+                                    }
+                                  },
+                                ),
+                                const SizedBox(width: 8),
+                                Text(
+                                  balance.toStringAsFixed(2),
+                                  style: TextStyle(
+                                    color: balance > 0 ? Colors.red : Colors.green,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15,
+                                  ),
+                                ),
+                              ],
                             ),
                           );
                         },
@@ -2898,8 +2987,16 @@ class _ClientRemainingReportPageState
 
 // ─── Balance Report Page ─────────────────────────────────────────────────────
 
-class _ClientBalanceReportPage extends StatelessWidget {
+class _ClientBalanceReportPage extends StatefulWidget {
   const _ClientBalanceReportPage();
+
+  @override
+  State<_ClientBalanceReportPage> createState() =>
+      _ClientBalanceReportPageState();
+}
+
+class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
+  String _search = '';
 
   @override
   Widget build(BuildContext context) {
@@ -2927,30 +3024,82 @@ class _ClientBalanceReportPage extends StatelessWidget {
             if (clients.isEmpty) {
               return const Center(child: Text('لا يوجد عملاء لديهم أرصدة'));
             }
-            return ListView.builder(
-              itemCount: clients.length,
-              itemBuilder: (context, index) {
-                final doc = clients[index];
-                final balance = (doc['balance'] ?? 0.0).toDouble();
-                return ListTile(
-                  onTap: () => Navigator.push(
-                    context,
-                    MaterialPageRoute(
-                      builder: (_) => ClientInvoicesPage(clientId: doc.id),
+
+            final filtered = _search.isEmpty
+                ? clients
+                : clients
+                    .where((d) => (d['clientName'] ?? '')
+                        .toString()
+                        .toLowerCase()
+                        .contains(_search.toLowerCase()))
+                    .toList();
+
+            final grandTotal = clients.fold<double>(
+                0.0, (s, d) => s + (d['balance'] ?? 0.0).toDouble().abs());
+
+            return Column(
+              children: [
+                Padding(
+                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  child: TextField(
+                    textAlign: TextAlign.right,
+                    decoration: const InputDecoration(
+                      hintText: 'ابحث عن عميل',
+                      prefixIcon: Icon(Icons.search),
+                      border: OutlineInputBorder(),
+                      contentPadding: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                     ),
+                    onChanged: (v) => setState(() => _search = v),
                   ),
-                  title: Text((doc['clientName'] ?? '').toString(),
-                      textAlign: TextAlign.right,
-                      style: const TextStyle(fontWeight: FontWeight.bold)),
-                  trailing: Text(
-                    balance.abs().toStringAsFixed(2),
-                    style: const TextStyle(
-                        color: Colors.green,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 15),
+                ),
+                Container(
+                  color: Colors.orange.shade100,
+                  padding: const EdgeInsets.symmetric(
+                      horizontal: 16, vertical: 10),
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                    children: [
+                      Text(grandTotal.toStringAsFixed(2),
+                          style: const TextStyle(
+                              fontWeight: FontWeight.bold,
+                              fontSize: 16,
+                              color: Colors.green)),
+                      const Text('الإجمالي',
+                          style: TextStyle(
+                              fontWeight: FontWeight.bold, fontSize: 16)),
+                    ],
                   ),
-                );
-              },
+                ),
+                Expanded(
+                  child: filtered.isEmpty
+                      ? const Center(child: Text('لا توجد نتائج مطابقة للبحث'))
+                      : ListView.builder(
+                          itemCount: filtered.length,
+                          itemBuilder: (context, index) {
+                            final doc = filtered[index];
+                            final balance = (doc['balance'] ?? 0.0).toDouble();
+                            return ListTile(
+                              onTap: () => Navigator.push(
+                                context,
+                                MaterialPageRoute(
+                                  builder: (_) => ClientInvoicesPage(clientId: doc.id),
+                                ),
+                              ),
+                              title: Text((doc['clientName'] ?? '').toString(),
+                                  textAlign: TextAlign.right,
+                                  style: const TextStyle(fontWeight: FontWeight.bold)),
+                              trailing: Text(
+                                  balance.abs().toStringAsFixed(2),
+                                  style: const TextStyle(
+                                      color: Colors.green,
+                                      fontWeight: FontWeight.bold,
+                                      fontSize: 15),
+                              ),
+                            );
+                          },
+                        ),
+                ),
+              ],
             );
           },
         ),

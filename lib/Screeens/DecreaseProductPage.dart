@@ -2192,8 +2192,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                             padding: EdgeInsets.symmetric(vertical: 12.h),
                           ),
                           onPressed: () async {
-                            Navigator.pop(ctx);
                             if (removeProduct) {
+                              Navigator.pop(ctx);
                               if (editIndex != null) {
                                 setState(() {
                                   _addedProducts.removeAt(editIndex);
@@ -2202,6 +2202,46 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               }
                               return;
                             }
+
+                            double activePrice = 0.0;
+                            if (priceTier == 0) {
+                              activePrice = customPrice;
+                            } else if (priceTier == 2) {
+                              activePrice = sp2;
+                            } else if (priceTier == 3) {
+                              activePrice = sp3;
+                            } else {
+                              activePrice = sp1;
+                            }
+
+                            if (sheetProduct.costPrice > 0 && activePrice < sheetProduct.costPrice) {
+                              final proceed = await showDialog<bool>(
+                                context: context,
+                                builder: (dialogCtx) => Directionality(
+                                  textDirection: TextDirection.rtl,
+                                  child: AlertDialog(
+                                    title: const Text('تنبيه هام'),
+                                    content: Text(
+                                        'سعر البيع ($activePrice) أقل من سعر التكلفة (${sheetProduct.costPrice}). هل تريد الاستمرار؟'),
+                                    actions: [
+                                      TextButton(
+                                        onPressed: () => Navigator.pop(dialogCtx, false),
+                                        child: const Text('تعديل السعر', style: TextStyle(color: Colors.red)),
+                                      ),
+                                      ElevatedButton(
+                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
+                                        onPressed: () => Navigator.pop(dialogCtx, true),
+                                        child: const Text('استمرار', style: TextStyle(color: Colors.white)),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              );
+                              if (proceed != true) return;
+                            }
+
+                            if (!context.mounted) return;
+                            Navigator.pop(ctx);
                             await _syncProductPricesToFirestore(
                               product: sheetProduct,
                               sp1: sp1,
