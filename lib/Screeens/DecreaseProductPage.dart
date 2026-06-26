@@ -2307,7 +2307,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final TextEditingController paidCtrl = TextEditingController(
       text: _isEditing
           ? invoiceNum(_originalInvoice?['paidAmount']).toStringAsFixed(2)
-          : _calculateTotalSum().toStringAsFixed(2),
+          : '0.0',
     );
     final TextEditingController discountCtrl = TextEditingController(
       text: _isEditing && _editingInvoiceDiscountAmount > 0
