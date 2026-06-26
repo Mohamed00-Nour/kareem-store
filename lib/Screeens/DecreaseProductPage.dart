@@ -3532,7 +3532,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         0.0, (s, p) => s + (double.tryParse(p['amount'].toString()) ?? 0.0));
 
     return DesktopBackShortcuts(
-      confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
       child: WillPopScope(
         onWillPop: () => HomePage.confirmNavigateBack(context),
         child: Directionality(
@@ -3545,7 +3544,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
               backgroundColor: Colors.black.withOpacity(0.7),
               leading: AppBarNavLeading(
                 openDrawer: () => _scaffoldKey.currentState?.openDrawer(),
-                confirmBeforePop: () => confirmLeaveInvoiceScreen(context),
               ),
               title: Text(_pageTitle,
                   style: TextStyle(
