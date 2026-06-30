@@ -242,7 +242,8 @@ class ClientsPage extends StatelessWidget {
                 if (query.docs.isNotEmpty) {
                   if (ctx.mounted) {
                     ScaffoldMessenger.of(ctx).showSnackBar(
-                      const SnackBar(content: Text('يوجد عميل بهذا الاسم بالفعل')),
+                      const SnackBar(
+                          content: Text('يوجد عميل بهذا الاسم بالفعل')),
                     );
                   }
                   return;
@@ -259,10 +260,11 @@ class ClientsPage extends StatelessWidget {
                   return;
                 }
                 final balance = double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
-                
-                final docRef = FirebaseFirestore.instance.collection('clients').doc();
+
+                final docRef =
+                    FirebaseFirestore.instance.collection('clients').doc();
                 final clientId = docRef.id;
-                
+
                 final data = <String, dynamic>{
                   'clientName': name,
                   'balance': balance,
@@ -274,9 +276,7 @@ class ClientsPage extends StatelessWidget {
                 }
                 await docRef.set(data, SetOptions(merge: true));
                 if (balance != 0) {
-                  await docRef
-                      .collection('balanceHistory')
-                      .add({
+                  await docRef.collection('balanceHistory').add({
                     'enteredBalance': balance,
                     'balanceBefore': 0.0,
                     'type': 'opening',
@@ -1278,8 +1278,8 @@ class _ClientOpeningBalancesPageState
                           ),
                           const SizedBox(width: 12),
                           const Text('رقم السند',
-                                style: TextStyle(
-                                    fontSize: 15, fontWeight: FontWeight.bold)),
+                              style: TextStyle(
+                                  fontSize: 15, fontWeight: FontWeight.bold)),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -1430,7 +1430,8 @@ class _ClientOpeningBalancesPageState
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
                           TextButton(
-                            onPressed: isSaving ? null : () => Navigator.pop(ctx),
+                            onPressed:
+                                isSaving ? null : () => Navigator.pop(ctx),
                             child: const Text('تراجع',
                                 style: TextStyle(
                                     color: Colors.pink, fontSize: 15)),
@@ -1459,9 +1460,9 @@ class _ClientOpeningBalancesPageState
 
                                       double latestBalance = 0.0;
                                       if (clientDoc.exists) {
-                                        latestBalance = (clientDoc['balance'] ??
-                                                0.0)
-                                            .toDouble();
+                                        latestBalance =
+                                            (clientDoc['balance'] ?? 0.0)
+                                                .toDouble();
                                       } else {
                                         latestBalance = currentBalance;
                                       }
@@ -1488,7 +1489,8 @@ class _ClientOpeningBalancesPageState
                                         'description': descCtrl.text,
                                         'date': selectedDate,
                                         'paymentMethod': paymentMethod,
-                                        'timestamp': FieldValue.serverTimestamp(),
+                                        'timestamp':
+                                            FieldValue.serverTimestamp(),
                                       });
 
                                       // Construct notes for the balance history
@@ -1535,15 +1537,16 @@ class _ClientOpeningBalancesPageState
                                           });
                                         } else {
                                           transaction.set(boxDocRef, {
-                                            'value': isAddition
-                                                ? -amount
-                                                : amount
+                                            'value':
+                                                isAddition ? -amount : amount
                                           });
                                         }
                                       });
 
                                       // Add change to the subcollection
-                                      await boxDocRef.collection('changes').add({
+                                      await boxDocRef
+                                          .collection('changes')
+                                          .add({
                                         'date': FieldValue.serverTimestamp(),
                                         'value': amount,
                                         'type': isAddition
@@ -2403,11 +2406,16 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                                 size: 22,
                               ),
                               onPressed: () async {
-                                final docData = doc?.data() as Map<String, dynamic>?;
+                                final docData =
+                                    doc?.data() as Map<String, dynamic>?;
                                 final rawPhone = docData != null
-                                    ? (docData['phone'] ?? docData['clientPhone'] ?? docData['whatsapp'])?.toString()
+                                    ? (docData['phone'] ??
+                                            docData['clientPhone'] ??
+                                            docData['whatsapp'])
+                                        ?.toString()
                                     : null;
-                                final cleanPhone = (rawPhone != null && rawPhone.trim().isNotEmpty)
+                                final cleanPhone = (rawPhone != null &&
+                                        rawPhone.trim().isNotEmpty)
                                     ? EgyptPhoneField.toWhatsappDigits(rawPhone)
                                     : null;
 
@@ -2415,19 +2423,22 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
                                     ? 'المتبقي عليكم للحساب هو: ${e.value.toStringAsFixed(2)} ج.م'
                                     : 'رصيدكم الدائن لدينا هو: ${e.value.abs().toStringAsFixed(2)} ج.م';
 
-                                final message = 'السلام عليكم ورحمة الله وبركاته،\n'
+                                final message =
+                                    'السلام عليكم ورحمة الله وبركاته،\n'
                                     'أ/ ${e.key}\n'
                                     'نود تذكيركم بأن $balanceText.\n'
                                     'نشكركم لتعاملكم معنا.';
 
-                                final ok = await WhatsappInvoiceShareService.openWhatsappChat(
+                                final ok = await WhatsappInvoiceShareService
+                                    .openWhatsappChat(
                                   phoneDigits: cleanPhone,
                                   message: message,
                                 );
                                 if (!ok && context.mounted) {
                                   ScaffoldMessenger.of(context).showSnackBar(
                                     const SnackBar(
-                                      content: Text('تعذر فتح واتساب. تأكد من تثبيت التطبيق أو صحة الرقم'),
+                                      content: Text(
+                                          'تعذر فتح واتساب. تأكد من تثبيت التطبيق أو صحة الرقم'),
                                     ),
                                   );
                                 }
@@ -2907,31 +2918,41 @@ class _ClientRemainingReportPageState
                                     size: 22,
                                   ),
                                   onPressed: () async {
-                                    final docData = doc.data() as Map<String, dynamic>?;
+                                    final docData =
+                                        doc.data() as Map<String, dynamic>?;
                                     final rawPhone = docData != null
-                                        ? (docData['phone'] ?? docData['clientPhone'] ?? docData['whatsapp'])?.toString()
+                                        ? (docData['phone'] ??
+                                                docData['clientPhone'] ??
+                                                docData['whatsapp'])
+                                            ?.toString()
                                         : null;
-                                    final cleanPhone = (rawPhone != null && rawPhone.trim().isNotEmpty)
-                                        ? EgyptPhoneField.toWhatsappDigits(rawPhone)
+                                    final cleanPhone = (rawPhone != null &&
+                                            rawPhone.trim().isNotEmpty)
+                                        ? EgyptPhoneField.toWhatsappDigits(
+                                            rawPhone)
                                         : null;
 
                                     final balanceText = balance > 0
                                         ? 'المتبقي عليكم للحساب هو: ${balance.toStringAsFixed(2)} ج.م'
                                         : 'رصيدكم الدائن لدينا هو: ${balance.abs().toStringAsFixed(2)} ج.م';
 
-                                    final message = 'السلام عليكم ورحمة الله وبركاته،\n'
+                                    final message =
+                                        'السلام عليكم ورحمة الله وبركاته،\n'
                                         'أ/ ${(doc['clientName'] ?? '').toString()}\n'
                                         'نود تذكيركم بأن $balanceText.\n'
                                         'نشكركم لتعاملكم معنا.';
 
-                                    final ok = await WhatsappInvoiceShareService.openWhatsappChat(
+                                    final ok = await WhatsappInvoiceShareService
+                                        .openWhatsappChat(
                                       phoneDigits: cleanPhone,
                                       message: message,
                                     );
                                     if (!ok && context.mounted) {
-                                      ScaffoldMessenger.of(context).showSnackBar(
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(
                                         const SnackBar(
-                                          content: Text('تعذر فتح واتساب. تأكد من تثبيت التطبيق أو صحة الرقم'),
+                                          content: Text(
+                                              'تعذر فتح واتساب. تأكد من تثبيت التطبيق أو صحة الرقم'),
                                         ),
                                       );
                                     }
@@ -2941,7 +2962,8 @@ class _ClientRemainingReportPageState
                                 Text(
                                   balance.toStringAsFixed(2),
                                   style: TextStyle(
-                                    color: balance > 0 ? Colors.red : Colors.green,
+                                    color:
+                                        balance > 0 ? Colors.red : Colors.green,
                                     fontWeight: FontWeight.bold,
                                     fontSize: 15,
                                   ),
@@ -3040,22 +3062,24 @@ class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
             return Column(
               children: [
                 Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                   child: TextField(
                     textAlign: TextAlign.right,
                     decoration: const InputDecoration(
                       hintText: 'ابحث عن عميل',
                       prefixIcon: Icon(Icons.search),
                       border: OutlineInputBorder(),
-                      contentPadding: EdgeInsets.symmetric(vertical: 8, horizontal: 12),
+                      contentPadding:
+                          EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                     ),
                     onChanged: (v) => setState(() => _search = v),
                   ),
                 ),
                 Container(
                   color: Colors.orange.shade100,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -3082,18 +3106,20 @@ class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
                               onTap: () => Navigator.push(
                                 context,
                                 MaterialPageRoute(
-                                  builder: (_) => ClientInvoicesPage(clientId: doc.id),
+                                  builder: (_) =>
+                                      ClientInvoicesPage(clientId: doc.id),
                                 ),
                               ),
                               title: Text((doc['clientName'] ?? '').toString(),
                                   textAlign: TextAlign.right,
-                                  style: const TextStyle(fontWeight: FontWeight.bold)),
-                              trailing: Text(
-                                  balance.abs().toStringAsFixed(2),
                                   style: const TextStyle(
-                                      color: Colors.green,
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 15),
+                                      fontWeight: FontWeight.bold)),
+                              trailing: Text(
+                                balance.abs().toStringAsFixed(2),
+                                style: const TextStyle(
+                                    color: Colors.green,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 15),
                               ),
                             );
                           },
@@ -3240,19 +3266,39 @@ class _ClientListPageState extends State<_ClientListPage> {
   void _showDeleteConfirmationDialog(String clientId) {
     showDialog(
       context: context,
-      builder: (context) => AlertDialog(
+      builder: (dialogContext) => AlertDialog(
         title: const Text('تأكيد الحذف'),
-        content: const Text('هل تريد حذف هذا العميل من القائمة؟'),
+        content:
+            const Text('هل تريد حذف هذا العميل نهائياً من قاعدة البيانات؟'),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(dialogContext),
             child: const Text('لا'),
           ),
           TextButton(
-            onPressed: () {
-              _deletedClientsBox?.put(clientId, clientId);
-              setState(() {});
-              Navigator.pop(context);
+            onPressed: () async {
+              Navigator.pop(dialogContext);
+              try {
+                if (_deletedClientsBox != null &&
+                    _deletedClientsBox!.containsKey(clientId)) {
+                  await _deletedClientsBox!.delete(clientId);
+                }
+                await FirebaseFirestore.instance
+                    .collection('clients')
+                    .doc(clientId)
+                    .delete();
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تم حذف العميل بنجاح')),
+                  );
+                }
+              } catch (e) {
+                if (mounted) {
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    SnackBar(content: Text('خطأ أثناء الحذف: $e')),
+                  );
+                }
+              }
             },
             child: const Text('نعم'),
           ),

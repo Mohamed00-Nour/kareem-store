@@ -17,6 +17,7 @@ class _DataEntryScreenState extends State<DataEntryScreen> {
   final _formKey = GlobalKey<FormState>();
 
   final TextEditingController _productNameController = TextEditingController();
+  final TextEditingController _descriptionController = TextEditingController();
   final TextEditingController _sellingPrice1Controller = TextEditingController();
   final TextEditingController _sellingPrice2Controller = TextEditingController();
   final TextEditingController _sellingPrice3Controller = TextEditingController();
@@ -146,6 +147,7 @@ Future<void> _addProduct() async {
       id: docId,
       randomNumber: random.nextInt(1000000),
       name: productName,
+      description: _descriptionController.text.trim().isNotEmpty ? _descriptionController.text.trim() : null,
       department: _selectedDepartment ?? '',
       sellingPrice1: _optionalDouble(_sellingPrice1Controller),
       sellingPrice2: _optionalDouble(_sellingPrice2Controller),
@@ -162,6 +164,7 @@ Future<void> _addProduct() async {
     setState(() {
       _products.add(newProduct);
       _productNameController.clear();
+      _descriptionController.clear();
       _sellingPrice1Controller.clear();
       _sellingPrice2Controller.clear();
       _sellingPrice3Controller.clear();
@@ -420,6 +423,7 @@ Future<void> _saveData() async {
                   fontWeight: FontWeight.bold,
                   color: Colors.black.withOpacity(0.7))),
           _buildTextField('اسم المنتج', _productNameController, required: true),
+          _buildTextField('الوصف (اختياري)', _descriptionController),
           Row(
             children: [
               Expanded(
@@ -608,6 +612,7 @@ class Product {
   String id;
   int randomNumber;
   String name;
+  String? description;
   String department;
   double sellingPrice1;
   double sellingPrice2;
@@ -623,6 +628,7 @@ class Product {
     required this.id,
     required this.randomNumber,
     required this.name,
+    this.description,
     required this.department,
     required this.sellingPrice1,
     required this.sellingPrice2,
@@ -640,6 +646,7 @@ class Product {
       'id': id,
       'randomNumber': randomNumber,
       'name': name,
+      'description': description,
       'department': department,
       'sellingPrice1': sellingPrice1,
       'sellingPrice2': sellingPrice2,
