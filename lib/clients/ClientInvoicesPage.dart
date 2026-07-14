@@ -75,13 +75,16 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       if (mounted) {
         setState(() {
           _allProds = qs.docs
-              .map((doc) => _ProdInfo(
-                    name: (doc['name'] ?? '').toString(),
-                    sellingPrice1: (doc['sellingPrice1'] ?? 0.0).toDouble(),
-                    sellingPrice2: (doc['sellingPrice2'] ?? 0.0).toDouble(),
-                    sellingPrice3: (doc['sellingPrice3'] ?? 0.0).toDouble(),
-                    quantity: (doc['quantity'] as num?)?.toDouble() ?? 0.0,
-                  ))
+              .map((doc) {
+                final docData = doc.data() as Map<String, dynamic>?;
+                return _ProdInfo(
+                  name: (docData?['name'] ?? '').toString(),
+                  sellingPrice1: (docData?['sellingPrice1'] ?? 0.0).toDouble(),
+                  sellingPrice2: (docData?['sellingPrice2'] ?? 0.0).toDouble(),
+                  sellingPrice3: (docData?['sellingPrice3'] ?? 0.0).toDouble(),
+                  quantity: (docData?['quantity'] as num?)?.toDouble() ?? 0.0,
+                );
+              })
               .toList();
         });
       }
@@ -302,8 +305,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       String clientName = '';
 
       if (clientDoc.exists) {
-        currentBalance = (clientDoc['balance'] ?? 0.0).toDouble();
-        clientName = clientDoc['clientName'] ?? '';
+        final clientData = clientDoc.data() as Map<String, dynamic>?;
+        currentBalance = (clientData?['balance'] ?? 0.0).toDouble();
+        clientName = clientData?['clientName'] ?? '';
       }
 
       double newBalance = isAddition
@@ -747,8 +751,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                         .where('name', isEqualTo: oldName)
                                         .get();
                                     for (var doc in oldQ.docs) {
+                                      final docData = doc.data() as Map<String, dynamic>?;
                                       final qty =
-                                          (doc['quantity'] as num).toDouble();
+                                          ((docData?['quantity'] ?? 0.0) as num).toDouble();
                                       await FirebaseFirestore.instance
                                           .collection('products')
                                           .doc(doc.id)
@@ -772,8 +777,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                         .where('name', isEqualTo: newName)
                                         .get();
                                     for (var doc in newQ.docs) {
+                                      final docData = doc.data() as Map<String, dynamic>?;
                                       final qty =
-                                          (doc['quantity'] as num).toDouble();
+                                          ((docData?['quantity'] ?? 0.0) as num).toDouble();
                                       await FirebaseFirestore.instance
                                           .collection('products')
                                           .doc(doc.id)
@@ -798,9 +804,10 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                         .collection('invoices')
                                         .doc(invoiceId);
                                     final snap = await invoiceRef.get();
+                                    final snapData = snap.data() as Map<String, dynamic>?;
                                     final List<Map<String, dynamic>> prods =
                                         List<Map<String, dynamic>>.from(
-                                            snap['products']);
+                                            snapData?['products'] ?? []);
                                     prods[productIndex] = {
                                       'product': newName,
                                       'amount': newAmount.toString(),
@@ -934,7 +941,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         throw Exception('الفاتورة غير موجودة');
       }
 
-      final products = List<Map<String, dynamic>>.from(invoiceDoc['products']);
+      final invoiceData = invoiceDoc.data() as Map<String, dynamic>?;
+      final products = List<Map<String, dynamic>>.from(invoiceData?['products'] ?? []);
 
       // Add the product's amount back to the product's quantity
       for (var product in products) {
@@ -945,7 +953,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
         if (productQuery.docs.isNotEmpty) {
           for (var doc in productQuery.docs) {
-            double existingQuantity = doc['quantity'];
+            final docData = doc.data() as Map<String, dynamic>?;
+            double existingQuantity = (docData?['quantity'] ?? 0.0).toDouble();
             double restoredQuantity =
                 existingQuantity + double.parse(product['amount']);
 

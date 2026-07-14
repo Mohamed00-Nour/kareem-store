@@ -60,7 +60,8 @@ class SupplierInvoiceBalanceSyncService {
 
     for (final doc in results[1].docs) {
       final data = doc.data();
-      if (data['type']?.toString() == 'opening') continue;
+      final typeStr = data['type']?.toString();
+      if (typeStr == 'opening' || typeStr == 'voucher') continue;
       final date = _readEventDate(data, timestampField: 'timestamp');
       if (date == null) continue;
       events.add(_SupplierBalanceEvent(

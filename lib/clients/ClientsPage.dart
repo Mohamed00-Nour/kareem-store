@@ -910,9 +910,10 @@ class _ClientOpeningBalancesPageState
 
       final rows = <Map<String, dynamic>>[];
       for (final doc in snap.docs) {
-        final name = (doc['clientName'] ?? doc.id).toString().trim();
+        final docData = doc.data() as Map<String, dynamic>?;
+        final name = (docData?['clientName'] ?? doc.id).toString().trim();
         if (name.isEmpty) continue;
-        final balance = (doc['balance'] ?? 0.0).toDouble();
+        final balance = (docData?['balance'] ?? 0.0).toDouble();
         final lahu = balance < 0 ? balance.abs() : 0.0;
         final alayhi = balance > 0 ? balance : 0.0;
         if (onlyWithBalanceOwed) {
@@ -1460,8 +1461,9 @@ class _ClientOpeningBalancesPageState
 
                                       double latestBalance = 0.0;
                                       if (clientDoc.exists) {
+                                        final clientData = clientDoc.data() as Map<String, dynamic>?;
                                         latestBalance =
-                                            (clientDoc['balance'] ?? 0.0)
+                                            (clientData?['balance'] ?? 0.0)
                                                 .toDouble();
                                       } else {
                                         latestBalance = currentBalance;
@@ -1527,8 +1529,9 @@ class _ClientOpeningBalancesPageState
                                             await transaction.get(boxDocRef);
 
                                         if (boxSnapshot.exists) {
+                                          final boxData = boxSnapshot.data() as Map<String, dynamic>?;
                                           double currentBoxValue =
-                                              (boxSnapshot['value'] ?? 0.0)
+                                              (boxData?['value'] ?? 0.0)
                                                   .toDouble();
                                           transaction.update(boxDocRef, {
                                             'value': isAddition
@@ -1695,7 +1698,8 @@ class _ClientOpeningBalancesPageState
                   final clients = snapshot.data!.docs.where((d) {
                     if (_deletedClientsBox!.containsKey(d.id)) return false;
                     if (_search.isEmpty) return true;
-                    return (d['clientName'] ?? '')
+                    final dData = d.data() as Map<String, dynamic>?;
+                    return (dData?['clientName'] ?? '')
                         .toString()
                         .toLowerCase()
                         .contains(_search.toLowerCase());
@@ -1706,8 +1710,9 @@ class _ClientOpeningBalancesPageState
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final doc = clients[index];
-                      final name = (doc['clientName'] ?? '').toString();
-                      final balance = (doc['balance'] ?? 0.0).toDouble();
+                      final docData = doc.data() as Map<String, dynamic>?;
+                      final name = (docData?['clientName'] ?? '').toString();
+                      final balance = (docData?['balance'] ?? 0.0).toDouble();
                       final lahu = balance < 0 ? balance.abs() : 0.0;
                       final alayhi = balance > 0 ? balance : 0.0;
 
@@ -2295,15 +2300,20 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
             }
 
             final allEntries = docs
-                .map<MapEntry<String, double>>((d) => MapEntry(
-                    (d['clientName'] ?? '').toString(),
-                    ((d['balance'] ?? 0.0) as num).toDouble()))
+                .map<MapEntry<String, double>>((d) {
+                  final dData = d.data() as Map<String, dynamic>?;
+                  return MapEntry(
+                    (dData?['clientName'] ?? '').toString(),
+                    ((dData?['balance'] ?? 0.0) as num).toDouble(),
+                  );
+                })
                 .toList()
               ..sort((a, b) => b.value.compareTo(a.value));
             final double grandTotal =
                 allEntries.fold(0.0, (s, e) => s + e.value);
             final clientDocs = {
-              for (final d in docs) (d['clientName'] ?? '').toString(): d
+              for (final d in docs)
+                ((d.data() as Map<String, dynamic>?)?['clientName'] ?? '').toString(): d
             };
 
             final filtered = _search.isEmpty
@@ -2524,7 +2534,10 @@ class _ClientRemainingReportPageState
           );
 
       final grandTotal = clients.fold<double>(
-          0.0, (s, d) => s + (d['balance'] ?? 0.0).toDouble());
+          0.0, (s, d) {
+            final dData = d.data() as Map<String, dynamic>?;
+            return s + (dData?['balance'] ?? 0.0).toDouble();
+          });
 
       final pdf = pw.Document();
       pdf.addPage(
@@ -2580,9 +2593,9 @@ class _ClientRemainingReportPageState
                         ),
                         children: [
                           dataCell('${i + 1}'),
-                          dataCell((clients[i]['clientName'] ?? '').toString()),
+                          dataCell(((clients[i].data() as Map<String, dynamic>?)?['clientName'] ?? '').toString()),
                           dataCell(
-                              (clients[i]['balance'] ?? 0.0)
+                              ((clients[i].data() as Map<String, dynamic>?)?['balance'] ?? 0.0)
                                   .toDouble()
                                   .toStringAsFixed(2),
                               red: true),
@@ -2666,10 +2679,11 @@ class _ClientRemainingReportPageState
             ),
           );
 
-      final clientName = (client['clientName'] ?? '').toString();
-      final balance = (client['balance'] ?? 0.0).toDouble();
-      final phone = (client.data() as Map<String, dynamic>).containsKey('phone')
-          ? (client['phone'] ?? '').toString()
+      final clientData = client.data() as Map<String, dynamic>?;
+      final clientName = (clientData?['clientName'] ?? '').toString();
+      final balance = (clientData?['balance'] ?? 0.0).toDouble();
+      final phone = (clientData != null && clientData.containsKey('phone'))
+          ? (clientData['phone'] ?? '').toString()
           : '';
 
       String balanceStatus = 'خالص';
@@ -2856,17 +2870,28 @@ class _ClientRemainingReportPageState
               return const Center(child: CircularProgressIndicator());
             }
             final clients = snapshot.data!.docs
-                .where((d) => (d['balance'] ?? 0.0) != 0.0)
+                .where((d) {
+                  final dData = d.data() as Map<String, dynamic>?;
+                  return (dData?['balance'] ?? 0.0) != 0.0;
+                })
                 .toList()
-              ..sort((a, b) =>
-                  (b['balance'] as num).compareTo(a['balance'] as num));
+              ..sort((a, b) {
+                final aData = a.data() as Map<String, dynamic>?;
+                final bData = b.data() as Map<String, dynamic>?;
+                final aBalance = (aData?['balance'] ?? 0.0) as num;
+                final bBalance = (bData?['balance'] ?? 0.0) as num;
+                return bBalance.compareTo(aBalance);
+              });
 
             if (clients.isEmpty) {
               return const Center(child: Text('لا توجد أرصدة متبقية للعملاء'));
             }
 
             final grandTotal = clients.fold<double>(
-                0.0, (s, d) => s + (d['balance'] ?? 0.0).toDouble());
+                0.0, (s, d) {
+                  final dData = d.data() as Map<String, dynamic>?;
+                  return s + (dData?['balance'] ?? 0.0).toDouble();
+                });
 
             return Stack(
               children: [
@@ -2895,7 +2920,8 @@ class _ClientRemainingReportPageState
                         itemCount: clients.length,
                         itemBuilder: (context, index) {
                           final doc = clients[index];
-                          final balance = (doc['balance'] ?? 0.0).toDouble();
+                          final docData = doc.data() as Map<String, dynamic>?;
+                          final balance = (docData?['balance'] ?? 0.0).toDouble();
                           return ListTile(
                             onTap: () => Navigator.push(
                               context,
@@ -2904,7 +2930,7 @@ class _ClientRemainingReportPageState
                                     ClientInvoicesPage(clientId: doc.id),
                               ),
                             ),
-                            title: Text((doc['clientName'] ?? '').toString(),
+                            title: Text(((doc.data() as Map<String, dynamic>?)?['clientName'] ?? '').toString(),
                                 textAlign: TextAlign.right,
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold)),
@@ -2938,7 +2964,7 @@ class _ClientRemainingReportPageState
 
                                     final message =
                                         'السلام عليكم ورحمة الله وبركاته،\n'
-                                        'أ/ ${(doc['clientName'] ?? '').toString()}\n'
+                                        'أ/ ${((doc.data() as Map<String, dynamic>?)?['clientName'] ?? '').toString()}\n'
                                         'نود تذكيركم بأن $balanceText.\n'
                                         'نشكركم لتعاملكم معنا.';
 
@@ -2990,7 +3016,10 @@ class _ClientRemainingReportPageState
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const SizedBox();
             final clients = snapshot.data!.docs
-                .where((d) => (d['balance'] ?? 0.0) != 0.0)
+                .where((d) {
+                  final dData = d.data() as Map<String, dynamic>?;
+                  return (dData?['balance'] ?? 0.0) != 0.0;
+                })
                 .toList();
             return FloatingActionButton.extended(
               backgroundColor: Colors.black87,
@@ -3050,14 +3079,20 @@ class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
             final filtered = _search.isEmpty
                 ? clients
                 : clients
-                    .where((d) => (d['clientName'] ?? '')
-                        .toString()
-                        .toLowerCase()
-                        .contains(_search.toLowerCase()))
+                    .where((d) {
+                      final dData = d.data() as Map<String, dynamic>?;
+                      return (dData?['clientName'] ?? '')
+                          .toString()
+                          .toLowerCase()
+                          .contains(_search.toLowerCase());
+                    })
                     .toList();
 
             final grandTotal = clients.fold<double>(
-                0.0, (s, d) => s + (d['balance'] ?? 0.0).toDouble().abs());
+                0.0, (s, d) {
+                  final dData = d.data() as Map<String, dynamic>?;
+                  return s + (dData?['balance'] ?? 0.0).toDouble().abs();
+                });
 
             return Column(
               children: [
@@ -3101,7 +3136,8 @@ class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
                           itemCount: filtered.length,
                           itemBuilder: (context, index) {
                             final doc = filtered[index];
-                            final balance = (doc['balance'] ?? 0.0).toDouble();
+                            final docData = doc.data() as Map<String, dynamic>?;
+                            final balance = (docData?['balance'] ?? 0.0).toDouble();
                             return ListTile(
                               onTap: () => Navigator.push(
                                 context,
@@ -3110,7 +3146,7 @@ class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
                                       ClientInvoicesPage(clientId: doc.id),
                                 ),
                               ),
-                              title: Text((doc['clientName'] ?? '').toString(),
+                              title: Text(((doc.data() as Map<String, dynamic>?)?['clientName'] ?? '').toString(),
                                   textAlign: TextAlign.right,
                                   style: const TextStyle(
                                       fontWeight: FontWeight.bold)),
@@ -3185,7 +3221,8 @@ class _ClientBalanceCheckPageState extends State<_ClientBalanceCheckPage> {
                   }
                   final all = snapshot.data!.docs.where((d) {
                     if (_search.isEmpty) return true;
-                    return (d['clientName'] ?? '')
+                    final dData = d.data() as Map<String, dynamic>?;
+                    return (dData?['clientName'] ?? '')
                         .toString()
                         .toLowerCase()
                         .contains(_search.toLowerCase());
@@ -3195,7 +3232,8 @@ class _ClientBalanceCheckPageState extends State<_ClientBalanceCheckPage> {
                     itemCount: all.length,
                     itemBuilder: (context, index) {
                       final doc = all[index];
-                      final balance = (doc['balance'] ?? 0.0).toDouble();
+                      final docData = doc.data() as Map<String, dynamic>?;
+                      final balance = (docData?['balance'] ?? 0.0).toDouble();
                       return ListTile(
                         onTap: () => Navigator.push(
                           context,
@@ -3204,7 +3242,7 @@ class _ClientBalanceCheckPageState extends State<_ClientBalanceCheckPage> {
                                 ClientInvoicesPage(clientId: doc.id),
                           ),
                         ),
-                        title: Text((doc['clientName'] ?? '').toString(),
+                        title: Text(((doc.data() as Map<String, dynamic>?)?['clientName'] ?? '').toString(),
                             textAlign: TextAlign.right,
                             style:
                                 const TextStyle(fontWeight: FontWeight.bold)),
@@ -3598,8 +3636,9 @@ class _ClientListPageState extends State<_ClientListPage> {
                 final filteredClients = _searchQuery.isEmpty
                     ? allClients
                     : allClients.where((client) {
+                        final clientData = client.data() as Map<String, dynamic>?;
                         final clientName =
-                            client['clientName']?.toString().toLowerCase() ??
+                            clientData?['clientName']?.toString().toLowerCase() ??
                                 '';
                         return clientName.contains(_searchQuery.toLowerCase());
                       }).toList();
@@ -3672,7 +3711,8 @@ class _ClientSelectionDialogState extends State<_ClientSelectionDialog> {
   @override
   Widget build(BuildContext context) {
     final filtered = widget.clients.where((c) {
-      final name = (c['clientName'] ?? '').toString().toLowerCase();
+      final cData = c.data() as Map<String, dynamic>?;
+      final name = (cData?['clientName'] ?? '').toString().toLowerCase();
       return name.contains(_search.toLowerCase());
     }).toList();
 
@@ -3708,8 +3748,9 @@ class _ClientSelectionDialogState extends State<_ClientSelectionDialog> {
                         itemCount: filtered.length,
                         itemBuilder: (context, index) {
                           final doc = filtered[index];
-                          final name = (doc['clientName'] ?? '').toString();
-                          final balance = (doc['balance'] ?? 0.0).toDouble();
+                          final docData = doc.data() as Map<String, dynamic>?;
+                          final name = (docData?['clientName'] ?? '').toString();
+                          final balance = (docData?['balance'] ?? 0.0).toDouble();
                           return ListTile(
                             title: Text(name,
                                 style: const TextStyle(
