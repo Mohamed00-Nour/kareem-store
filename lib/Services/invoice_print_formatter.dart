@@ -144,6 +144,13 @@ class InvoicePrintFormatter {
     line(_tableRule(cols));
 
     final products = invoice['products'] as List<dynamic>? ?? [];
+
+    // Check whether any product line has a per-product discount.
+    final hasAnyProductDiscount = products.any((item) {
+      if (item is! Map) return false;
+      return _num(item['discount']) > 0;
+    });
+
     var qtySum = 0.0;
     var textRowIndex = 0;
     for (final item in products) {
@@ -166,6 +173,18 @@ class InvoicePrintFormatter {
         total: total,
         separateNameLine: settings.printProductNameOnSeparateLine,
       );
+
+      // Per-product discount line (only when this product has one).
+      if (hasAnyProductDiscount) {
+        final prodDiscount = _num(map['discount']);
+        if (prodDiscount > 0) {
+          final discountIsPercent = map['discountIsPercent'] == true;
+          final discLabel = discountIsPercent
+              ? 'خصم: ${prodDiscount.toStringAsFixed(1)}%'
+              : 'خصم: ${_formatMoney(prodDiscount)}';
+          line('  └ $discLabel');
+        }
+      }
 
       if (settings.showProductDescription ||
           settings.showProductNumberOnA4 ||
@@ -192,6 +211,7 @@ class InvoicePrintFormatter {
     final previous = invoiceDynamicPreviousBalance(invoice);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
+    final invoiceDiscount = _resolveInvoiceDiscount(invoice, totalSum);
     final balance = isBuying
         ? invoiceSupplierRemainingOwed(invoice)
         : invoiceClientRemainingOwed(invoice);
@@ -199,6 +219,9 @@ class InvoicePrintFormatter {
 
     line(_summaryRow(cols.width, labels.previousBalance, previous));
     line(_summaryRow(cols.width, 'إجمالي ف.', totalSum));
+    if (invoiceDiscount > 0) {
+      line(_summaryRow(cols.width, 'خصم الفاتورة', invoiceDiscount));
+    }
     line(_summaryRow(cols.width, labels.paid, paid));
     line(_summaryRow(cols.width, 'المتبقي من الفاتورة', totalSum - paid));
     line(_summaryRow(
@@ -276,6 +299,13 @@ class InvoicePrintFormatter {
 
     final tableRows = <InvoiceReceiptTableRow>[];
     final products = invoice['products'] as List<dynamic>? ?? [];
+
+    // Check whether any product line carries a per-product discount.
+    final hasAnyProductDiscount = products.any((item) {
+      if (item is! Map) return false;
+      return _num(item['discount']) > 0;
+    });
+
     var qtySum = 0.0;
     var rowIndex = 0;
     for (final item in products) {
@@ -285,6 +315,19 @@ class InvoicePrintFormatter {
       qtySum += _num(map['amount']);
       rowIndex++;
       final extras = <String>[];
+
+      // Per-product discount (shown as an extra line under the product).
+      if (hasAnyProductDiscount) {
+        final prodDiscount = _num(map['discount']);
+        if (prodDiscount > 0) {
+          final discountIsPercent = map['discountIsPercent'] == true;
+          final discLabel = discountIsPercent
+              ? 'خصم: ${prodDiscount.toStringAsFixed(1)}%'
+              : 'خصم: ${_formatMoney(prodDiscount)}';
+          extras.add(discLabel);
+        }
+      }
+
       if (settings.showProductDescription ||
           settings.showProductNumberOnA4 ||
           settings.showExpiryDateOnA4 ||
@@ -320,6 +363,7 @@ class InvoicePrintFormatter {
     final previous = invoiceDynamicPreviousBalance(invoice);
     final totalSum = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
+    final invoiceDiscount = _resolveInvoiceDiscount(invoice, totalSum);
     final balance = isBuying
         ? invoiceSupplierRemainingOwed(invoice)
         : invoiceClientRemainingOwed(invoice);
@@ -328,6 +372,7 @@ class InvoicePrintFormatter {
     final summaryTable = <List<String>>[
       [_formatMoney(previous), labels.previousBalance],
       [_formatMoney(totalSum), 'إجمالي ف.'],
+      if (invoiceDiscount > 0) [_formatMoney(invoiceDiscount), 'خصم الفاتورة'],
       [_formatMoney(paid), labels.paid],
       [_formatMoney(totalSum - paid), 'المتبقي من الفاتورة'],
       [_formatMoney(balance), balanceLabel],
@@ -539,6 +584,26 @@ class InvoicePrintFormatter {
     if (t.length > width) t = t.substring(0, width);
     if (center) return _center(t, width);
     return right ? t.padLeft(width) : t.padRight(width);
+  }
+
+  /// Resolves the effective invoice-level discount, matching ClientInvoicesPage logic:
+  /// uses stored [invoiceDiscount] if > 0, otherwise infers from
+  /// sum(product totals) − totalSum (legacy invoices without stored discount field).
+  static double _resolveInvoiceDiscount(
+    Map<String, dynamic> invoice,
+    double totalSum,
+  ) {
+    final stored = _num(invoice['invoiceDiscount']);
+    if (stored > 0) return stored;
+    // Fallback: infer from product lines (matches ClientInvoicesPage behaviour).
+    final products = invoice['products'] as List<dynamic>? ?? [];
+    final productsSum = products.fold<double>(0.0, (sum, item) {
+      if (item is! Map) return sum;
+      return sum +
+          _num((item as Map)['total'] ?? (item)['totalCost']);
+    });
+    final diff = productsSum - totalSum;
+    return diff > 0.01 ? diff : 0.0;
   }
 
   static String _formatMoney(double value) {
