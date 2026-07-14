@@ -207,6 +207,7 @@ class _AddProductPageState extends State<AddProductPage> {
     String notes = '',
     double invoiceDiscount = 0.0,
     bool discountIsPercent = true,
+    String paymentMethod = 'آجل',
   }) async {
     if (_isSaving) return;
     final Supplier? effectiveSupplier = supplier ?? _selectedSupplier;
@@ -361,7 +362,7 @@ class _AddProductPageState extends State<AddProductPage> {
         'invoiceDiscount': effectiveDiscountAmt,
         'notes': notes,
         'previousBalance': _supplierBalance,
-        'paymentMethod': balance == 0 ? 'نقد' : 'آجل',
+        'paymentMethod': paymentMethod,
         'products': _addedProducts
             .map((p) => {
                   'product': p['product'],
@@ -1469,9 +1470,8 @@ class _AddProductPageState extends State<AddProductPage> {
     bool loadingCheckoutSupplierBalance = false;
     double invoiceDiscount = 0.0;
     bool discountIsPercent = true;
-    final paidCtrl = TextEditingController(
-      text: _calculateTotalSum().toStringAsFixed(2),
-    );
+    String paymentMethod = 'آجل';
+    final paidCtrl = TextEditingController(text: '0');
     final discountCtrl = TextEditingController();
     final notesCtrl = TextEditingController();
     final newSupplierCtrl = TextEditingController();
@@ -1526,7 +1526,10 @@ class _AddProductPageState extends State<AddProductPage> {
             final disc = discountIsPercent
                 ? sum * invoiceDiscount / 100
                 : invoiceDiscount;
-            paidCtrl.text = (sum - disc).toStringAsFixed(2);
+            final newTotal = (sum - disc).toStringAsFixed(2);
+            if (paymentMethod == 'نقداً') {
+              paidCtrl.text = newTotal;
+            }
           }
 
           return Directionality(
@@ -1615,6 +1618,82 @@ class _AddProductPageState extends State<AddProductPage> {
                                     fontSize: 14.sp,
                                     fontWeight: FontWeight.bold)),
                           ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 12.h),
+                    // ── طريقة الدفع ──
+                    Row(
+                      children: [
+                        Text('طريقة الدفع',
+                            style: TextStyle(
+                                fontSize: 13.sp, fontWeight: FontWeight.bold)),
+                        SizedBox(width: 12.w),
+                        Expanded(
+                          child: Row(children: [
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => setSheet(() {
+                                  paymentMethod = 'نقداً';
+                                  paidCtrl.text = '0';
+                                }),
+                                child: Container(
+                                  padding: EdgeInsets.symmetric(
+                                      vertical: 10.h),
+                                  decoration: BoxDecoration(
+                                    color: paymentMethod == 'نقداً'
+                                        ? Colors.black87
+                                        : Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(8.r),
+                                    border: Border.all(
+                                        color: paymentMethod == 'نقداً'
+                                            ? Colors.black87
+                                            : Colors.grey.shade400),
+                                  ),
+                                  child: Text('نقداً',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                          fontSize: 14.sp,
+                                          fontWeight: FontWeight.bold,
+                                          color: paymentMethod == 'نقداً'
+                                              ? Colors.white
+                                              : Colors.black87)),
+                                ),
+                              ),
+                            ),
+                            SizedBox(width: 8.w),
+                            Expanded(
+                              child: GestureDetector(
+                                onTap: () => setSheet(() {
+                                  paymentMethod = 'آجل';
+                                  // Reset paid to 0 when deferred
+                                  paidCtrl.text = '0';
+                                }),
+                                child: Container(
+                                  padding: EdgeInsets.symmetric(
+                                      vertical: 10.h),
+                                  decoration: BoxDecoration(
+                                    color: paymentMethod == 'آجل'
+                                        ? Colors.orange.shade700
+                                        : Colors.grey.shade200,
+                                    borderRadius: BorderRadius.circular(8.r),
+                                    border: Border.all(
+                                        color: paymentMethod == 'آجل'
+                                            ? Colors.orange.shade700
+                                            : Colors.grey.shade400),
+                                  ),
+                                  child: Text('آجل',
+                                      textAlign: TextAlign.center,
+                                      style: TextStyle(
+                                          fontSize: 14.sp,
+                                          fontWeight: FontWeight.bold,
+                                          color: paymentMethod == 'آجل'
+                                              ? Colors.white
+                                              : Colors.black87)),
+                                ),
+                              ),
+                            ),
+                          ]),
                         ),
                       ],
                     ),
@@ -2076,6 +2155,19 @@ class _AddProductPageState extends State<AddProductPage> {
                                   final double savedDiscount = invoiceDiscount;
                                   final bool savedDiscountIsPercent =
                                       discountIsPercent;
+                                  // Validate: نقداً requires paid >= total
+                                  if (paymentMethod == 'نقداً' &&
+                                      paidAmount < totalAfterDiscount - 0.005) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: Text(
+                                          'الدفع نقداً يتطلب أن يكون المدفوع (${paidAmount.toStringAsFixed(2)}) مساوياً أو أكبر من الإجمالي (${totalAfterDiscount.toStringAsFixed(2)})',
+                                        ),
+                                        backgroundColor: Colors.red.shade700,
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   Navigator.pop(ctx);
                                   if (!mounted) return;
                                   setState(() {
@@ -2089,6 +2181,7 @@ class _AddProductPageState extends State<AddProductPage> {
                                     notes: savedNotes,
                                     invoiceDiscount: savedDiscount,
                                     discountIsPercent: savedDiscountIsPercent,
+                                    paymentMethod: paymentMethod,
                                   );
                                 },
                           child: _isSaving
