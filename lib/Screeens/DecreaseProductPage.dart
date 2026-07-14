@@ -2380,6 +2380,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           : '',
     );
     final TextEditingController notesCtrl = TextEditingController(text: notes);
+    String lastManualPaid = _isEditing
+        ? invoiceNum(_originalInvoice?['paidAmount']).toStringAsFixed(2)
+        : '0.0';
 
     showModalBottomSheet(
       context: context,
@@ -2432,15 +2435,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           final bool paidLessThanTotal =
               isCash && paid + 0.001 < totalAfterDiscount;
 
-          void syncPaidForPaymentMethod({bool forceClearDeferred = false}) {
+          void syncPaidForPaymentMethod() {
             if (paymentMethod == 'نقداً') {
-              final sum = _calculateTotalSum();
-              final disc = discountIsPercent
-                  ? sum * invoiceDiscount / 100
-                  : invoiceDiscount;
-              paidCtrl.text = (sum - disc).toStringAsFixed(2);
-            } else if (forceClearDeferred && paymentMethod == 'آجل') {
-              paidCtrl.clear();
+              paidCtrl.text = '0';
+            } else {
+              paidCtrl.text = lastManualPaid;
             }
           }
 
@@ -2475,8 +2474,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       MaterialTapTargetSize.shrinkWrap,
                                   onChanged: (v) => setSheet(() {
                                     paymentMethod = v!;
-                                    syncPaidForPaymentMethod(
-                                        forceClearDeferred: true);
+                                    syncPaidForPaymentMethod();
                                   }),
                                 ),
                                 Text(m, style: TextStyle(fontSize: 11.sp)),
@@ -2545,7 +2543,12 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       : null,
                                 ),
                                 onTap: () => _selectAllField(paidCtrl),
-                                onChanged: (_) => setSheet(() {}),
+                                onChanged: (v) {
+                                  if (paymentMethod != 'نقداً') {
+                                    lastManualPaid = v;
+                                  }
+                                  setSheet(() {});
+                                },
                               ),
                             ),
                           ]),

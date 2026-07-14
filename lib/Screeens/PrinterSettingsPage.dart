@@ -1,6 +1,5 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
-import '../Services/app_error_logger.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../Services/bluetooth_printer_service.dart';
@@ -341,12 +340,7 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
       if (selected != null && mounted) {
         await _connectToSelectedPrinter(selected);
       }
-    } catch (e, st) {
-      await AppErrorLogger.record(
-        error: e,
-        stackTrace: st,
-        step: 'printer_search_devices',
-      );
+    } catch (e) {
       if (mounted) {
         setState(() => _searching = false);
         ScaffoldMessenger.of(context).showSnackBar(
@@ -395,15 +389,6 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
       if (kDebugMode) {
         debugPrint('Printer connect crashed: $e\n$st');
       }
-      await AppErrorLogger.record(
-        error: e,
-        stackTrace: st,
-        step: 'printer_connect_ui',
-        metadata: {
-          'deviceName': selected.name,
-          'mac': selected.macAddress,
-        },
-      );
       connected = false;
     }
 

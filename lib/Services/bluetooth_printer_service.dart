@@ -1,7 +1,6 @@
 import 'package:flutter/foundation.dart';
 
 import '../models/paired_bluetooth_device.dart';
-import 'app_error_logger.dart';
 import '../models/invoice_app_footer.dart';
 import '../models/invoice_receipt_print_data.dart';
 import '../models/printer_settings.dart';
@@ -45,22 +44,9 @@ class BluetoothPrinterService {
     // One connect attempt — multiple native fallbacks run inside Android code.
     try {
       final ok = await ThermalPrintChannel.connect(mac);
-      if (!ok) {
-        AppErrorLogger.logFailure(
-          step: 'bluetooth_printer_connect',
-          message: 'Bluetooth connect returned false',
-          metadata: {'mac': mac},
-        );
-      }
       return ok;
     } catch (e, st) {
       debugPrint('Bluetooth connect error: $e\n$st');
-      await AppErrorLogger.record(
-        error: e,
-        stackTrace: st,
-        step: 'bluetooth_printer_connect',
-        metadata: {'mac': mac},
-      );
       return false;
     }
   }

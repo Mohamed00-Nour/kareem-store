@@ -1,7 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../models/printer_settings.dart';
-import 'app_error_logger.dart';
 import 'bluetooth_permission_service.dart';
 import 'bluetooth_printer_service.dart';
 import 'invoice_number_utils.dart';
@@ -72,11 +71,6 @@ class InvoicePrintService {
           settings.bluetoothMacAddress,
         );
         if (!connected) {
-          AppErrorLogger.logFailure(
-            step: 'print_invoice_connect',
-            message: 'Could not connect before print',
-            metadata: {'mac': settings.bluetoothMacAddress},
-          );
           return const InvoicePrintResult(
             success: false,
             messageAr:
@@ -93,13 +87,6 @@ class InvoicePrintService {
       );
 
       if (!ok) {
-        AppErrorLogger.logFailure(
-          step: 'print_invoice_write',
-          message: 'Bluetooth printSalesInvoice returned false',
-          metadata: {
-            'invoiceNumber': prepared['invoiceNumber']?.toString() ?? '',
-          },
-        );
         return const InvoicePrintResult(
           success: false,
           messageAr: 'تعذر إرسال البيانات للطابعة — جرّب اختبار الطباعة من الإعدادات',
@@ -107,13 +94,7 @@ class InvoicePrintService {
       }
 
       return const InvoicePrintResult(success: true);
-    } catch (e, st) {
-      await AppErrorLogger.record(
-        error: e,
-        stackTrace: st,
-        step: 'print_sales_invoice',
-        metadata: {'clientId': clientId ?? ''},
-      );
+    } catch (e) {
       return InvoicePrintResult(
         success: false,
         messageAr: 'خطأ أثناء الطباعة: $e',
@@ -159,13 +140,8 @@ class InvoicePrintService {
             invoice['products'] = _normalizeProducts(subProducts);
           }
         }
-      } catch (e, st) {
-        await AppErrorLogger.record(
-          error: e,
-          stackTrace: st,
-          step: 'print_merge_main_invoice',
-          metadata: {'invoiceId': mainId},
-        );
+      } catch (e) {
+        // Ignored
       }
     }
 

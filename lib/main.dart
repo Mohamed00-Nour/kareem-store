@@ -4,30 +4,16 @@ import 'dart:ui' as ui;
 import 'package:firebase_core/firebase_core.dart';
 import 'package:flutter/material.dart';
 import 'Screeens/SplashScreen.dart';
-import 'Services/app_error_logger.dart';
+import 'firebase_options.dart';
 import 'Widgets/app_responsive.dart';
 import 'Widgets/responsive_screen_util_host.dart';
-import 'firebase_options.dart';
 
 Future<void> main() async {
-  runZonedGuarded(
-    () async {
-      WidgetsFlutterBinding.ensureInitialized();
-      await Firebase.initializeApp(
-        options: DefaultFirebaseOptions.currentPlatform,
-      );
-      AppErrorLogger.installGlobalHandlers();
-      runApp(const MyApp());
-    },
-    (error, stack) {
-      AppErrorLogger.record(
-        error: error,
-        stackTrace: stack,
-        step: 'uncaught_async',
-        severity: AppErrorSeverity.fatal,
-      );
-    },
+  WidgetsFlutterBinding.ensureInitialized();
+  await Firebase.initializeApp(
+    options: DefaultFirebaseOptions.currentPlatform,
   );
+  runApp(const MyApp());
 }
 
 class MyApp extends StatelessWidget {

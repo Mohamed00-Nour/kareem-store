@@ -3,8 +3,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
-import '../Services/app_error_logger.dart';
-
 class ChangeCredentialsPage extends StatefulWidget {
   const ChangeCredentialsPage({super.key});
 
@@ -142,13 +140,8 @@ class _ChangeCredentialsPageState extends State<ChangeCredentialsPage> {
         _passwordController.clear();
         _confirmPasswordController.clear();
       }
-    } catch (e, st) {
-      await AppErrorLogger.record(
-        error: e,
-        stackTrace: st,
-        step: 'update_user_credentials',
-        metadata: {'oldEmail': oldEmail, 'newEmail': newEmail},
-      );
+    } catch (e) {
+
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           SnackBar(content: Text('فشل تحديث البيانات: $e')),

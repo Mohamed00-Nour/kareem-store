@@ -4,7 +4,6 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Screeens/g_Nav.dart';
-import '../Services/app_error_logger.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -22,68 +21,66 @@ class _LoginScreenState extends State<LoginScreen> {
     super.dispose();
   }
 
-Future<void> _login() async {
-  final email = _emailController.text.trim();
-  final password = _passwordController.text.trim();
+  Future<void> _login() async {
+    final email = _emailController.text.trim();
+    final password = _passwordController.text.trim();
 
-  print('Login attempt started for email: $email');
+    print('Login attempt started for email: $email');
 
-  try {
-    print('Querying Firestore for user data...');
-    QuerySnapshot<Map<String, dynamic>> snapshot =
-    await FirebaseFirestore.instance
-        .collection('users')
-        .where('email', isEqualTo: email)
-        .limit(1)
-        .get();
+    try {
+      print('Querying Firestore for user data...');
+      QuerySnapshot<Map<String, dynamic>> snapshot = await FirebaseFirestore
+          .instance
+          .collection('users')
+          .where('email', isEqualTo: email)
+          .limit(1)
+          .get();
 
-    if (snapshot.docs.isNotEmpty) {
-      print('User document found.');
-      final userData = snapshot.docs.first.data();
-      if (userData['password'] == password) {
-        print('Password is correct.');
-        final role = userData['role'];
-        print('User role is: $role');
+      if (snapshot.docs.isNotEmpty) {
+        print('User document found.');
+        final userData = snapshot.docs.first.data();
+        if (userData['password'] == password) {
+          print('Password is correct.');
+          final role = userData['role'];
+          print('User role is: $role');
 
-        // Save user role to SharedPreferences
-        final prefs = await SharedPreferences.getInstance();
-        await prefs.setString('user_role', role);
-        await prefs.setString('user_email', email);
+          // Save user role to SharedPreferences
+          final prefs = await SharedPreferences.getInstance();
+          await prefs.setString('user_role', role);
+          await prefs.setString('user_email', email);
 
-        if (role == 'admin') {
-          print('Navigating to admin home.');
-          Navigator.pushReplacement(context, MaterialPageRoute(
-            builder: (context) => GNavPage(),
-          ));
-        } else if (role == 'user') {
-          print('Navigating to admin home.');
-          Navigator.pushReplacement(context, MaterialPageRoute(
-            builder: (context) => GNavPage(),
-          ));
+          if (role == 'admin') {
+            print('Navigating to admin home.');
+            Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => GNavPage(),
+                ));
+          } else if (role == 'user') {
+            print('Navigating to admin home.');
+            Navigator.pushReplacement(
+                context,
+                MaterialPageRoute(
+                  builder: (context) => GNavPage(),
+                ));
+          }
+        } else {
+          print('Invalid password provided.');
+          ScaffoldMessenger.of(context)
+              .showSnackBar(const SnackBar(content: Text('Invalid password')));
         }
       } else {
-        print('Invalid password provided.');
-        ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('Invalid password')));
+        print('No user document found.');
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('User not found')));
       }
-    } else {
-      print('No user document found.');
+    } catch (e) {
+      print('Error during login: $e');
+      if (!mounted) return;
       ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('User not found')));
+          .showSnackBar(SnackBar(content: Text('Error during login: $e')));
     }
-  } catch (e, st) {
-    print('Error during login: $e');
-    await AppErrorLogger.record(
-      error: e,
-      stackTrace: st,
-      step: 'login',
-      metadata: {'email': email},
-    );
-    if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text('Error during login: $e')));
   }
-}
 
   InputDecoration _buildInputDecoration(String hint) {
     return InputDecoration(
