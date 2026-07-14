@@ -3549,6 +3549,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         0.0, (s, p) => s + (double.tryParse(p['amount'].toString()) ?? 0.0));
 
     return DesktopBackShortcuts(
+      confirmBeforePop: () => HomePage.confirmNavigateBack(context),
       child: WillPopScope(
         onWillPop: () => HomePage.confirmNavigateBack(context),
         child: Directionality(
@@ -3561,6 +3562,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
               backgroundColor: Colors.black.withOpacity(0.7),
               leading: AppBarNavLeading(
                 openDrawer: () => _scaffoldKey.currentState?.openDrawer(),
+                confirmBeforePop: () => HomePage.confirmNavigateBack(context),
               ),
               title: Text(_pageTitle,
                   style: TextStyle(
@@ -3571,7 +3573,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
               iconTheme: const IconThemeData(color: Colors.white),
               automaticallyImplyLeading: false,
               actions: [
-                if (Navigator.canPop(context))
+                if (!Navigator.canPop(context))
                   IconButton(
                     icon: Icon(Icons.menu, color: Colors.white, size: 24.sp),
                     tooltip: 'القائمة',
