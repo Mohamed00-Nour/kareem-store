@@ -890,13 +890,21 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
   Future<void> _fetchClients() async {
     try {
-      QuerySnapshot querySnapshot =
+      final querySnapshot =
           await FirebaseFirestore.instance.collection('clients').get();
-      setState(() {
-        _clients = querySnapshot.docs
-            .map((doc) => doc['clientName'] as String)
-            .toList();
-      });
+      final names = <String>[];
+      for (final doc in querySnapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>?;
+        final name = data?['clientName'];
+        if (name != null && name is String && name.trim().isNotEmpty) {
+          names.add(name.trim());
+        }
+      }
+      if (mounted) {
+        setState(() {
+          _clients = names;
+        });
+      }
     } catch (e) {
       print('Error fetching clients: $e');
     }

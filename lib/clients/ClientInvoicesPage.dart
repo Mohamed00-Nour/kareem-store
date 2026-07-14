@@ -1382,13 +1382,64 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       );
     }
 
+    // Only show the discount column if at least one product has a discount.
+    final hasAnyDiscount = rows.any(
+      (p) => ((p['discount'] as num?)?.toDouble() ?? 0.0) > 0,
+    );
+
+    if (!hasAnyDiscount) {
+      // ── 4-column table (no discount column) ──
+      return Table(
+        border: TableBorder.all(color: Colors.grey.shade400, width: 0.8),
+        columnWidths: const {
+          0: FlexColumnWidth(3),
+          1: FlexColumnWidth(1.1),
+          2: FlexColumnWidth(1.1),
+          3: FlexColumnWidth(1.2),
+        },
+        children: [
+          TableRow(
+            decoration: BoxDecoration(color: Colors.grey.shade200),
+            children: [
+              cell('اسم المنتج', bold: true, align: TextAlign.right),
+              cell('الكمية', bold: true),
+              cell('السعر', bold: true),
+              cell('الإجمالي', bold: true),
+            ],
+          ),
+          for (final p in rows)
+            TableRow(
+              decoration:
+                  BoxDecoration(color: Colors.orange.withOpacity(0.12)),
+              children: [
+                cell(invoiceProductName(p), align: TextAlign.right),
+                cell(invoiceQty(p['amount'])),
+                cell(invoiceAmount(p['selectedPrice'])),
+                cell(invoiceAmount(p['total'])),
+              ],
+            ),
+          TableRow(
+            decoration: BoxDecoration(color: Colors.grey.shade100),
+            children: [
+              cell(''),
+              cell(invoiceQty(qtySum), bold: true),
+              cell(''),
+              cell(''),
+            ],
+          ),
+        ],
+      );
+    }
+
+    // ── 5-column table (with discount column) ──
     return Table(
       border: TableBorder.all(color: Colors.grey.shade400, width: 0.8),
-      columnWidths: {
-        0: const FlexColumnWidth(3),
-        1: const FlexColumnWidth(1.1),
-        2: const FlexColumnWidth(1.1),
-        3: const FlexColumnWidth(1.2),
+      columnWidths: const {
+        0: FlexColumnWidth(3),
+        1: FlexColumnWidth(1.0),
+        2: FlexColumnWidth(1.1),
+        3: FlexColumnWidth(1.1),
+        4: FlexColumnWidth(1.2),
       },
       children: [
         TableRow(
@@ -1397,29 +1448,57 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
             cell('اسم المنتج', bold: true, align: TextAlign.right),
             cell('الكمية', bold: true),
             cell('السعر', bold: true),
+            cell('الخصم', bold: true),
             cell('الإجمالي', bold: true),
           ],
         ),
-        for (final p in rows)
-          TableRow(
-            decoration: BoxDecoration(
-              color: Colors.orange.withOpacity(0.12),
-            ),
-            children: [
-              cell(
-                invoiceProductName(p),
-                align: TextAlign.right,
+        for (final p in rows) ...[
+          () {
+            final discount = (p['discount'] as num?)?.toDouble() ?? 0.0;
+            final discountIsPercent = p['discountIsPercent'] == true;
+            final hasDiscount = discount > 0;
+            final discountLabel = hasDiscount
+                ? (discountIsPercent
+                    ? '${discount.toStringAsFixed(1)}%'
+                    : invoiceAmount(discount))
+                : '';
+            return TableRow(
+              decoration: BoxDecoration(
+                color: hasDiscount
+                    ? Colors.orange.withOpacity(0.08)
+                    : Colors.orange.withOpacity(0.12),
               ),
-              cell(invoiceQty(p['amount'])),
-              cell(invoiceAmount(p['selectedPrice'])),
-              cell(invoiceAmount(p['total'])),
-            ],
-          ),
+              children: [
+                cell(invoiceProductName(p), align: TextAlign.right),
+                cell(invoiceQty(p['amount'])),
+                cell(invoiceAmount(p['selectedPrice'])),
+                Padding(
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 4.w, vertical: 8.h),
+                  child: Text(
+                    discountLabel,
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 11.sp,
+                      fontWeight:
+                          hasDiscount ? FontWeight.bold : FontWeight.normal,
+                      color: hasDiscount
+                          ? Colors.red.shade700
+                          : Colors.transparent,
+                    ),
+                  ),
+                ),
+                cell(invoiceAmount(p['total']), bold: hasDiscount),
+              ],
+            );
+          }(),
+        ],
         TableRow(
           decoration: BoxDecoration(color: Colors.grey.shade100),
           children: [
             cell(''),
             cell(invoiceQty(qtySum), bold: true),
+            cell(''),
             cell(''),
             cell(''),
           ],
@@ -1501,7 +1580,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   Future<void> _syncClientInvoiceBalances() async {
     try {
       await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
-      if (mounted) await _refreshInvoices();
+      // Only refresh the client balance display — invoices were already
+      // loaded by _fetchInvoices(reset: true) in initState.
+      if (mounted) await _fetchClientName();
     } catch (_) {
       // Non-blocking backfill on open.
     }
@@ -1693,7 +1774,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                         ),
                         if (discount > 0)
                           Text(
-                            'الخصم: ${invoiceAmount(discount)}',
+                            'خصم الفاتورة: ${invoiceAmount(discount)}',
                             style: const TextStyle(
                               fontSize: 14,
                               fontWeight: FontWeight.bold,
