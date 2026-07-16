@@ -10,9 +10,16 @@ class SupplierBalanceHistoryPage extends StatelessWidget {
   String _descriptionForEntry(Map<String, dynamic> data) {
     final type = data['type']?.toString() ?? '';
     final notes = (data['notes'] ?? data['description'] ?? '').toString().trim();
+    final invoiceNumber = data['invoiceNumber']?.toString() ?? '';
 
     if (type == 'opening') {
       return 'رصيد افتتاحي';
+    }
+    if (type == 'buying') {
+      return 'فاتورة مشتريات' + (invoiceNumber.isNotEmpty ? ' رقم $invoiceNumber' : '');
+    }
+    if (type == 'buying_payment') {
+      return 'سداد فاتورة مشتريات' + (invoiceNumber.isNotEmpty ? ' رقم $invoiceNumber' : '');
     }
 
     String description = '';

@@ -8,8 +8,6 @@ import '../Widgets/invoice_display_widgets.dart';
 import '../Screeens/AddProductPage.dart';
 import 'SupplierBalanceHistoryPage.dart';
 
-
-
 class SupplierInvoicesPage extends StatefulWidget {
   final String supplierId;
 
@@ -26,8 +24,18 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
   int _selectedYear = DateTime.now().year;
   int _selectedMonth = DateTime.now().month;
   final List<String> _arabicMonths = [
-    'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-    'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+    'يناير',
+    'فبراير',
+    'مارس',
+    'أبريل',
+    'مايو',
+    'يونيو',
+    'يوليو',
+    'أغسطس',
+    'سبتمبر',
+    'أكتوبر',
+    'نوفمبر',
+    'ديسمبر'
   ];
 
   Future<void> _loadUserRole() async {
@@ -86,96 +94,121 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     }
   }
 
+  Future<void> _saveBalance() async {
+    if (_balanceController.text.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('من فضلك أدخل الرصيد')),
+      );
+      return;
+    }
 
-Future<void> _saveBalance() async {
-  if (_balanceController.text.isEmpty) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('من فضلك أدخل الرصيد')),
-    );
-    return;
-  }
+    double enteredBalance = double.tryParse(_balanceController.text) ?? 0.0;
+    if (enteredBalance <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال مبلغ صحيح')),
+      );
+      return;
+    }
 
-  double enteredBalance = double.tryParse(_balanceController.text) ?? 0.0;
-  if (enteredBalance <= 0) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('يرجى إدخال مبلغ صحيح')),
-    );
-    return;
-  }
-
-  showDialog(
-    context: context,
-    barrierDismissible: false,
-    builder: (context) => Center(
-      child: CircularProgressIndicator(
-        color: Colors.orange.withOpacity(0.7),
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => Center(
+        child: CircularProgressIndicator(
+          color: Colors.orange.withOpacity(0.7),
+        ),
       ),
-    ),
-  );
+    );
 
-  try {
-    // Get current supplier data
-    final supplierDoc = FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(widget.supplierId);
-    final supplierSnapshot = await supplierDoc.get();
-    final currentBalance = supplierSnapshot['totalBalance'] ?? 0.0;
+    try {
+      // Get current supplier data
+      final supplierDoc = FirebaseFirestore.instance
+          .collection('suppliers')
+          .doc(widget.supplierId);
+      final supplierSnapshot = await supplierDoc.get();
+      final currentBalance = supplierSnapshot['totalBalance'] ?? 0.0;
 
-    // Try different possible field names for supplier name
-    final supplierName = supplierSnapshot['name'];
+      // Try different possible field names for supplier name
+      final supplierName = supplierSnapshot['name'];
 
-    // Add to supplier's balance history
-    await supplierDoc.collection('balanceHistory').add({
-      'enteredBalance': enteredBalance,
-      'balanceBefore': currentBalance,
-      'timestamp': FieldValue.serverTimestamp(),
-    });
+      final voucherSnap = await FirebaseFirestore.instance
+          .collection('supplier_vouchers')
+          .orderBy('voucherNumber', descending: true)
+          .limit(1)
+          .get();
+      final nextVoucher = voucherSnap.docs.isNotEmpty
+          ? (voucherSnap.docs.first['voucherNumber'] as int) + 1
+          : 1;
 
-    // Update the box collection - decrease the balance from box
-    DocumentReference boxDocRef = FirebaseFirestore.instance
-        .collection('box')
-        .doc('mainBox');
+      final voucherRef =
+          await FirebaseFirestore.instance.collection('supplier_vouchers').add({
+        'supplierId': widget.supplierId,
+        'supplierName': supplierName ?? '',
+        'direction': 'عليه',
+        'amount': enteredBalance,
+        'description': 'سداد نقدي',
+        'date': Timestamp.now(),
+        'timestamp': FieldValue.serverTimestamp(),
+        'voucherNumber': nextVoucher,
+      });
 
-    await FirebaseFirestore.instance.runTransaction((transaction) async {
-      DocumentSnapshot boxSnapshot = await transaction.get(boxDocRef);
+      // Add to supplier's balance history
+      await supplierDoc.collection('balanceHistory').add({
+        'enteredBalance': enteredBalance,
+        'balanceBefore': currentBalance,
+        'type': 'voucher',
+        'voucherId': voucherRef.id,
+        'direction': 'عليه',
+        'notes': 'سداد نقدي',
+        'timestamp': FieldValue.serverTimestamp(),
+      });
 
-      if (boxSnapshot.exists) {
-        double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-        transaction.update(boxDocRef, {'value': currentBoxValue - enteredBalance});
-      } else {
-        transaction.set(boxDocRef, {'value': -enteredBalance});
+      // Update the box collection - decrease the balance from box
+      DocumentReference boxDocRef =
+          FirebaseFirestore.instance.collection('box').doc('mainBox');
+
+      await FirebaseFirestore.instance.runTransaction((transaction) async {
+        DocumentSnapshot boxSnapshot = await transaction.get(boxDocRef);
+
+        if (boxSnapshot.exists) {
+          double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
+          transaction
+              .update(boxDocRef, {'value': currentBoxValue - enteredBalance});
+        } else {
+          transaction.set(boxDocRef, {'value': -enteredBalance});
+        }
+      });
+
+      // Add change to the subcollection
+      await boxDocRef.collection('changes').add({
+        'date': FieldValue.serverTimestamp(),
+        'value': enteredBalance,
+        'type': 'decrement',
+        'name': supplierName,
+        'invoiceNumber': null, // No invoice number for balance entries
+      });
+
+      await SupplierInvoiceBalanceSyncService.syncForSupplier(
+          widget.supplierId);
+
+      if (mounted) Navigator.of(context).pop();
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم الحفظ بنجاح')),
+        );
       }
-    });
-
-    // Add change to the subcollection
-    await boxDocRef.collection('changes').add({
-      'date': FieldValue.serverTimestamp(),
-      'value': enteredBalance,
-      'type': 'decrement',
-      'name': supplierName,
-      'invoiceNumber': null, // No invoice number for balance entries
-    });
-
-    await SupplierInvoiceBalanceSyncService.syncForSupplier(widget.supplierId);
-
-    if (mounted) Navigator.of(context).pop();
-
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم الحفظ بنجاح')),
-      );
+    } catch (e) {
+      if (mounted) Navigator.of(context).pop();
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('حدث خطأ: $e')),
+        );
+      }
+    } finally {
+      _balanceController.clear();
     }
-  } catch (e) {
-    if (mounted) Navigator.of(context).pop();
-    if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('حدث خطأ: $e')),
-      );
-    }
-  } finally {
-    _balanceController.clear();
   }
-}
 
   // ─────────────────────────────────────────────
   // Edit invoice
@@ -196,108 +229,108 @@ Future<void> _saveBalance() async {
   }
 
   Future<void> _deleteInvoice(String invoiceId, double totalCost) async {
-  final confirmDelete = await showDialog<bool>(
-    context: context,
-    builder: (context) {
-      return AlertDialog(
-        title: const Text('تأكيد الحذف'),
-        content: const Text('هل أنت متأكد أنك تريد حذف هذه الفاتورة؟'),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('إلغاء'),
-          ),
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('حذف'),
-          ),
-        ],
-      );
-    },
-  );
+    final confirmDelete = await showDialog<bool>(
+      context: context,
+      builder: (context) {
+        return AlertDialog(
+          title: const Text('تأكيد الحذف'),
+          content: const Text('هل أنت متأكد أنك تريد حذف هذه الفاتورة؟'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(false),
+              child: const Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(context).pop(true),
+              child: const Text('حذف'),
+            ),
+          ],
+        );
+      },
+    );
 
-  if (confirmDelete != true) {
-    return;
-  }
-
-  try {
-    final invoiceDoc = await FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(widget.supplierId)
-        .collection('buying invoices')
-        .doc(invoiceId)
-        .get();
-
-    if (!invoiceDoc.exists) {
-      throw Exception('الفاتورة غير موجودة');
+    if (confirmDelete != true) {
+      return;
     }
 
-    final products = List<Map<String, dynamic>>.from(invoiceDoc['products']);
-
-    for (var product in products) {
-      QuerySnapshot productQuery = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: product['product'])
+    try {
+      final invoiceDoc = await FirebaseFirestore.instance
+          .collection('suppliers')
+          .doc(widget.supplierId)
+          .collection('buying invoices')
+          .doc(invoiceId)
           .get();
 
-      if (productQuery.docs.isNotEmpty) {
-        for (var doc in productQuery.docs) {
-          int existingQuantity = (doc['quantity'] as num).toInt();
-          int restoredQuantity = existingQuantity -
-              (double.parse(product['amount'].toString())).round();
+      if (!invoiceDoc.exists) {
+        throw Exception('الفاتورة غير موجودة');
+      }
 
-          await FirebaseFirestore.instance
-              .collection('products')
-              .doc(doc.id)
-              .update({'quantity': restoredQuantity});
+      final products = List<Map<String, dynamic>>.from(invoiceDoc['products']);
 
-          await FirebaseFirestore.instance
-              .collection('products')
-              .doc(doc.id)
-              .collection('changes')
-              .add({
-            'date': DateTime.now(),
-            'amount': product['amount'],
-            'type': 'increase',
-          });
+      for (var product in products) {
+        QuerySnapshot productQuery = await FirebaseFirestore.instance
+            .collection('products')
+            .where('name', isEqualTo: product['product'])
+            .get();
+
+        if (productQuery.docs.isNotEmpty) {
+          for (var doc in productQuery.docs) {
+            int existingQuantity = (doc['quantity'] as num).toInt();
+            int restoredQuantity = existingQuantity -
+                (double.parse(product['amount'].toString())).round();
+
+            await FirebaseFirestore.instance
+                .collection('products')
+                .doc(doc.id)
+                .update({'quantity': restoredQuantity});
+
+            await FirebaseFirestore.instance
+                .collection('products')
+                .doc(doc.id)
+                .collection('changes')
+                .add({
+              'date': DateTime.now(),
+              'amount': product['amount'],
+              'type': 'increase',
+            });
+          }
         }
       }
+
+      await FirebaseFirestore.instance
+          .collection('suppliers')
+          .doc(widget.supplierId)
+          .collection('buying invoices')
+          .doc(invoiceId)
+          .delete();
+
+      await SupplierInvoiceBalanceSyncService.syncForSupplier(
+          widget.supplierId);
+
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تم حذف الفاتورة بنجاح')),
+      );
+    } catch (e) {
+      print(e);
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text('حدث خطأ أثناء حذف الفاتورة: $e')),
+      );
     }
-
-    await FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(widget.supplierId)
-        .collection('buying invoices')
-        .doc(invoiceId)
-        .delete();
-
-    await SupplierInvoiceBalanceSyncService.syncForSupplier(widget.supplierId);
-
-    ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('تم حذف الفاتورة بنجاح')),
-    );
-  } catch (e) {
-    print(e);
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('حدث خطأ أثناء حذف الفاتورة: $e')),
-    );
   }
-}
-
-
-
-
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         backgroundColor: Colors.black.withOpacity(0.7),
-        title: const Text('فواتير المورد' , style: TextStyle(
-          fontSize: 20,
-          fontWeight: FontWeight.bold,
-          color: Colors.white,
-        )),
+        title: const Text('فواتير المورد',
+            style: TextStyle(
+              fontSize: 20,
+              fontWeight: FontWeight.bold,
+              color: Colors.white,
+            )),
         actions: [
           DropdownButton<int>(
             value: _selectedYear,
@@ -309,7 +342,8 @@ Future<void> _saveBalance() async {
                 int year = DateTime.now().year - index;
                 return Align(
                   alignment: Alignment.center,
-                  child: Text(year.toString(), style: const TextStyle(color: Colors.white)),
+                  child: Text(year.toString(),
+                      style: const TextStyle(color: Colors.white)),
                 );
               });
             },
@@ -317,7 +351,8 @@ Future<void> _saveBalance() async {
               int year = DateTime.now().year - index;
               return DropdownMenuItem(
                 value: year,
-                child: Text(year.toString(), style: const TextStyle(color: Colors.black)),
+                child: Text(year.toString(),
+                    style: const TextStyle(color: Colors.black)),
               );
             }),
             onChanged: (value) {
@@ -335,14 +370,16 @@ Future<void> _saveBalance() async {
               return List.generate(12, (index) {
                 return Align(
                   alignment: Alignment.center,
-                  child: Text(_arabicMonths[index], style: const TextStyle(color: Colors.white)),
+                  child: Text(_arabicMonths[index],
+                      style: const TextStyle(color: Colors.white)),
                 );
               });
             },
             items: List.generate(12, (index) {
               return DropdownMenuItem(
                 value: index + 1,
-                child: Text(_arabicMonths[index], style: const TextStyle(color: Colors.black)),
+                child: Text(_arabicMonths[index],
+                    style: const TextStyle(color: Colors.black)),
               );
             }),
             onChanged: (value) {
@@ -449,8 +486,8 @@ Future<void> _saveBalance() async {
                 final invoices = snapshot.data!.docs.where((doc) {
                   final date = doc['date']?.toDate();
                   return date != null &&
-                    date.year == _selectedYear &&
-                    date.month == _selectedMonth;
+                      date.year == _selectedYear &&
+                      date.month == _selectedMonth;
                 }).toList();
 
                 return ListView.builder(
@@ -459,8 +496,7 @@ Future<void> _saveBalance() async {
                     final invoice = invoices[index];
                     final invoiceId = invoice.id;
                     final totalCost = (invoice['totalSum'] as num).toDouble();
-                    final invoiceData =
-                        invoice.data() as Map<String, dynamic>;
+                    final invoiceData = invoice.data() as Map<String, dynamic>;
 
                     return InvoiceDisplayCard(
                       invoice: invoiceData,
@@ -490,4 +526,3 @@ Future<void> _saveBalance() async {
     );
   }
 }
-

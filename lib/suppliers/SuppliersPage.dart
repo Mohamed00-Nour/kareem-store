@@ -83,10 +83,10 @@ class SuppliersPage extends StatelessWidget {
                         try {
                           final opening =
                               double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
-                          // Opening balance = amount we owe the supplier → له (negative).
+                          // Opening balance = amount we owe the supplier → له (positive).
                           final totalBalance = opening == 0
                               ? 0.0
-                              : -opening.abs();
+                              : opening.abs();
                           final ref = await FirebaseFirestore.instance
                               .collection('suppliers')
                               .add({
@@ -110,6 +110,7 @@ class SuppliersPage extends StatelessWidget {
                               'enteredBalance': opening.abs(),
                               'balanceBefore': 0.0,
                               'type': 'opening',
+                              'direction': 'له',
                               'timestamp': FieldValue.serverTimestamp(),
                             });
                           }
@@ -1224,6 +1225,7 @@ class _SupplierOpeningBalancesPageState
                                         'enteredBalance': amount,
                                         'balanceBefore': latestBalance,
                                         'type': 'voucher',
+                                        'direction': direction,
                                         'notes': noteStr,
                                         'timestamp': selectedDate,
                                       });
