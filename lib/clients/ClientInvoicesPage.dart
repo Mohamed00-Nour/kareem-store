@@ -61,10 +61,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   List<_ProdInfo> _allProds = [];
 
   List<QueryDocumentSnapshot> _invoices = [];
+  List<QueryDocumentSnapshot> _returnInvoices = [];
+  List<QueryDocumentSnapshot> _payments = [];
   DocumentSnapshot? _lastInvoiceDoc;
   bool _isLoadingInvoices = true;
   bool _isLoadingMoreInvoices = false;
   bool _hasMoreInvoices = true;
+  bool _showPayments = false; // toggle: show payment cards in the list
   final Set<String> _expandedInvoiceIds = {};
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
@@ -176,6 +179,18 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       .collection('invoices')
       .orderBy('date', descending: true);
 
+  Query _returnInvoicesQuery() => FirebaseFirestore.instance
+      .collection('clients')
+      .doc(widget.clientId)
+      .collection('returnInvoices')
+      .orderBy('date', descending: true);
+
+  Query _paymentsQuery() => FirebaseFirestore.instance
+      .collection('clients')
+      .doc(widget.clientId)
+      .collection('balanceHistory')
+      .orderBy('timestamp', descending: true);
+
   void _onInvoiceScroll() {
     if (!_invoiceScrollController.hasClients || _searchQuery.isNotEmpty) return;
     final pos = _invoiceScrollController.position;
@@ -189,6 +204,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       setState(() {
         _isLoadingInvoices = true;
         _invoices = [];
+        _returnInvoices = [];
+        _payments = [];
         _lastInvoiceDoc = null;
         _hasMoreInvoices = true;
       });
@@ -205,12 +222,35 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         query = query.startAfterDocument(_lastInvoiceDoc!);
       }
 
-      final snap = await query.get();
+      // Fetch invoices, returnInvoices, and payments in parallel on reset
+      final Future<QuerySnapshot> invoiceFuture = query.get();
+      final Future<QuerySnapshot?> returnFuture = reset
+          ? _returnInvoicesQuery().get()
+          : Future<QuerySnapshot?>.value(null);
+      final Future<QuerySnapshot?> paymentFuture = reset
+          ? _paymentsQuery().get()
+          : Future<QuerySnapshot?>.value(null);
+      final snap = await invoiceFuture;
+      final retSnap = await returnFuture;
+      // Fetch payments separately with its own error guard (needs a Firestore index;
+      // if the index doesn't exist yet, degrade gracefully instead of crashing)
+      QuerySnapshot? paySnap;
+      try {
+        paySnap = await paymentFuture;
+      } catch (_) {
+        paySnap = null;
+      }
       if (!mounted) return;
 
       setState(() {
         if (reset) {
           _invoices = snap.docs;
+          _returnInvoices = retSnap?.docs ?? [];
+          // Exclude 'sale' and 'return' types — those are shown as invoice cards
+          _payments = (paySnap?.docs ?? []).where((doc) {
+            final t = (doc.data() as Map<String, dynamic>)['type']?.toString() ?? '';
+            return t != 'sale' && t != 'return';
+          }).toList();
         } else {
           _invoices.addAll(snap.docs);
         }
@@ -330,7 +370,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         'balanceBefore': currentBalance,
         'type': isAddition ? 'addition' : 'deduction',
         'notes': notesText,
-        'timestamp': FieldValue.serverTimestamp(),
+        'timestamp': DateTime.now(), // local timestamp so it's immediately queryable
       });
 
       // Update the box collection
@@ -1028,6 +1068,147 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
+  // ── Return-invoice edit / delete ─────────────────────────────────
+
+  Future<void> _showEditReturnInvoiceDialog(DocumentSnapshot invoice) async {
+    final payload = await _invoicePayloadForEdit(invoice);
+    final saved = await Navigator.push<bool>(
+      context,
+      MaterialPageRoute(
+        builder: (_) => DecreaseProductPage(
+          isReturnInvoice: true,
+          invoiceToEdit: payload,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    if (saved == true) {
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text('تم تعديل فاتورة المرتجع بنجاح'),
+      ));
+      await _refreshInvoices();
+    }
+  }
+
+  Future<void> _deleteReturnInvoice(DocumentSnapshot clientSubDoc) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('تأكيد الحذف'),
+        content: const Text(
+            'هل أنت متأكد من حذف فاتورة المرتجع؟\nسيتم عكس جميع التأثيرات على المخزون والرصيد.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(false),
+            child: Text('إلغاء',
+                style: TextStyle(color: Colors.black.withOpacity(0.7))),
+          ),
+          TextButton(
+            onPressed: () => Navigator.of(ctx).pop(true),
+            child: const Text('حذف',
+                style: TextStyle(color: Colors.red)),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+
+    try {
+      final data = clientSubDoc.data() as Map<String, dynamic>;
+      final products =
+          List<Map<String, dynamic>>.from(data['products'] as List? ?? []);
+      final rootInvoiceId = data['invoiceId']?.toString() ?? '';
+
+      // 1. Reverse the stock restore (return invoice added stock, so delete must subtract)
+      for (final product in products) {
+        final name = product['product']?.toString() ?? '';
+        if (name.isEmpty) continue;
+        final amount =
+            double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
+        if (amount <= 0) continue;
+
+        final q = await FirebaseFirestore.instance
+            .collection('products')
+            .where('name', isEqualTo: name)
+            .get();
+        for (final pDoc in q.docs) {
+          final qty = (pDoc['quantity'] as num?)?.toDouble() ?? 0.0;
+          await FirebaseFirestore.instance
+              .collection('products')
+              .doc(pDoc.id)
+              .update({'quantity': qty - amount});
+          await FirebaseFirestore.instance
+              .collection('products')
+              .doc(pDoc.id)
+              .collection('changes')
+              .add({
+            'date': DateTime.now(),
+            'amount': amount,
+            'type': 'decrease',
+          });
+        }
+      }
+
+      // 2. Delete root returnInvoice document
+      if (rootInvoiceId.isNotEmpty) {
+        await FirebaseFirestore.instance
+            .collection('returnInvoices')
+            .doc(rootInvoiceId)
+            .delete();
+      }
+
+      // 3. Delete client sub-document
+      await clientSubDoc.reference.delete();
+
+      // 4. Remove related balanceHistory entries (type 'return' and 'return_payment')
+      if (rootInvoiceId.isNotEmpty) {
+        final historySnap = await FirebaseFirestore.instance
+            .collection('clients')
+            .doc(widget.clientId)
+            .collection('balanceHistory')
+            .where('invoiceId', isEqualTo: rootInvoiceId)
+            .get();
+        final batch = FirebaseFirestore.instance.batch();
+        for (final h in historySnap.docs) {
+          batch.delete(h.reference);
+        }
+        await batch.commit();
+      }
+
+      // 5. Re-sync client balance
+      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم حذف فاتورة المرتجع بنجاح')),
+        );
+        await _refreshInvoices();
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('حدث خطأ أثناء حذف المرتجع: $e')),
+        );
+      }
+    }
+  }
+
+  void _handleEditReturnInvoice(DocumentSnapshot invoice) {
+    if (_userRole == 'admin') {
+      _showEditReturnInvoiceDialog(invoice);
+    } else {
+      _showPermissionDeniedDialog();
+    }
+  }
+
+  void _handleDeleteReturnInvoice(DocumentSnapshot invoice) {
+    if (_userRole == 'admin') {
+      _deleteReturnInvoice(invoice);
+    } else {
+      _showPermissionDeniedDialog();
+    }
+  }
+
   Future<void> _pickDate(
     BuildContext ctx,
     DateTime initial,
@@ -1507,6 +1688,169 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     );
   }
 
+  // ── Payment card ──────────────────────────────────────────────
+  Widget _buildPaymentCard(_InvoiceEntry entry) {
+    final data = entry.data;
+    final type = data['type']?.toString() ?? 'deduction';
+    final amount = (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
+    final notes = (data['notes'] ?? data['description'] ?? '').toString().trim();
+    final ts = data['timestamp'];
+    final date = ts is Timestamp ? ts.toDate().toLocal() : null;
+    final formattedDate =
+        date != null ? intl.DateFormat('yyyy-MM-dd').format(date) : '';
+    final formattedTime =
+        date != null ? intl.DateFormat('hh:mm a').format(date) : '';
+    final invoiceNumber = data['invoiceNumber']?.toString() ?? '';
+
+    // Label, icon and colours per type
+    String label;
+    IconData icon;
+    Color badgeColor;
+    Color cardColor;
+    Color amountColor;
+    String sign;
+
+    switch (type) {
+      case 'sale_payment':
+        label = 'سداد فاتورة';
+        icon = Icons.payments_outlined;
+        badgeColor = Colors.green.shade700;
+        cardColor = Colors.green.shade50;
+        amountColor = Colors.green.shade800;
+        sign = '+';
+        break;
+      case 'return_payment':
+        label = 'سداد مرتجع';
+        icon = Icons.undo_outlined;
+        badgeColor = Colors.teal.shade700;
+        cardColor = Colors.teal.shade50;
+        amountColor = Colors.teal.shade800;
+        sign = '-';
+        break;
+      case 'addition':
+        label = 'إضافة رصيد';
+        icon = Icons.add_circle_outline;
+        badgeColor = Colors.orange.shade700;
+        cardColor = Colors.orange.shade50;
+        amountColor = Colors.orange.shade800;
+        sign = '+';
+        break;
+      case 'opening':
+        label = 'رصيد افتتاحي';
+        icon = Icons.account_balance_outlined;
+        badgeColor = Colors.blue.shade700;
+        cardColor = Colors.blue.shade50;
+        amountColor = Colors.blue.shade800;
+        sign = '';
+        break;
+      default: // deduction
+        label = 'خصم (سداد)';
+        icon = Icons.payments_outlined;
+        badgeColor = Colors.green.shade700;
+        cardColor = Colors.green.shade50;
+        amountColor = Colors.green.shade800;
+        sign = '+';
+    }
+
+    return Card(
+      margin: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+      color: cardColor,
+      shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.circular(10),
+        side: BorderSide(color: badgeColor.withValues(alpha: 0.35), width: 1.2),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            // Icon circle
+            Container(
+              width: 42,
+              height: 42,
+              decoration: BoxDecoration(
+                color: badgeColor,
+                shape: BoxShape.circle,
+              ),
+              child: Icon(icon, color: Colors.white, size: 20),
+            ),
+            const SizedBox(width: 12),
+            // Description
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                            horizontal: 8, vertical: 2),
+                        decoration: BoxDecoration(
+                          color: badgeColor,
+                          borderRadius: BorderRadius.circular(5),
+                        ),
+                        child: Text(
+                          label,
+                          style: const TextStyle(
+                            color: Colors.white,
+                            fontSize: 11,
+                            fontWeight: FontWeight.bold,
+                          ),
+                        ),
+                      ),
+                      if (invoiceNumber.isNotEmpty) ...[
+                        const SizedBox(width: 6),
+                        Text(
+                          'فاتورة #$invoiceNumber',
+                          style: TextStyle(
+                            fontSize: 12,
+                            color: Colors.grey.shade700,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                  if (notes.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      notes,
+                      style: TextStyle(
+                        fontSize: 12,
+                        color: Colors.grey.shade700,
+                      ),
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ],
+                  if (formattedDate.isNotEmpty) ...[
+                    const SizedBox(height: 4),
+                    Text(
+                      '$formattedDate  $formattedTime',
+                      style: TextStyle(
+                        fontSize: 11,
+                        color: Colors.grey.shade500,
+                      ),
+                    ),
+                  ],
+                ],
+              ),
+            ),
+            const SizedBox(width: 12),
+            // Amount
+            Text(
+              '$sign${amount.toStringAsFixed(2)} ج.م',
+              style: TextStyle(
+                fontSize: 16,
+                fontWeight: FontWeight.bold,
+                color: amountColor,
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
   Future<void> _printInvoice(Map<String, dynamic> invoiceData) async {
     await InvoicePrintUi.printInvoice(
       context,
@@ -1599,11 +1943,49 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     super.dispose();
   }
 
-  List<QueryDocumentSnapshot> get _filteredInvoices {
-    if (_searchQuery.isEmpty) return _invoices;
+  /// Returns the effective DateTime for sorting any entry in the unified list.
+  static DateTime _entryDate(_InvoiceEntry e) {
+    final d = e.data;
+    if (e.kind == _EntryKind.payment) {
+      final ts = d['timestamp'];
+      if (ts is Timestamp) return ts.toDate();
+      if (ts is DateTime) return ts;
+      // Pending server timestamp or null → treat as 'just now' so new entries sort first
+      return DateTime.now();
+    }
+    final ts = d['date'];
+    if (ts is Timestamp) return ts.toDate();
+    if (ts is DateTime) return ts;
+    return DateTime(0);
+  }
+
+  /// Combines sales invoices, return invoices, and payment entries sorted newest first.
+  List<_InvoiceEntry> get _allMergedInvoices {
+    final List<_InvoiceEntry> merged = [
+      ..._invoices.map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.invoice)),
+      ..._returnInvoices.map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.returnInvoice)),
+      ..._payments.map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.payment)),
+    ];
+    merged.sort((a, b) => _entryDate(b).compareTo(_entryDate(a)));
+    return merged;
+  }
+
+  List<_InvoiceEntry> get _filteredInvoices {
+    final all = _allMergedInvoices;
+    // Always strip payment entries when the payments toggle is off
+    final visible = _showPayments
+        ? all
+        : all.where((e) => e.kind != _EntryKind.payment).toList();
+    if (_searchQuery.isEmpty) return visible;
     final q = _searchQuery.toLowerCase();
-    return _invoices.where((doc) {
-      final data = doc.data() as Map<String, dynamic>;
+    return visible.where((entry) {
+      final data = entry.data;
+      if (entry.kind == _EntryKind.payment) {
+        // Search payments by notes or amount
+        final notes = (data['notes'] ?? data['description'] ?? '').toString().toLowerCase();
+        final amount = (data['enteredBalance'] ?? 0).toString();
+        return notes.contains(q) || amount.contains(q);
+      }
       final num = data['invoiceNumber']?.toString() ?? '';
       if (num.contains(q)) return true;
       final products = data['products'] as List? ?? [];
@@ -1617,7 +1999,12 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }).toList();
   }
 
-  Widget _buildInvoiceCard(QueryDocumentSnapshot invoice) {
+  Widget _buildInvoiceCard(_InvoiceEntry entry) {
+    // Dispatch payment entries to their own card builder
+    if (entry.kind == _EntryKind.payment) return _buildPaymentCard(entry);
+
+    final invoice = entry.doc;
+    final bool isReturn = entry.kind == _EntryKind.returnInvoice;
     final invoiceData = Map<String, dynamic>.from(invoice.data() as Map);
     final dateField = invoiceData['date'];
     if (dateField is! Timestamp) {
@@ -1658,6 +2045,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
     return Card(
       margin: const EdgeInsets.all(10.0),
+      color: isReturn ? Colors.red.shade50 : null,
+      shape: isReturn
+          ? RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8),
+              side: BorderSide(color: Colors.red.shade200, width: 1.5),
+            )
+          : null,
       child: Padding(
         padding: const EdgeInsets.all(10.0),
         child: Column(
@@ -1682,19 +2076,50 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                       child: Row(
                         children: [
                           Expanded(
-                            child: Text(
-                              'رقم الفاتورة: #${invoice['invoiceNumber']} (${invoiceAmount(totalSum)} ج.م)',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
+                            child: Row(
+                              children: [
+                                if (isReturn)
+                                  Container(
+                                    margin: const EdgeInsets.only(left: 8),
+                                    padding: const EdgeInsets.symmetric(
+                                        horizontal: 8, vertical: 3),
+                                    decoration: BoxDecoration(
+                                      color: Colors.red.shade700,
+                                      borderRadius: BorderRadius.circular(6),
+                                    ),
+                                    child: const Text(
+                                      'مرتجع',
+                                      style: TextStyle(
+                                        color: Colors.white,
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.bold,
+                                      ),
+                                    ),
+                                  ),
+                                Expanded(
+                                  child: Text(
+                                    'رقم الفاتورة: #${invoice['invoiceNumber']} (${invoiceAmount(totalSum)} ج.م)',
+                                    style: TextStyle(
+                                      fontSize: 14,
+                                      fontWeight: FontWeight.bold,
+                                      decoration: isReturn
+                                          ? TextDecoration.lineThrough
+                                          : null,
+                                      decorationColor: Colors.red.shade700,
+                                      decorationThickness: 2,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
                           Icon(
                             isExpanded
                                 ? Icons.keyboard_arrow_up
                                 : Icons.keyboard_arrow_down,
-                            color: Colors.orange.shade800,
+                            color: isReturn
+                                ? Colors.red.shade700
+                                : Colors.orange.shade800,
                           ),
                           SizedBox(width: 8.w),
                         ],
@@ -1720,17 +2145,32 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                       tooltip: 'مشاركة في واتساب',
                       onPressed: () => _shareInvoiceOnWhatsApp(invoiceData),
                     ),
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      onPressed: () => _handleEditInvoice(invoice),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.delete, color: Colors.red),
-                      onPressed: () => _handleDeleteInvoice(
-                        invoice.id,
-                        invoice['totalSum'],
+                    if (!isReturn) ...[
+                      IconButton(
+                        icon: const Icon(Icons.edit, color: Colors.blue),
+                        onPressed: () => _handleEditInvoice(invoice),
                       ),
-                    ),
+                      IconButton(
+                        icon: const Icon(Icons.delete, color: Colors.red),
+                        onPressed: () => _handleDeleteInvoice(
+                          invoice.id,
+                          invoice['totalSum'],
+                        ),
+                      ),
+                    ] else ...[
+                      IconButton(
+                        icon: const Icon(Icons.edit,
+                            color: Colors.deepOrangeAccent),
+                        tooltip: 'تعديل المرتجع',
+                        onPressed: () => _handleEditReturnInvoice(invoice),
+                      ),
+                      IconButton(
+                        icon: const Icon(Icons.delete_forever,
+                            color: Colors.red),
+                        tooltip: 'حذف المرتجع',
+                        onPressed: () => _handleDeleteReturnInvoice(invoice),
+                      ),
+                    ],
                   ],
                 ),
               ],
@@ -1831,6 +2271,25 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                   color: Colors.white,
                 )),
             actions: [
+              // Toggle: show / hide payment cards
+              IconButton(
+                tooltip: _showPayments ? 'إخفاء الدفعات' : 'عرض الدفعات',
+                icon: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 200),
+                  child: Icon(
+                    _showPayments
+                        ? Icons.payments
+                        : Icons.payments_outlined,
+                    key: ValueKey(_showPayments),
+                    color: _showPayments
+                        ? Colors.greenAccent.shade200
+                        : Colors.white,
+                  ),
+                ),
+                onPressed: (_isSaving || _generatingStatement)
+                    ? null
+                    : () => setState(() => _showPayments = !_showPayments),
+              ),
               IconButton(
                 icon: const Icon(Icons.history, color: Colors.white),
                 tooltip: 'تاريخ الرصيد',
@@ -1921,8 +2380,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                     ),
                                   );
                                 }
-                                return _buildInvoiceCard(
-                                    _filteredInvoices[index]);
+                                return _buildInvoiceCard(_filteredInvoices[index]);
                               },
                             ),
                           ),
@@ -2700,6 +3158,22 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       ],
     );
   }
+}
+
+// ──────────────────────────────────────────────────────────────
+// Unified list entry (invoice / return invoice / payment card)
+// ──────────────────────────────────────────────────────────────
+enum _EntryKind { invoice, returnInvoice, payment }
+
+class _InvoiceEntry {
+  final QueryDocumentSnapshot doc;
+  final _EntryKind kind;
+
+  _InvoiceEntry({required this.doc, required this.kind});
+
+  bool get isReturn => kind == _EntryKind.returnInvoice;
+
+  Map<String, dynamic> get data => doc.data() as Map<String, dynamic>;
 }
 
 // ──────────────────────────────────────────────────────────────

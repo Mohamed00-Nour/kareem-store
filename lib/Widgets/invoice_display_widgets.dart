@@ -183,9 +183,13 @@ class InvoiceTotalsFooter extends StatelessWidget {
   Future<double> _fetchBalance() async {
     final isBuying = invoiceIsSupplierPurchase(invoice);
     if (isBuying) {
+      // Prefer the per-invoice balance set by the sync service.
       if (invoice.containsKey('currentSupplierBalance') &&
           invoice['currentSupplierBalance'] != null) {
         return invoiceNum(invoice['currentSupplierBalance']);
+      }
+      if (invoice.containsKey('balance') && invoice['balance'] != null) {
+        return invoiceNum(invoice['balance']);
       }
       final supplierName = invoice['supplierName']?.toString() ?? '';
       final supplierId = invoice['supplierId']?.toString() ?? '';

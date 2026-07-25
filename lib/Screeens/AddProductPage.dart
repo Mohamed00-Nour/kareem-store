@@ -1476,6 +1476,9 @@ class _AddProductPageState extends State<AddProductPage> {
     final notesCtrl = TextEditingController();
     final newSupplierCtrl = TextEditingController();
     final supplierSearchCtrl = TextEditingController();
+    // Guard flag — set to false when the sheet is dismissed so async
+    // callbacks don't call setSheet() on a disposed StatefulBuilder.
+    bool sheetMounted = true;
 
     showModalBottomSheet(
       context: context,
@@ -1487,17 +1490,21 @@ class _AddProductPageState extends State<AddProductPage> {
         return StatefulBuilder(builder: (ctx, setSheet) {
           Future<void> loadCheckoutSupplierBalance(String supplierName) async {
             if (supplierName.trim().isEmpty) {
+              if (!sheetMounted) return;
               setSheet(() {
                 checkoutSupplierBalance = null;
                 loadingCheckoutSupplierBalance = false;
               });
               return;
             }
+            if (!sheetMounted) return;
             setSheet(() {
               loadingCheckoutSupplierBalance = true;
               checkoutSupplierBalance = null;
             });
             final bal = await _fetchSupplierBalance(supplierName.trim());
+            // Sheet may have been dismissed while the network call was in flight.
+            if (!sheetMounted) return;
             setSheet(() {
               checkoutSupplierBalance = bal;
               loadingCheckoutSupplierBalance = false;
@@ -1638,8 +1645,7 @@ class _AddProductPageState extends State<AddProductPage> {
                                   paidCtrl.text = '0';
                                 }),
                                 child: Container(
-                                  padding: EdgeInsets.symmetric(
-                                      vertical: 10.h),
+                                  padding: EdgeInsets.symmetric(vertical: 10.h),
                                   decoration: BoxDecoration(
                                     color: paymentMethod == 'نقداً'
                                         ? Colors.black87
@@ -1670,8 +1676,7 @@ class _AddProductPageState extends State<AddProductPage> {
                                   paidCtrl.text = '0';
                                 }),
                                 child: Container(
-                                  padding: EdgeInsets.symmetric(
-                                      vertical: 10.h),
+                                  padding: EdgeInsets.symmetric(vertical: 10.h),
                                   decoration: BoxDecoration(
                                     color: paymentMethod == 'آجل'
                                         ? Colors.orange.shade700
@@ -2030,7 +2035,7 @@ class _AddProductPageState extends State<AddProductPage> {
                         builder: (_) {
                           final balanceBefore = checkoutSupplierBalance ?? 0.0;
                           final invoiceUnpaid = totalAfterDiscount - paid;
-                          final balanceAfter = balanceBefore - invoiceUnpaid;
+                          final balanceAfter = balanceBefore + invoiceUnpaid;
                           TextStyle balanceStyle(double amount) => TextStyle(
                                 fontSize: 13.sp,
                                 fontWeight: FontWeight.bold,
@@ -2209,7 +2214,7 @@ class _AddProductPageState extends State<AddProductPage> {
           );
         });
       },
-    );
+    ).then((_) => sheetMounted = false);
   }
 
   Widget _buildDrawer() {

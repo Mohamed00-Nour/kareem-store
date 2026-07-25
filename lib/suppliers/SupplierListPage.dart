@@ -1,3 +1,4 @@
+import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
@@ -167,31 +168,181 @@ class _SupplierListPageState extends State<SupplierListPage> {
     );
   }
 
+  void _showFirebaseDeleteConfirmationDialog(
+      String supplierId, String supplierName) {
+    showDialog(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: ui.TextDirection.rtl,
+        child: AlertDialog(
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+          title: Row(
+            children: [
+              const Icon(Icons.warning_amber_rounded,
+                  color: Colors.red, size: 28),
+              const SizedBox(width: 8),
+              const Text(
+                'حذف نهائي',
+                style:
+                    TextStyle(color: Colors.red, fontWeight: FontWeight.bold),
+              ),
+            ],
+          ),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              const Text(
+                'سيتم حذف المورد بشكل نهائي من قاعدة البيانات ولا يمكن التراجع عن هذا الإجراء.',
+                style: TextStyle(fontSize: 14),
+              ),
+              const SizedBox(height: 12),
+              Container(
+                padding: const EdgeInsets.all(10),
+                decoration: BoxDecoration(
+                  color: Colors.red.shade50,
+                  borderRadius: BorderRadius.circular(8),
+                  border: Border.all(color: Colors.red.shade200),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(Icons.store_outlined,
+                        color: Colors.red, size: 20),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        supplierName,
+                        style: const TextStyle(
+                          fontWeight: FontWeight.bold,
+                          color: Colors.red,
+                          fontSize: 15,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton.icon(
+              icon: const Icon(Icons.delete_forever, color: Colors.white),
+              label: const Text('حذف نهائي',
+                  style: TextStyle(color: Colors.white)),
+              style: ElevatedButton.styleFrom(
+                  backgroundColor: Colors.red.shade700),
+              onPressed: () async {
+                Navigator.pop(ctx);
+                await _deleteSupplierFromFirebase(supplierId);
+              },
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _deleteSupplierFromFirebase(String supplierId) async {
+    try {
+      await FirebaseFirestore.instance
+          .collection('suppliers')
+          .doc(supplierId)
+          .delete();
+      // Also remove from local hidden list if present
+      _deletedSuppliersBox?.delete(supplierId);
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text('تم حذف المورد نهائياً من قاعدة البيانات'),
+            backgroundColor: Colors.red,
+          ),
+        );
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('فشل الحذف: $e')),
+        );
+      }
+    }
+  }
+
   void _showSupplierOptionsSheet(
       String supplierId, String currentName) {
     showModalBottomSheet(
       context: context,
-      builder: (sheetContext) => SafeArea(
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            ListTile(
-              leading: const Icon(Icons.edit_outlined),
-              title: const Text('تغيير الاسم'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _showRenameSupplierDialog(supplierId, currentName);
-              },
-            ),
-            ListTile(
-              leading: const Icon(Icons.delete_outline, color: Colors.red),
-              title: const Text('حذف من القائمة'),
-              onTap: () {
-                Navigator.pop(sheetContext);
-                _showDeleteConfirmationDialog(supplierId);
-              },
-            ),
-          ],
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(16)),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: ui.TextDirection.rtl,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // Handle bar
+              Container(
+                margin: const EdgeInsets.only(top: 12, bottom: 4),
+                width: 40,
+                height: 4,
+                decoration: BoxDecoration(
+                  color: Colors.grey.shade300,
+                  borderRadius: BorderRadius.circular(2),
+                ),
+              ),
+              Padding(
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 16, vertical: 8),
+                child: Text(
+                  currentName,
+                  style: const TextStyle(
+                      fontSize: 16, fontWeight: FontWeight.bold),
+                  textAlign: TextAlign.center,
+                ),
+              ),
+              const Divider(height: 1),
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('تغيير الاسم'),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _showRenameSupplierDialog(supplierId, currentName);
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.visibility_off_outlined,
+                    color: Colors.orange),
+                title: const Text('إخفاء من القائمة'),
+                subtitle: const Text('يمكن الاسترجاع لاحقاً',
+                    style: TextStyle(fontSize: 11)),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _showDeleteConfirmationDialog(supplierId);
+                },
+              ),
+              ListTile(
+                leading:
+                    const Icon(Icons.delete_forever, color: Colors.red),
+                title: const Text(
+                  'حذف نهائي من قاعدة البيانات',
+                  style: TextStyle(color: Colors.red),
+                ),
+                subtitle: const Text('لا يمكن التراجع عن هذا الإجراء',
+                    style: TextStyle(fontSize: 11, color: Colors.red)),
+                onTap: () {
+                  Navigator.pop(sheetContext);
+                  _showFirebaseDeleteConfirmationDialog(
+                      supplierId, currentName);
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
         ),
       ),
     );
@@ -230,8 +381,7 @@ class _SupplierListPageState extends State<SupplierListPage> {
     );
   }
 
-  Future<void> _performSupplierRename(
-      String supplierId, String newName) async {
+  Future<void> _performSupplierRename(String supplierId, String newName) async {
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -313,8 +463,7 @@ class _SupplierListPageState extends State<SupplierListPage> {
             child: TextField(
               decoration: InputDecoration(
                 focusedBorder: OutlineInputBorder(
-                  borderSide:
-                      BorderSide(color: Colors.black.withOpacity(0.7)),
+                  borderSide: BorderSide(color: Colors.black.withOpacity(0.7)),
                 ),
                 filled: true,
                 fillColor: Colors.grey.withOpacity(0.1),
@@ -324,8 +473,7 @@ class _SupplierListPageState extends State<SupplierListPage> {
                   fontSize: 18,
                 ),
                 border: OutlineInputBorder(
-                  borderSide:
-                      BorderSide(color: Colors.black.withOpacity(0.7)),
+                  borderSide: BorderSide(color: Colors.black.withOpacity(0.7)),
                 ),
                 prefixIcon: const Icon(Icons.search),
               ),
@@ -359,8 +507,7 @@ class _SupplierListPageState extends State<SupplierListPage> {
                         return name.contains(_searchQuery.toLowerCase());
                       }).toList();
                 final visibleSuppliers = filteredSuppliers
-                    .where((s) =>
-                        !_deletedSuppliersBox!.containsKey(s.id))
+                    .where((s) => !_deletedSuppliersBox!.containsKey(s.id))
                     .toList();
 
                 if (visibleSuppliers.isEmpty) {
@@ -380,8 +527,7 @@ class _SupplierListPageState extends State<SupplierListPage> {
                     final supplier = visibleSuppliers[index];
                     final data = supplier.data() as Map<String, dynamic>;
                     final name = data['name']?.toString() ?? supplier.id;
-                    final balance =
-                        (data['totalBalance'] ?? 0.0).toDouble();
+                    final balance = (data['totalBalance'] ?? 0.0).toDouble();
                     final phone = data['phone']?.toString() ?? '';
 
                     return _SupplierInfoCard(
@@ -392,8 +538,8 @@ class _SupplierListPageState extends State<SupplierListPage> {
                         Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (context) => SupplierInvoicesPage(
-                                supplierId: supplier.id),
+                            builder: (context) =>
+                                SupplierInvoicesPage(supplierId: supplier.id),
                           ),
                         );
                       },

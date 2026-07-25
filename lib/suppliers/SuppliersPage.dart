@@ -84,9 +84,8 @@ class SuppliersPage extends StatelessWidget {
                           final opening =
                               double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
                           // Opening balance = amount we owe the supplier → له (positive).
-                          final totalBalance = opening == 0
-                              ? 0.0
-                              : opening.abs();
+                          final totalBalance =
+                              opening == 0 ? 0.0 : opening.abs();
                           final ref = await FirebaseFirestore.instance
                               .collection('suppliers')
                               .add({
@@ -142,8 +141,7 @@ class SuppliersPage extends StatelessWidget {
                           color: Colors.white,
                         ),
                       )
-                    : const Text('حفظ',
-                        style: TextStyle(color: Colors.white)),
+                    : const Text('حفظ', style: TextStyle(color: Colors.white)),
               ),
             ],
           ),
@@ -274,14 +272,13 @@ class SuppliersPage extends StatelessWidget {
               onTap: item.onTap,
               child: Container(
                 color: Colors.white,
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 20, vertical: 22),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 20, vertical: 22),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     item.customIcon ??
-                        Icon(item.icon,
-                            color: item.iconColor, size: 28),
+                        Icon(item.icon, color: item.iconColor, size: 28),
                     const SizedBox(width: 12),
                     Expanded(
                       child: Text(
@@ -387,8 +384,7 @@ class _SupplierOpeningBalancesPageState
     );
   }
 
-  Future<void> _generateVoucherPdf(
-      String direction, String reportTitle) async {
+  Future<void> _generateVoucherPdf(String direction, String reportTitle) async {
     // Ask for voucher number first
     final voucherCtrl = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -429,11 +425,9 @@ class _SupplierOpeningBalancesPageState
 
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
@@ -452,8 +446,7 @@ class _SupplierOpeningBalancesPageState
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-                content: Text(
-                    'لم يتم العثور على سند برقم $voucherNumber')),
+                content: Text('لم يتم العثور على سند برقم $voucherNumber')),
           );
         }
         return;
@@ -483,21 +476,21 @@ class _SupplierOpeningBalancesPageState
           pw.TableRow(
             children: [
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(english, style: s()),
               ),
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(value,
                     textDirection: pw.TextDirection.rtl,
                     textAlign: pw.TextAlign.center,
                     style: s(bold: true)),
               ),
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(arabic,
                     textDirection: pw.TextDirection.rtl,
                     textAlign: pw.TextAlign.right,
@@ -535,23 +528,21 @@ class _SupplierOpeningBalancesPageState
                 pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    pw.Text('#$vNum#',
-                        style: s(fontSize: 12)),
+                    pw.Text('#$vNum#', style: s(fontSize: 12)),
                     pw.Text(
                       reportTitle,
                       textDirection: pw.TextDirection.rtl,
                       style: s(bold: true, fontSize: 16),
                     ),
-                    pw.Text('ج.م',
-                        style: s(fontSize: 12)),
+                    pw.Text('ج.م', style: s(fontSize: 12)),
                   ],
                 ),
                 pw.SizedBox(height: 16),
 
                 // Receipt table
                 pw.Table(
-                  border: pw.TableBorder.all(
-                      color: PdfColors.black, width: 0.7),
+                  border:
+                      pw.TableBorder.all(color: PdfColors.black, width: 0.7),
                   columnWidths: {
                     0: const pw.FlexColumnWidth(2), // English label
                     1: const pw.FlexColumnWidth(3), // Value
@@ -560,8 +551,8 @@ class _SupplierOpeningBalancesPageState
                   children: [
                     row3('رقم السند', 'No.', vNum),
                     row3('التاريخ', 'Date', voucherDate),
-                    row3('تم تسليم السيد/الساده',
-                        'Pay To Mr/Mrs', supplierName),
+                    row3(
+                        'تم تسليم السيد/الساده', 'Pay To Mr/Mrs', supplierName),
                     row3('مبلغ وقدره', 'Amount',
                         'فقط ${amount.toStringAsFixed(2)} ج.م لا غير'),
                     row3('وذلك مقابل', 'For', description),
@@ -582,9 +573,7 @@ class _SupplierOpeningBalancesPageState
                             style: s(bold: true)),
                         pw.SizedBox(height: 30),
                         pw.Container(
-                            width: 120,
-                            height: 1,
-                            color: PdfColors.black),
+                            width: 120, height: 1, color: PdfColors.black),
                       ],
                     ),
                     pw.Column(
@@ -595,9 +584,7 @@ class _SupplierOpeningBalancesPageState
                             style: s(bold: true)),
                         pw.SizedBox(height: 30),
                         pw.Container(
-                            width: 120,
-                            height: 1,
-                            color: PdfColors.black),
+                            width: 120, height: 1, color: PdfColors.black),
                       ],
                     ),
                   ],
@@ -664,11 +651,9 @@ class _SupplierOpeningBalancesPageState
   Future<void> _generatePdf() async {
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
@@ -684,8 +669,8 @@ class _SupplierOpeningBalancesPageState
       for (final doc in snap.docs) {
         final name = (doc['name'] ?? '').toString();
         final balance = (doc['totalBalance'] ?? 0.0).toDouble();
-        final lahu = balance < 0 ? balance.abs() : 0.0;
-        final alayhi = balance > 0 ? balance : 0.0;
+        final lahu = balance > 0 ? balance : 0.0;
+        final alayhi = balance < 0 ? balance.abs() : 0.0;
         rows.add({'name': name, 'lahu': lahu, 'alayhi': alayhi});
       }
 
@@ -705,8 +690,7 @@ class _SupplierOpeningBalancesPageState
           );
 
       pw.Widget headerCell(String text) => pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
             child: pw.Text(
               text,
               textDirection: pw.TextDirection.rtl,
@@ -715,18 +699,15 @@ class _SupplierOpeningBalancesPageState
             ),
           );
 
-      pw.Widget dataCell(String text,
-              {bool red = false, bool bold = false}) =>
+      pw.Widget dataCell(String text, {bool red = false, bool bold = false}) =>
           pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
             child: pw.Text(
               text,
               textDirection: pw.TextDirection.rtl,
               textAlign: pw.TextAlign.center,
               style: cell(
-                  bold: bold,
-                  color: red ? PdfColors.red : PdfColors.black),
+                  bold: bold, color: red ? PdfColors.red : PdfColors.black),
             ),
           );
 
@@ -749,7 +730,6 @@ class _SupplierOpeningBalancesPageState
                         pw.Text('Time: $timeStr', style: cell(fontSize: 9)),
                       ],
                     ),
-                
                   ],
                 ),
                 pw.SizedBox(height: 16),
@@ -762,8 +742,8 @@ class _SupplierOpeningBalancesPageState
                 ),
                 pw.SizedBox(height: 12),
                 pw.Table(
-                  border: pw.TableBorder.all(
-                      color: PdfColors.grey400, width: 0.5),
+                  border:
+                      pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                   columnWidths: {
                     0: const pw.FlexColumnWidth(1),
                     1: const pw.FlexColumnWidth(3),
@@ -772,8 +752,8 @@ class _SupplierOpeningBalancesPageState
                   },
                   children: [
                     pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey200),
+                      decoration:
+                          const pw.BoxDecoration(color: PdfColors.grey200),
                       children: [
                         headerCell('#'),
                         headerCell('اسم المورد'),
@@ -784,32 +764,27 @@ class _SupplierOpeningBalancesPageState
                     for (int i = 0; i < rows.length; i++)
                       pw.TableRow(
                         decoration: pw.BoxDecoration(
-                          color: i.isEven
-                              ? PdfColors.white
-                              : PdfColors.grey50,
+                          color: i.isEven ? PdfColors.white : PdfColors.grey50,
                         ),
                         children: [
                           dataCell('${i + 1}'),
                           dataCell(rows[i]['name'] as String),
                           dataCell(
-                              (rows[i]['lahu'] as double)
-                                  .toStringAsFixed(2),
+                              (rows[i]['lahu'] as double).toStringAsFixed(2),
                               red: (rows[i]['lahu'] as double) > 0),
                           dataCell(
-                              (rows[i]['alayhi'] as double)
-                                  .toStringAsFixed(2)),
+                              (rows[i]['alayhi'] as double).toStringAsFixed(2)),
                         ],
                       ),
                     pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey100),
+                      decoration:
+                          const pw.BoxDecoration(color: PdfColors.grey100),
                       children: [
                         dataCell(''),
                         dataCell('الإجمالي', bold: true, red: true),
                         dataCell(grandLahu.toStringAsFixed(2),
                             bold: true, red: true),
-                        dataCell(grandAlayhi.toStringAsFixed(2),
-                            bold: true),
+                        dataCell(grandAlayhi.toStringAsFixed(2), bold: true),
                       ],
                     ),
                   ],
@@ -821,8 +796,7 @@ class _SupplierOpeningBalancesPageState
       );
 
       final dir = await getTemporaryDirectory();
-      final fileName =
-          'opening_balances_${dateStr.replaceAll('/', '-')}.pdf';
+      final fileName = 'opening_balances_${dateStr.replaceAll('/', '-')}.pdf';
       final file = File('${dir.path}/$fileName');
       await file.writeAsBytes(await pdf.save());
 
@@ -881,8 +855,9 @@ class _SupplierOpeningBalancesPageState
         .orderBy('voucherNumber', descending: true)
         .limit(1)
         .get();
-    final nextVoucher =
-        voucherSnap.docs.isNotEmpty ? (voucherSnap.docs.first['voucherNumber'] as int) + 1 : 1;
+    final nextVoucher = voucherSnap.docs.isNotEmpty
+        ? (voucherSnap.docs.first['voucherNumber'] as int) + 1
+        : 1;
 
     String direction = 'عليه'; // 'له' or 'عليه'
     String paymentMethod = 'نقداً'; // 'نقداً', 'بطاقة', 'شيك'
@@ -954,8 +929,7 @@ class _SupplierOpeningBalancesPageState
                                     ? null
                                     : (v) => setDlg(() => direction = v!),
                               ),
-                              const Text('له',
-                                  style: TextStyle(fontSize: 15)),
+                              const Text('له', style: TextStyle(fontSize: 15)),
                             ]),
                           ],
                         ),
@@ -982,8 +956,7 @@ class _SupplierOpeningBalancesPageState
                           const SizedBox(width: 12),
                           const Text('رقم السند',
                               style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold)),
+                                  fontSize: 15, fontWeight: FontWeight.bold)),
                         ],
                       ),
                       const SizedBox(height: 10),
@@ -1098,8 +1071,7 @@ class _SupplierOpeningBalancesPageState
                             ]),
                             const Text('طريقة الدفع',
                                 style: TextStyle(
-                                    fontSize: 13,
-                                    fontWeight: FontWeight.bold)),
+                                    fontSize: 13, fontWeight: FontWeight.bold)),
                           ],
                         ),
                       ),
@@ -1135,8 +1107,7 @@ class _SupplierOpeningBalancesPageState
                           const SizedBox(width: 12),
                           const Text('المبلغ',
                               style: TextStyle(
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold)),
+                                  fontSize: 15, fontWeight: FontWeight.bold)),
                         ],
                       ),
                       const SizedBox(height: 20),
@@ -1146,7 +1117,8 @@ class _SupplierOpeningBalancesPageState
                         mainAxisAlignment: MainAxisAlignment.spaceAround,
                         children: [
                           TextButton(
-                            onPressed: isSaving ? null : () => Navigator.pop(ctx),
+                            onPressed:
+                                isSaving ? null : () => Navigator.pop(ctx),
                             child: const Text('تراجع',
                                 style: TextStyle(
                                     color: Colors.pink, fontSize: 15)),
@@ -1162,8 +1134,10 @@ class _SupplierOpeningBalancesPageState
                                     setDlg(() => isSaving = true);
 
                                     try {
-                                      final isAddition = direction == 'عليه';
-                                      double delta = isAddition ? amount : -amount;
+                                      final isOwedToSupplier =
+                                          direction == 'له';
+                                      double delta =
+                                          isOwedToSupplier ? amount : -amount;
 
                                       // Get current supplier balance
                                       DocumentSnapshot supplierDoc =
@@ -1205,7 +1179,8 @@ class _SupplierOpeningBalancesPageState
                                         'description': descCtrl.text,
                                         'date': selectedDate,
                                         'paymentMethod': paymentMethod,
-                                        'timestamp': FieldValue.serverTimestamp(),
+                                        'timestamp':
+                                            FieldValue.serverTimestamp(),
                                       });
 
                                       // Construct notes for the balance history
@@ -1246,14 +1221,14 @@ class _SupplierOpeningBalancesPageState
                                               (boxSnapshot['value'] ?? 0.0)
                                                   .toDouble();
                                           transaction.update(boxDocRef, {
-                                            'value': isAddition
+                                            'value': isOwedToSupplier
                                                 ? currentBoxValue - amount
                                                 : currentBoxValue + amount
                                           });
                                         } else {
                                           transaction.set(boxDocRef, {
                                             'value':
-                                                isAddition ? -amount : amount
+                                                isOwedToSupplier ? -amount : amount
                                           });
                                         }
                                       });
@@ -1264,7 +1239,7 @@ class _SupplierOpeningBalancesPageState
                                           .add({
                                         'date': FieldValue.serverTimestamp(),
                                         'value': amount,
-                                        'type': isAddition
+                                        'type': isOwedToSupplier
                                             ? 'decrement'
                                             : 'addition',
                                         'name': supplierName,
@@ -1277,14 +1252,17 @@ class _SupplierOpeningBalancesPageState
 
                                       if (ctx.mounted) Navigator.pop(ctx);
                                       if (context.mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
                                           const SnackBar(
-                                              content: Text('تم إضافة المبلغ بنجاح')),
+                                              content: Text(
+                                                  'تم إضافة المبلغ بنجاح')),
                                         );
                                       }
                                     } catch (e) {
                                       if (context.mounted) {
-                                        ScaffoldMessenger.of(context).showSnackBar(
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(
                                           SnackBar(
                                               content: Text(
                                                   'حدث خطأ أثناء الإضافة: $e')),
@@ -1334,17 +1312,14 @@ class _SupplierOpeningBalancesPageState
           title: const Text(
             'الأرصدة الافتتاحية والمبالغ النقدية للموردين',
             style: TextStyle(
-                color: Colors.white,
-                fontWeight: FontWeight.bold,
-                fontSize: 15),
+                color: Colors.white, fontWeight: FontWeight.bold, fontSize: 15),
           ),
         ),
         body: Column(
           children: [
             // Search + تقرير
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
               child: Row(
                 children: [
                   Expanded(
@@ -1357,8 +1332,7 @@ class _SupplierOpeningBalancesPageState
                           ? const SizedBox(
                               width: 18,
                               height: 18,
-                              child: CircularProgressIndicator(
-                                  strokeWidth: 2))
+                              child: CircularProgressIndicator(strokeWidth: 2))
                           : const Text('تقرير'),
                     ),
                   ),
@@ -1370,8 +1344,8 @@ class _SupplierOpeningBalancesPageState
                       decoration: const InputDecoration(
                         hintText: 'بحث',
                         border: OutlineInputBorder(),
-                        contentPadding: EdgeInsets.symmetric(
-                            vertical: 8, horizontal: 12),
+                        contentPadding:
+                            EdgeInsets.symmetric(vertical: 8, horizontal: 12),
                       ),
                       onChanged: (v) => setState(() => _search = v),
                     ),
@@ -1383,8 +1357,7 @@ class _SupplierOpeningBalancesPageState
             // Table header
             Container(
               color: Colors.grey.shade200,
-              padding: const EdgeInsets.symmetric(
-                  horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: const Row(
                 children: [
                   Expanded(
@@ -1424,13 +1397,11 @@ class _SupplierOpeningBalancesPageState
 
                   return ListView.separated(
                     itemCount: suppliers.length,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 1),
+                    separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final doc = suppliers[index];
                       final name = (doc['name'] ?? '').toString();
-                      final balance =
-                          (doc['totalBalance'] ?? 0.0).toDouble();
+                      final balance = (doc['totalBalance'] ?? 0.0).toDouble();
                       final lahu = balance < 0 ? balance.abs() : 0.0;
                       final alayhi = balance > 0 ? balance : 0.0;
 
@@ -1446,8 +1417,8 @@ class _SupplierOpeningBalancesPageState
                               Expanded(
                                 child: Container(
                                   alignment: Alignment.center,
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 6),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 6),
                                   color: Colors.grey.shade200,
                                   child: Text(
                                     alayhi.toStringAsFixed(2),
@@ -1461,8 +1432,8 @@ class _SupplierOpeningBalancesPageState
                               Expanded(
                                 child: Container(
                                   alignment: Alignment.center,
-                                  padding: const EdgeInsets.symmetric(
-                                      vertical: 6),
+                                  padding:
+                                      const EdgeInsets.symmetric(vertical: 6),
                                   color: Colors.brown.shade100,
                                   child: Text(
                                     lahu.toStringAsFixed(2),
@@ -1476,8 +1447,7 @@ class _SupplierOpeningBalancesPageState
                               Expanded(
                                 flex: 2,
                                 child: Column(
-                                  crossAxisAlignment:
-                                      CrossAxisAlignment.end,
+                                  crossAxisAlignment: CrossAxisAlignment.end,
                                   children: [
                                     Text(name,
                                         textAlign: TextAlign.right,
@@ -1522,8 +1492,8 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
   String _search = '';
   bool _generating = false;
 
-  void _showReportChoiceDialog(List<MapEntry<String, double>> allEntries,
-      double grandTotal) {
+  void _showReportChoiceDialog(
+      List<MapEntry<String, double>> allEntries, double grandTotal) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -1545,8 +1515,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
               ),
               const Divider(),
               ListTile(
-                leading:
-                    const Icon(Icons.picture_as_pdf, color: Colors.orange),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.orange),
                 title: const Text('تقرير المبالغ المتبقية من الفواتير الآجل'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -1554,8 +1523,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.picture_as_pdf, color: Colors.red),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.red),
                 title: const Text('تقرير سند الصرف'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -1563,8 +1531,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.picture_as_pdf, color: Colors.green),
+                leading: const Icon(Icons.picture_as_pdf, color: Colors.green),
                 title: const Text('تقرير سند القبض'),
                 onTap: () {
                   Navigator.pop(ctx);
@@ -1578,8 +1545,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
     );
   }
 
-  Future<void> _generateVoucherPdf(
-      String direction, String reportTitle) async {
+  Future<void> _generateVoucherPdf(String direction, String reportTitle) async {
     // Ask for voucher number first
     final voucherCtrl = TextEditingController();
     final confirmed = await showDialog<bool>(
@@ -1620,11 +1586,9 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
 
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
@@ -1643,8 +1607,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
-                content: Text(
-                    'لم يتم العثور على سند برقم $voucherNumber')),
+                content: Text('لم يتم العثور على سند برقم $voucherNumber')),
           );
         }
         return;
@@ -1674,21 +1637,21 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
           pw.TableRow(
             children: [
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(english, style: s()),
               ),
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(value,
                     textDirection: pw.TextDirection.rtl,
                     textAlign: pw.TextAlign.center,
                     style: s(bold: true)),
               ),
               pw.Padding(
-                padding: const pw.EdgeInsets.symmetric(
-                    horizontal: 6, vertical: 7),
+                padding:
+                    const pw.EdgeInsets.symmetric(horizontal: 6, vertical: 7),
                 child: pw.Text(arabic,
                     textDirection: pw.TextDirection.rtl,
                     textAlign: pw.TextAlign.right,
@@ -1739,8 +1702,8 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
 
                 // Receipt table
                 pw.Table(
-                  border: pw.TableBorder.all(
-                      color: PdfColors.black, width: 0.7),
+                  border:
+                      pw.TableBorder.all(color: PdfColors.black, width: 0.7),
                   columnWidths: {
                     0: const pw.FlexColumnWidth(2), // English label
                     1: const pw.FlexColumnWidth(3), // Value
@@ -1749,8 +1712,8 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                   children: [
                     row3('رقم السند', 'No.', vNum),
                     row3('التاريخ', 'Date', voucherDate),
-                    row3('تم تسليم السيد/الساده',
-                        'Pay To Mr/Mrs', supplierName),
+                    row3(
+                        'تم تسليم السيد/الساده', 'Pay To Mr/Mrs', supplierName),
                     row3('مبلغ وقدره', 'Amount',
                         'فقط ${amount.toStringAsFixed(2)} ج.م لا غير'),
                     row3('وذلك مقابل', 'For', description),
@@ -1771,9 +1734,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                             style: s(bold: true)),
                         pw.SizedBox(height: 30),
                         pw.Container(
-                            width: 120,
-                            height: 1,
-                            color: PdfColors.black),
+                            width: 120, height: 1, color: PdfColors.black),
                       ],
                     ),
                     pw.Column(
@@ -1784,9 +1745,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                             style: s(bold: true)),
                         pw.SizedBox(height: 30),
                         pw.Container(
-                            width: 120,
-                            height: 1,
-                            color: PdfColors.black),
+                            width: 120, height: 1, color: PdfColors.black),
                       ],
                     ),
                   ],
@@ -1873,11 +1832,9 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
       List<MapEntry<String, double>> entries, double grandTotal) async {
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
@@ -1895,8 +1852,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
           );
 
       pw.Widget headerCell(String text) => pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
             child: pw.Text(
               text,
               textDirection: pw.TextDirection.rtl,
@@ -1905,18 +1861,15 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
             ),
           );
 
-      pw.Widget dataCell(String text,
-              {bool red = false, bool bold = false}) =>
+      pw.Widget dataCell(String text, {bool red = false, bool bold = false}) =>
           pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
             child: pw.Text(
               text,
               textDirection: pw.TextDirection.rtl,
               textAlign: pw.TextAlign.center,
               style: cell(
-                  bold: bold,
-                  color: red ? PdfColors.red : PdfColors.black),
+                  bold: bold, color: red ? PdfColors.red : PdfColors.black),
             ),
           );
 
@@ -1935,17 +1888,13 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                     pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
-                        pw.Text('Date: $dateStr',
-                            style: cell(fontSize: 9)),
-                        pw.Text('Time: $timeStr',
-                            style: cell(fontSize: 9)),
+                        pw.Text('Date: $dateStr', style: cell(fontSize: 9)),
+                        pw.Text('Time: $timeStr', style: cell(fontSize: 9)),
                       ],
                     ),
                     pw.Text('MicroPOS',
                         style: cell(
-                            bold: true,
-                            fontSize: 12,
-                            color: PdfColors.blue)),
+                            bold: true, fontSize: 12, color: PdfColors.blue)),
                   ],
                 ),
                 pw.SizedBox(height: 16),
@@ -1958,8 +1907,8 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                 ),
                 pw.SizedBox(height: 12),
                 pw.Table(
-                  border: pw.TableBorder.all(
-                      color: PdfColors.grey400, width: 0.5),
+                  border:
+                      pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                   columnWidths: {
                     0: const pw.FlexColumnWidth(1),
                     1: const pw.FlexColumnWidth(3),
@@ -1967,8 +1916,8 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                   },
                   children: [
                     pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey200),
+                      decoration:
+                          const pw.BoxDecoration(color: PdfColors.grey200),
                       children: [
                         headerCell('#'),
                         headerCell('اسم المورد'),
@@ -1978,21 +1927,18 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                     for (int i = 0; i < entries.length; i++)
                       pw.TableRow(
                         decoration: pw.BoxDecoration(
-                          color: i.isEven
-                              ? PdfColors.white
-                              : PdfColors.grey50,
+                          color: i.isEven ? PdfColors.white : PdfColors.grey50,
                         ),
                         children: [
                           dataCell('${i + 1}'),
                           dataCell(entries[i].key),
-                          dataCell(
-                              entries[i].value.toStringAsFixed(2),
+                          dataCell(entries[i].value.toStringAsFixed(2),
                               red: true),
                         ],
                       ),
                     pw.TableRow(
-                      decoration: const pw.BoxDecoration(
-                          color: PdfColors.grey100),
+                      decoration:
+                          const pw.BoxDecoration(color: PdfColors.grey100),
                       children: [
                         dataCell(''),
                         dataCell('الإجمالي', bold: true, red: true),
@@ -2084,8 +2030,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
             }
             final invoices = snapshot.data!.docs;
             if (invoices.isEmpty) {
-              return const Center(
-                  child: Text('لا توجد فواتير آجلة متبقية'));
+              return const Center(child: Text('لا توجد فواتير آجلة متبقية'));
             }
 
             // Group by supplierName
@@ -2107,17 +2052,16 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
             final filtered = _search.isEmpty
                 ? allEntries
                 : allEntries
-                    .where((e) => e.key
-                        .toLowerCase()
-                        .contains(_search.toLowerCase()))
+                    .where((e) =>
+                        e.key.toLowerCase().contains(_search.toLowerCase()))
                     .toList();
 
             return Column(
               children: [
                 // Search + تقرير row
                 Padding(
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 8, vertical: 8),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 8, vertical: 8),
                   child: Row(
                     children: [
                       Expanded(
@@ -2133,8 +2077,8 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                               ? const SizedBox(
                                   width: 16,
                                   height: 16,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2))
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2))
                               : const Icon(Icons.picture_as_pdf, size: 18),
                           label: const Text('تقرير'),
                         ),
@@ -2151,8 +2095,7 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                             contentPadding: EdgeInsets.symmetric(
                                 vertical: 8, horizontal: 12),
                           ),
-                          onChanged: (v) =>
-                              setState(() => _search = v),
+                          onChanged: (v) => setState(() => _search = v),
                         ),
                       ),
                     ],
@@ -2162,8 +2105,8 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                 // Grand total banner
                 Container(
                   color: Colors.orange.shade100,
-                  padding: const EdgeInsets.symmetric(
-                      horizontal: 16, vertical: 10),
+                  padding:
+                      const EdgeInsets.symmetric(horizontal: 16, vertical: 10),
                   child: Row(
                     mainAxisAlignment: MainAxisAlignment.spaceBetween,
                     children: [
@@ -2183,13 +2126,12 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
                 Expanded(
                   child: ListView.separated(
                     itemCount: filtered.length,
-                    separatorBuilder: (_, __) =>
-                        const Divider(height: 1),
+                    separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
                       final e = filtered[index];
                       return ListTile(
-                        onTap: () => _navigateToSupplierInvoices(
-                            context, e.key),
+                        onTap: () =>
+                            _navigateToSupplierInvoices(context, e.key),
                         title: Text(
                           e.key,
                           textAlign: TextAlign.right,
@@ -2238,11 +2180,9 @@ class _SupplierRemainingReportPageState
   ) async {
     setState(() => _generating = true);
     try {
-      final amiriRegularData =
-          await rootBundle.load('fonts/Amiri-Regular.ttf');
+      final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
       final amiriBoldData = await rootBundle.load('fonts/Amiri-Bold.ttf');
-      final amiriRegular =
-          pw.Font.ttf(amiriRegularData.buffer.asByteData());
+      final amiriRegular = pw.Font.ttf(amiriRegularData.buffer.asByteData());
       final amiriBold = pw.Font.ttf(amiriBoldData.buffer.asByteData());
 
       final now = DateTime.now();
@@ -2284,8 +2224,7 @@ class _SupplierRemainingReportPageState
           );
 
       pw.Widget headerCell(String text) => pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 6),
             child: pw.Text(
               text,
               textDirection: pw.TextDirection.rtl,
@@ -2294,18 +2233,15 @@ class _SupplierRemainingReportPageState
             ),
           );
 
-      pw.Widget dataCell(String text,
-              {bool red = false, bool bold = false}) =>
+      pw.Widget dataCell(String text, {bool red = false, bool bold = false}) =>
           pw.Padding(
-            padding:
-                const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
+            padding: const pw.EdgeInsets.symmetric(horizontal: 4, vertical: 5),
             child: pw.Text(
               text,
               textDirection: pw.TextDirection.rtl,
               textAlign: pw.TextAlign.center,
               style: cell(
-                  bold: bold,
-                  color: red ? PdfColors.red : PdfColors.black),
+                  bold: bold, color: red ? PdfColors.red : PdfColors.black),
             ),
           );
 
@@ -2327,10 +2263,8 @@ class _SupplierRemainingReportPageState
                     pw.Column(
                       crossAxisAlignment: pw.CrossAxisAlignment.start,
                       children: [
-                        pw.Text('Date: $dateStr',
-                            style: cell(fontSize: 9)),
-                        pw.Text('Time: $timeStr',
-                            style: cell(fontSize: 9)),
+                        pw.Text('Date: $dateStr', style: cell(fontSize: 9)),
+                        pw.Text('Time: $timeStr', style: cell(fontSize: 9)),
                       ],
                     ),
                     // Right: brand
@@ -2348,14 +2282,14 @@ class _SupplierRemainingReportPageState
                 pw.SizedBox(height: 12),
                 // ── Table ──
                 pw.Table(
-                  border: pw.TableBorder.all(
-                      color: PdfColors.grey400, width: 0.5),
+                  border:
+                      pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                   columnWidths: {
-                    0: const pw.FlexColumnWidth(1),   // #
-                    1: const pw.FlexColumnWidth(3),   // الاسم
-                    2: const pw.FlexColumnWidth(3),   // الباقي من الفواتير
-                    3: const pw.FlexColumnWidth(3),   // الباقي من الرصيد
-                    4: const pw.FlexColumnWidth(2),   // الإجمالي
+                    0: const pw.FlexColumnWidth(1), // #
+                    1: const pw.FlexColumnWidth(3), // الاسم
+                    2: const pw.FlexColumnWidth(3), // الباقي من الفواتير
+                    3: const pw.FlexColumnWidth(3), // الباقي من الرصيد
+                    4: const pw.FlexColumnWidth(2), // الإجمالي
                   },
                   children: [
                     // Header row
@@ -2380,8 +2314,8 @@ class _SupplierRemainingReportPageState
                               .toStringAsFixed(2)),
                           dataCell((rows[i]['openCash'] as double)
                               .toStringAsFixed(2)),
-                          dataCell((rows[i]['total'] as double)
-                              .toStringAsFixed(2)),
+                          dataCell(
+                              (rows[i]['total'] as double).toStringAsFixed(2)),
                         ],
                       ),
                     // Totals row
@@ -2390,8 +2324,7 @@ class _SupplierRemainingReportPageState
                           const pw.BoxDecoration(color: PdfColors.grey100),
                       children: [
                         dataCell(''),
-                        dataCell('الإجمالي',
-                            bold: true, red: true),
+                        dataCell('الإجمالي', bold: true, red: true),
                         dataCell(grandInvoice.toStringAsFixed(2),
                             bold: true, red: true),
                         dataCell(grandOpenCash.toStringAsFixed(2),
@@ -2409,9 +2342,8 @@ class _SupplierRemainingReportPageState
       );
 
       final dir = await getTemporaryDirectory();
-      final file = File(
-          '${dir.path}/supplier_remaining_report_$dateStr.pdf'
-              .replaceAll('/', '-'));
+      final file = File('${dir.path}/supplier_remaining_report_$dateStr.pdf'
+          .replaceAll('/', '-'));
       await file.writeAsBytes(await pdf.save());
 
       await Share.shareXFiles(
@@ -2443,9 +2375,8 @@ class _SupplierRemainingReportPageState
           ),
         ),
         body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('suppliers')
-              .snapshots(),
+          stream:
+              FirebaseFirestore.instance.collection('suppliers').snapshots(),
           builder: (context, suppSnap) {
             return StreamBuilder<QuerySnapshot>(
               stream: FirebaseFirestore.instance
@@ -2461,8 +2392,7 @@ class _SupplierRemainingReportPageState
                 final Map<String, double> invoiceBalances = {};
                 for (final doc in invSnap.data!.docs) {
                   final data = doc.data() as Map<String, dynamic>;
-                  final sName =
-                      (data['supplierName'] ?? '').toString();
+                  final sName = (data['supplierName'] ?? '').toString();
                   final bal = (data['balance'] ?? 0.0).toDouble();
                   invoiceBalances[sName] =
                       (invoiceBalances[sName] ?? 0.0) + bal;
@@ -2480,9 +2410,7 @@ class _SupplierRemainingReportPageState
                 }
 
                 double grandTotal = suppliers.fold(
-                    0.0,
-                    (s, d) =>
-                        s + (d['totalBalance'] ?? 0.0).toDouble());
+                    0.0, (s, d) => s + (d['totalBalance'] ?? 0.0).toDouble());
 
                 return Stack(
                   children: [
@@ -2493,8 +2421,7 @@ class _SupplierRemainingReportPageState
                           padding: const EdgeInsets.symmetric(
                               horizontal: 16, vertical: 10),
                           child: Row(
-                            mainAxisAlignment:
-                                MainAxisAlignment.spaceBetween,
+                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
                             children: [
                               Text(grandTotal.toStringAsFixed(2),
                                   style: const TextStyle(
@@ -2513,8 +2440,8 @@ class _SupplierRemainingReportPageState
                             itemCount: suppliers.length,
                             itemBuilder: (context, index) {
                               final doc = suppliers[index];
-                              final balance = (doc['totalBalance'] ?? 0.0)
-                                  .toDouble();
+                              final balance =
+                                  (doc['totalBalance'] ?? 0.0).toDouble();
                               return ListTile(
                                 onTap: () => Navigator.push(
                                   context,
@@ -2530,9 +2457,8 @@ class _SupplierRemainingReportPageState
                                 trailing: Text(
                                   balance.toStringAsFixed(2),
                                   style: TextStyle(
-                                    color: balance > 0
-                                        ? Colors.red
-                                        : Colors.green,
+                                    color:
+                                        balance > 0 ? Colors.red : Colors.green,
                                     fontWeight: FontWeight.bold,
                                     fontSize: 15,
                                   ),
@@ -2546,8 +2472,7 @@ class _SupplierRemainingReportPageState
                     if (_generating)
                       Container(
                         color: Colors.black38,
-                        child: const Center(
-                            child: CircularProgressIndicator()),
+                        child: const Center(child: CircularProgressIndicator()),
                       ),
                   ],
                 );
@@ -2555,7 +2480,6 @@ class _SupplierRemainingReportPageState
             );
           },
         ),
-        
       ),
     );
   }
@@ -2590,27 +2514,23 @@ class _SupplierBalanceReportPage extends StatelessWidget {
             }
             final suppliers = snapshot.data!.docs;
             if (suppliers.isEmpty) {
-              return const Center(
-                  child: Text('لا يوجد موردين لديهم أرصدة'));
+              return const Center(child: Text('لا يوجد موردين لديهم أرصدة'));
             }
             return ListView.builder(
               itemCount: suppliers.length,
               itemBuilder: (context, index) {
                 final doc = suppliers[index];
-                final balance =
-                    (doc['totalBalance'] ?? 0.0).toDouble();
+                final balance = (doc['totalBalance'] ?? 0.0).toDouble();
                 return ListTile(
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) =>
-                          SupplierInvoicesPage(supplierId: doc.id),
+                      builder: (_) => SupplierInvoicesPage(supplierId: doc.id),
                     ),
                   ),
                   title: Text(doc['name'] ?? '',
                       textAlign: TextAlign.right,
-                      style:
-                          const TextStyle(fontWeight: FontWeight.bold)),
+                      style: const TextStyle(fontWeight: FontWeight.bold)),
                   trailing: Text(
                     balance.toStringAsFixed(2),
                     style: const TextStyle(
@@ -2638,8 +2558,7 @@ class _SupplierBalanceCheckPage extends StatefulWidget {
       _SupplierBalanceCheckPageState();
 }
 
-class _SupplierBalanceCheckPageState
-    extends State<_SupplierBalanceCheckPage> {
+class _SupplierBalanceCheckPageState extends State<_SupplierBalanceCheckPage> {
   String _search = '';
 
   @override
@@ -2658,8 +2577,7 @@ class _SupplierBalanceCheckPageState
         body: Column(
           children: [
             Padding(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
               child: TextField(
                 textAlign: TextAlign.right,
                 decoration: const InputDecoration(
@@ -2677,8 +2595,7 @@ class _SupplierBalanceCheckPageState
                     .snapshots(),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) {
-                    return const Center(
-                        child: CircularProgressIndicator());
+                    return const Center(child: CircularProgressIndicator());
                   }
                   final all = snapshot.data!.docs.where((d) {
                     if (_search.isEmpty) return true;
@@ -2692,20 +2609,19 @@ class _SupplierBalanceCheckPageState
                     itemCount: all.length,
                     itemBuilder: (context, index) {
                       final doc = all[index];
-                      final balance =
-                          (doc['totalBalance'] ?? 0.0).toDouble();
+                      final balance = (doc['totalBalance'] ?? 0.0).toDouble();
                       return ListTile(
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(
-                            builder: (_) => SupplierInvoicesPage(
-                                supplierId: doc.id),
+                            builder: (_) =>
+                                SupplierInvoicesPage(supplierId: doc.id),
                           ),
                         ),
                         title: Text(doc['name'] ?? '',
                             textAlign: TextAlign.right,
-                            style: const TextStyle(
-                                fontWeight: FontWeight.bold)),
+                            style:
+                                const TextStyle(fontWeight: FontWeight.bold)),
                         trailing: Text(
                           balance.toStringAsFixed(2),
                           style: TextStyle(

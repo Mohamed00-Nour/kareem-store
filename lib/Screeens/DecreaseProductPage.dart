@@ -693,7 +693,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     super.initState();
     _fetchProducts();
     _fetchClients();
-    if (widget.invoiceToEdit != null && !widget.isReturnInvoice) {
+    if (widget.invoiceToEdit != null) {
       _applyInvoiceToEdit(widget.invoiceToEdit!);
     } else {
       _selectedDate = DateTime.now();
