@@ -54,6 +54,24 @@ bool invoiceIsSupplierPurchase(Map<String, dynamic> invoice) {
 double invoiceUnpaidAmount(Map<String, dynamic> invoice) {
   return invoiceNum(invoice['totalSum']) - invoiceNum(invoice['paidAmount']);
 }
+
+/// Resolves invoice discount: uses stored [invoiceDiscount] if > 0,
+/// otherwise calculates difference between sum of product totals and [totalSum].
+double invoiceResolveDiscount(Map<String, dynamic> invoice) {
+  final stored = invoiceNum(invoice['invoiceDiscount']);
+  if (stored > 0) return stored;
+  final totalSum = invoiceNum(invoice['totalSum']);
+  final products = invoice['products'] as List<dynamic>? ?? [];
+  var productsSum = 0.0;
+  for (final item in products) {
+    if (item is! Map) continue;
+    final itemTotal = invoiceNum(item['total'] ?? item['totalCost']);
+    productsSum += itemTotal;
+  }
+  final diff = productsSum - totalSum;
+  if (diff > 0.01) return diff;
+  return 0.0;
+}
 /// Synced client total owed — same [balance] on all invoices (المتبقي عليكم).
 double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
   if (invoice.containsKey('currentClientBalance') && invoice['currentClientBalance'] != null) {

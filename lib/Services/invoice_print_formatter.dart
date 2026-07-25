@@ -218,9 +218,9 @@ class InvoicePrintFormatter {
     final balanceLabel = isBuying ? 'الرصيد الحالي (للمورد)' : 'الرصيد الحالي (عليكم)';
 
     line(_summaryRow(cols.width, labels.previousBalance, previous));
-    line(_summaryRow(cols.width, 'إجمالي ف.', totalSum));
+    line(_summaryRow(cols.width, 'إجمالي الفاتورة', totalSum));
     if (invoiceDiscount > 0) {
-      line(_summaryRow(cols.width, 'خصم الفاتورة', invoiceDiscount));
+      line(_summaryRow(cols.width, 'الخصم', invoiceDiscount));
     }
     line(_summaryRow(cols.width, labels.paid, paid));
     line(_summaryRow(cols.width, 'المتبقي من الفاتورة', totalSum - paid));
@@ -367,12 +367,12 @@ class InvoicePrintFormatter {
     final balance = isBuying
         ? invoiceSupplierRemainingOwed(invoice)
         : invoiceClientRemainingOwed(invoice);
-    final balanceLabel = isBuying ? 'الرصيد الحالي (للمورد)' : 'الرصيد الحالي (عليكم)';
+    final balanceLabel = isBuying ? 'الرصيد الحالي للمورد' : 'المتبقي عليكم';
 
     final summaryTable = <List<String>>[
       [_formatMoney(previous), labels.previousBalance],
-      [_formatMoney(totalSum), 'إجمالي ف.'],
-      if (invoiceDiscount > 0) [_formatMoney(invoiceDiscount), 'خصم الفاتورة'],
+      [_formatMoney(totalSum), 'إجمالي الفاتورة'],
+      if (invoiceDiscount > 0) [_formatMoney(invoiceDiscount), 'الخصم'],
       [_formatMoney(paid), labels.paid],
       [_formatMoney(totalSum - paid), 'المتبقي من الفاتورة'],
       [_formatMoney(balance), balanceLabel],

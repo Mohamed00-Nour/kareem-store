@@ -2,7 +2,6 @@ import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
-import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
@@ -48,7 +47,7 @@ class SalesInvoicePdfService {
         List<Map<String, dynamic>>.from(invoice['products'] ?? []);
     final totalSum = (invoice['totalSum'] as num?)?.toDouble() ?? 0.0;
     final paid = (invoice['paidAmount'] as num?)?.toDouble() ?? 0.0;
-    final discount = (invoice['invoiceDiscount'] as num?)?.toDouble() ?? 0.0;
+    final discount = invoiceResolveDiscount(invoice);
     final previous = invoiceDynamicPreviousBalance(invoice);
     final balance = invoiceClientRemainingOwed(invoice);
     final when = _parseDateTime(invoice['date']);
@@ -167,12 +166,12 @@ class SalesInvoicePdfService {
               pw.SizedBox(height: 12),
               rtl(
                   '${settings.labels.previousBalance} : ${invoiceAmount(previous)}'),
-              rtl('إجمالي ف. : ${invoiceAmount(totalSum)}', bold: true),
+              rtl('إجمالي الفاتورة : ${invoiceAmount(totalSum)}', bold: true),
               if (discount > 0)
                 rtl('الخصم : ${invoiceAmount(discount)}'),
               rtl('${settings.labels.paid} : ${invoiceAmount(paid)}'),
               rtl('المتبقي من الفاتورة : ${invoiceAmount(totalSum - paid)}'),
-              rtl('الرصيد الحالي (عليكم) : ${invoiceAmount(balance)}',
+              rtl('المتبقي عليكم : ${invoiceAmount(balance)}',
                   bold: true),
               if ((invoice['notes']?.toString() ?? '').isNotEmpty)
                 rtl('ملاحظات: ${invoice['notes']}'),

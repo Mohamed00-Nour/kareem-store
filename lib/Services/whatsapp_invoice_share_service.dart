@@ -17,9 +17,10 @@ class WhatsappInvoiceShareService {
 
     final invoiceNumber = invoice['invoiceNumber']?.toString() ?? '';
     final dateStr = _formatDate(invoice['date']);
+    final previous = invoiceDynamicPreviousBalance(invoice);
     final total = _num(invoice['totalSum']);
     final paid = _num(invoice['paidAmount']);
-    final discount = _num(invoice['invoiceDiscount']);
+    final discount = invoiceResolveDiscount(invoice);
 
     final balance = isSupplier
         ? invoiceSupplierRemainingOwed(invoice)
@@ -32,19 +33,20 @@ class WhatsappInvoiceShareService {
     if (isSupplier) {
       buffer.writeln('فاتورة مشتريات رقم $invoiceNumber');
     } else {
-      buffer.writeln('عليكم فاتورة آجل رقم $invoiceNumber');
+      buffer.writeln('فاتورة رقم $invoiceNumber');
     }
-    buffer.writeln('التاريخ $dateStr');
-    buffer.writeln('بإجمالي ${invoiceAmount(total)} ج.م');
+    buffer.writeln('التاريخ: $dateStr');
+    buffer.writeln('الرصيد السابق: ${invoiceAmount(previous)} ج.م');
+    buffer.writeln('إجمالي الفاتورة: ${invoiceAmount(total)} ج.م');
     if (discount > 0) {
-      buffer.writeln('الخصم ${invoiceAmount(discount)} ج.م');
+      buffer.writeln('الخصم: ${invoiceAmount(discount)} ج.م');
     }
-    buffer.writeln('المدفوع ${invoiceAmount(paid)} ج.م');
-    buffer.writeln('المتبقي من الفاتورة ${invoiceAmount(total - paid)} ج.م');
+    buffer.writeln('المدفوع: ${invoiceAmount(paid)} ج.م');
+    buffer.writeln('المتبقي من الفاتورة: ${invoiceAmount(total - paid)} ج.م');
     if (isSupplier) {
-      buffer.writeln('الرصيد الحالي للمورد ${invoiceAmount(balance)} ج.م');
+      buffer.writeln('الرصيد الحالي للمورد: ${invoiceAmount(balance)} ج.م');
     } else {
-      buffer.writeln('الرصيد الحالي عليكم ${invoiceAmount(balance)} ج.م');
+      buffer.writeln('المتبقي عليكم: ${invoiceAmount(balance)} ج.م');
     }
     return buffer.toString().trim();
   }

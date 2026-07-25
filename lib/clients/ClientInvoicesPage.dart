@@ -2017,28 +2017,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
     final previousBalance = invoiceDynamicPreviousBalance(invoiceData);
     final remainingOwed = invoiceClientRemainingOwed(invoiceData);
-
-    final totalSum = invoiceData.containsKey('totalSum')
-        ? (double.tryParse(invoiceData['totalSum'].toString()) ?? 0.0)
-        : 0.0;
-    double discount = invoiceNum(invoiceData['invoiceDiscount']);
-    if (discount <= 0) {
-      final double productsSum =
-          (invoiceData['products'] as List? ?? []).fold<double>(
-        0.0,
-        (sum, item) {
-          if (item is! Map) return sum;
-          final itemTotal = double.tryParse(
-                  (item['total'] ?? item['totalCost'])?.toString() ?? '') ??
-              0.0;
-          return sum + itemTotal;
-        },
-      );
-      final diff = productsSum - totalSum;
-      if (diff > 0.01) {
-        discount = diff;
-      }
-    }
+    final totalSum = invoiceNum(invoiceData['totalSum']);
+    final discount = invoiceResolveDiscount(invoiceData);
 
     final invoiceId = invoice.id;
     final isExpanded = _expandedInvoiceIds.contains(invoiceId);

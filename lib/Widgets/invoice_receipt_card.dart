@@ -369,7 +369,7 @@ class InvoiceReceiptCard extends StatelessWidget {
   Widget _summaryTable(
       double previousBalance, double totalSum, double paid, double balance) {
     final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
-    final discount = invoiceNum(invoice['invoiceDiscount']);
+    final discount = invoiceResolveDiscount(invoice);
     return Table(
       border: TableBorder.all(color: Colors.grey.shade400),
       defaultVerticalAlignment: TableCellVerticalAlignment.middle,
@@ -379,13 +379,13 @@ class InvoiceReceiptCard extends StatelessWidget {
       },
       children: [
         _summaryTableRow('الرصيد السابق', invoiceAmount(previousBalance)),
+        _summaryTableRow('إجمالي الفاتورة', invoiceAmount(totalSum), bold: true),
         if (discount > 0)
           _summaryTableRow('الخصم', invoiceAmount(discount)),
-        _summaryTableRow('إجمالي ف.', invoiceAmount(totalSum), bold: true),
         _summaryTableRow('المدفوع', invoiceAmount(paid)),
         _summaryTableRow('المتبقي من الفاتورة', invoiceAmount(totalSum - paid)),
         _summaryTableRow(
-            isBuying ? 'الرصيد الحالي (للمورد)' : 'الرصيد الحالي (عليكم)',
+            isBuying ? 'الرصيد الحالي للمورد' : 'المتبقي عليكم',
             invoiceAmount(balance),
             bold: true),
       ],

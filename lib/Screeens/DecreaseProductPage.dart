@@ -2544,9 +2544,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                 ),
                                 onTap: () => _selectAllField(paidCtrl),
                                 onChanged: (v) {
-                                  if (paymentMethod != 'نقداً') {
-                                    lastManualPaid = v;
-                                  }
+                                  lastManualPaid = v;
                                   setSheet(() {});
                                 },
                               ),
@@ -2606,7 +2604,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       GestureDetector(
                         onTap: () => setSheet(() {
                           discountIsPercent = !discountIsPercent;
-                          syncPaidForPaymentMethod();
                         }),
                         child: Container(
                           padding: EdgeInsets.symmetric(
@@ -2641,7 +2638,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                           onTap: () => _selectAllField(discountCtrl),
                           onChanged: (v) => setSheet(() {
                             invoiceDiscount = double.tryParse(v) ?? 0.0;
-                            syncPaidForPaymentMethod();
                           }),
                         ),
                       ),
