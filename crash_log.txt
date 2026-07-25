@@ -1,8 +1,8 @@
 1. Save started
 6. Fetching buying invoice number
-7. Invoice number resolved: 101
+7. Invoice number resolved: 103
 8. Writing buying invoice to Firestore
-9. Buying invoice saved with ID: 7vMZXn2zhoLns6GZdwV5
+9. Buying invoice saved with ID: vhwH1jpRM6eblnEWZ6qW
 10. Updating invoice ID field self reference
 11. Updated invoice ID field
 12. Writing invoice to supplier subcollection
@@ -11,7 +11,11 @@
 15. Supplier document updated. Syncing supplier balance
 16. Supplier balance sync completed
 17. Updating products stock quantities
-18. Updating product stock for: منتج وصف للتجربة
+18. Updating product stock for: test 01
 19. Adding change log under product changes subcollection
 20. Products loop completed
-21. Initializing box transaction
+21. Updating box balance
+22. Box balance updated. Adding box change entry
+23. Box change entry added
+24. State updated. Launching dialog...
+25. Dialog shown

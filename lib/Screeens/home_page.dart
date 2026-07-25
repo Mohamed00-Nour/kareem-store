@@ -1,12 +1,15 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import '../Widgets/main-cards.dart';import '../Widgets/app_responsive.dart';
-import '../box/MainBoxScreen.dart';import '../clients/ClientsPage.dart';
+import '../Widgets/main-cards.dart';
+import '../Widgets/app_responsive.dart';
+import '../box/MainBoxScreen.dart';
+import '../clients/ClientsPage.dart';
 import '../departments/DepartmentsPage.dart';
 import '../suppliers/SuppliersPage.dart';
 import '../reports/ReportsPage.dart';
 import 'AddProductPage.dart';
 import 'DecreaseProductPage.dart';
+import 'QuoteListPage.dart';
 import 'ReturnProductPage.dart';
 import 'Data/DataEntryScreen.dart';
 import 'PrinterSettingsPage.dart';
@@ -132,155 +135,164 @@ class HomePage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final scaffold = Scaffold(
-        appBar: AppBar(
-          backgroundColor: Colors.black.withOpacity(0.7),
-          centerTitle: false,
-          actions: [
-            IconButton(
-              icon: const Icon(Icons.manage_accounts, color: Colors.white),
-              tooltip: 'تغيير بيانات الحساب',
-              onPressed: () {
-                Navigator.push(
-                  context,
-                  MaterialPageRoute(builder: (context) => const ChangeCredentialsPage()),
-                );
-              },
-            ),
-          ],
-          title: Directionality(
-            textDirection: TextDirection.ltr,
-            child: Row(
-              children: [
-                Image.asset(
-                  'assets/Magdy store.png',
-                  height: 40.h,
-                  fit: BoxFit.contain,
-                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-                ),
-                Expanded(
-                  child: Align(
-                    alignment: Alignment.centerRight,
-                    child: Text(
-                      'أبو مجدي للحدايد والعدد',
-                      textAlign: TextAlign.right,
-                      style: TextStyle(
-                        color: Colors.white,
-                        fontSize: 18.sp,
-                        fontWeight: FontWeight.bold,
-                      ),
-                      overflow: TextOverflow.ellipsis,
-                      maxLines: 1,
+      appBar: AppBar(
+        backgroundColor: Colors.black.withOpacity(0.7),
+        centerTitle: false,
+        actions: [
+          IconButton(
+            icon: const Icon(Icons.manage_accounts, color: Colors.white),
+            tooltip: 'تغيير بيانات الحساب',
+            onPressed: () {
+              Navigator.push(
+                context,
+                MaterialPageRoute(
+                    builder: (context) => const ChangeCredentialsPage()),
+              );
+            },
+          ),
+        ],
+        title: Directionality(
+          textDirection: TextDirection.ltr,
+          child: Row(
+            children: [
+              Image.asset(
+                'assets/Magdy store.png',
+                height: 40.h,
+                fit: BoxFit.contain,
+                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+              ),
+              Expanded(
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Text(
+                    'أبو مجدي للحدايد والعدد',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(
+                      color: Colors.white,
+                      fontSize: 18.sp,
+                      fontWeight: FontWeight.bold,
                     ),
+                    overflow: TextOverflow.ellipsis,
+                    maxLines: 1,
                   ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      backgroundColor: const Color(0xffeeeced),
+      body: SingleChildScrollView(
+        child: Column(
+          children: [
+            ResponsiveMenuGrid(
+              children: [
+                CardWidget(
+                  imagePath: 'assets/images/money-growth_18102510.png',
+                  text: 'المبيعات',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => DecreaseProductPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/boxes_11365317.png',
+                  text: 'المشتريات',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const AddProductPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/leadership_11802984.png',
+                  text: 'العملاء',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const ClientsPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/boxes.png',
+                  text: 'المنتجات',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const DataEntryScreen()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/supplier_12112173.png',
+                  text: 'الموردين',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const SuppliersPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/shopping-store_5542724.png',
+                  text: 'الاقسام',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => DepartmentsPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/money-bag.png',
+                  text: 'صندوق المالية',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const MainBoxScreen()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/data-analytics.png',
+                  text: 'الإستعلامات',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const ReportsPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/appliance.png',
+                  text: 'الطابعة',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const PrinterSettingsPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/minus.png',
+                  text: 'فواتير المرتجع',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const ReturnProductPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/expense.png',
+                  text: 'المصروفات',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const ExpensesPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/request.png',
+                  text: 'فواتير مميزة',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const SpecialInvoicesPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/checklist.png',
+                  text: 'عرض سعر',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) => const QuoteListPage()));
+                  },
                 ),
               ],
             ),
-          ),
-        ),
-        backgroundColor: const Color(0xffeeeced),
-        body: SingleChildScrollView(
-          child: Column(
-            children: [
-              ResponsiveMenuGrid(
-                children: [
-                  CardWidget(
-                    imagePath: 'assets/images/money-growth_18102510.png',
-                    text: 'المبيعات',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => DecreaseProductPage()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/boxes_11365317.png',
-                    text: 'المشتريات',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const AddProductPage()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/leadership_11802984.png',
-                    text: 'العملاء',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const ClientsPage()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/boxes.png',
-                    text: 'المنتجات',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const DataEntryScreen()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/supplier_12112173.png',
-                    text: 'الموردين',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const SuppliersPage()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/shopping-store_5542724.png',
-                    text: 'الاقسام',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => DepartmentsPage()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/money-bag.png',
-                    text: 'صندوق المالية',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const MainBoxScreen()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/data-analytics.png',
-                    text: 'الإستعلامات',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const ReportsPage()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/appliance.png',
-                    text: 'الطابعة',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const PrinterSettingsPage()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/minus.png',
-                    text: 'فواتير المرتجع',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const ReturnProductPage()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/expense.png',
-                    text: 'المصروفات',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const ExpensesPage()));
-                    },
-                  ),
-                  CardWidget(
-                    imagePath: 'assets/images/request.png',
-                    text: 'فواتير مميزة',
-                    onPressed: () {
-                      Navigator.of(context).push(MaterialPageRoute(
-                          builder: (context) => const SpecialInvoicesPage()));
-                    },
-                  ),
-                ],
-              ),
           ],
         ),
       ),

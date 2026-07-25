@@ -1206,18 +1206,13 @@ class _SupplierOpeningBalancesPageState
                                               .collection('box')
                                               .doc('mainBox');
 
-                                          transaction.update(boxDocRef, {
-                                            'value': isOwedToSupplier
-                                                ? currentBoxValue - amount
-                                                : currentBoxValue + amount
-                                          });
-                                        } else {
-                                          transaction.set(boxDocRef, {
-                                            'value':
-                                                isOwedToSupplier ? -amount : amount
-                                          });
-                                        }
-                                      });
+                                      await boxDocRef.set(
+                                        {
+                                          'value': FieldValue.increment(
+                                              isOwedToSupplier ? -amount : amount)
+                                        },
+                                        SetOptions(merge: true),
+                                      );
 
                                       // Add change to the box subcollection
                                       await boxDocRef

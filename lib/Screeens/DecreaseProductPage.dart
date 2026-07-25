@@ -24,12 +24,17 @@ class DecreaseProductPage extends StatefulWidget {
   /// When true, saves as [returnInvoices] (stock in, reversed profit/sales/box).
   final bool isReturnInvoice;
 
+  /// When true, saves as a price quote (`price_quotes` collection).
+  /// No stock/balance/box changes are applied until the user executes the quote.
+  final bool isQuote;
+
   /// Pre-filled invoice for edit mode (sales only). Use [id] or [invoiceId] as root doc id.
   final Map<String, dynamic>? invoiceToEdit;
 
   const DecreaseProductPage({
     super.key,
     this.isReturnInvoice = false,
+    this.isQuote = false,
     this.invoiceToEdit,
   });
 
@@ -48,6 +53,9 @@ void _selectAllField(TextEditingController controller) {
 
 class _DecreaseProductPageState extends State<DecreaseProductPage> {
   String get _pageTitle {
+    if (widget.isQuote) {
+      return _isEditing ? 'تعديل عرض سعر' : 'عرض سعر';
+    }
     if (_isEditing && _editingInvoiceNumber != null) {
       return 'تعديل فاتورة #$_editingInvoiceNumber';
     }
@@ -1001,7 +1009,53 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         }
       }
 
-      if (_isEditing &&
+      if (widget.isQuote) {
+        // ── Quote mode: save to price_quotes, no stock/balance/box changes ──
+        final totalSum = _calculateTotalSum();
+        final effectiveDiscountAmt = discountIsPercent
+            ? totalSum * invoiceDiscount / 100
+            : invoiceDiscount;
+        final totalSumFinal = totalSum - effectiveDiscountAmt;
+
+        String? resolvedClientIdForQuote;
+        if (effectiveClient.isNotEmpty) {
+          final cq = await FirebaseFirestore.instance
+              .collection('clients')
+              .where('clientName', isEqualTo: effectiveClient)
+              .limit(1)
+              .get();
+          if (cq.docs.isNotEmpty) {
+            resolvedClientIdForQuote = cq.docs.first.id;
+          }
+        }
+
+        final docId =
+            (_editingRootInvoiceId != null && _editingRootInvoiceId!.isNotEmpty)
+                ? _editingRootInvoiceId!
+                : FirebaseFirestore.instance.collection('price_quotes').doc().id;
+
+        final quoteRef =
+            FirebaseFirestore.instance.collection('price_quotes').doc(docId);
+        final quoteData = <String, dynamic>{
+          'id': docId,
+          'clientName': effectiveClient,
+          'clientId': resolvedClientIdForQuote ?? '',
+          'date': _selectedDate,
+          'totalSum': totalSumFinal,
+          'paidAmount': effectivePaid,
+          'balance': totalSumFinal - effectivePaid,
+          'previousBalance': _clientBalance,
+          'paymentMethod': paymentMethod,
+          'notes': notes,
+          'invoiceDiscount': effectiveDiscountAmt,
+          'discountIsPercent': false,
+          'products': List<Map<String, dynamic>>.from(_addedProducts),
+          'createdAt': _originalInvoice?['createdAt'] ?? FieldValue.serverTimestamp(),
+        };
+        await quoteRef.set(quoteData, SetOptions(merge: true));
+
+        _lastInvoice = Map<String, dynamic>.from(quoteData);
+      } else if (_isEditing &&
           _originalInvoice != null &&
           _editingRootInvoiceId != null) {
         final totalSumBeforeDiscount = _calculateTotalSum();
@@ -1062,6 +1116,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         final effectiveDiscountAmt = discountIsPercent
             ? totalSum * invoiceDiscount / 100
             : invoiceDiscount;
+
         final totalSumFinal = totalSum - effectiveDiscountAmt;
         final catalogSeed = _productCatalog;
         final lines = List<Map<String, dynamic>>.from(_addedProducts);
@@ -1180,7 +1235,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             borderRadius: BorderRadius.circular(14.r),
           ),
           title: Text(
-            _isEditing ? 'تم تعديل الفاتورة بنجاح' : 'تم الحفظ بنجاح',
+            widget.isQuote
+                ? 'تم حفظ عرض السعر'
+                : _isEditing
+                    ? 'تم تعديل الفاتورة بنجاح'
+                    : 'تم الحفظ بنجاح',
             style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
           ),
           content: SingleChildScrollView(
@@ -2363,7 +2422,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               _dataModified = true;
                             });
                           },
-                          child: Text('متابعة',
+                          child: Text(widget.isQuote ? 'حفظ عرض السعر' : 'متابعة',
                               style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 15.sp,
@@ -2940,7 +2999,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                     color: Colors.white,
                                   ),
                                 )
-                              : Text('متابعة',
+                              : Text(widget.isQuote ? 'حفظ عرض السعر' : 'متابعة',
                                   style: TextStyle(
                                       color: Colors.white,
                                       fontSize: 15.sp,
@@ -3615,12 +3674,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
               iconTheme: const IconThemeData(color: Colors.white),
               automaticallyImplyLeading: false,
               actions: [
-                if (!Navigator.canPop(context))
-                  IconButton(
-                    icon: Icon(Icons.menu, color: Colors.white, size: 24.sp),
-                    tooltip: 'القائمة',
-                    onPressed: () => _scaffoldKey.currentState?.openDrawer(),
-                  ),
+                IconButton(
+                  icon: Icon(Icons.menu, color: Colors.white, size: 24.sp),
+                  tooltip: 'القائمة',
+                  onPressed: () => _scaffoldKey.currentState?.openDrawer(),
+                ),
                 IconButton(
                   icon: Icon(Icons.calendar_today_outlined,
                       color: Colors.white, size: 22.sp),

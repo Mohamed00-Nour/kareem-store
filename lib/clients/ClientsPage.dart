@@ -1523,21 +1523,13 @@ class _ClientOpeningBalancesPageState
                                               .collection('box')
                                               .doc('mainBox');
 
-                                          double currentBoxValue =
-                                              (boxData?['value'] ?? 0.0)
-                                                  .toDouble();
-                                          transaction.update(boxDocRef, {
-                                            'value': isAddition
-                                                ? currentBoxValue - amount
-                                                : currentBoxValue + amount
-                                          });
-                                        } else {
-                                          transaction.set(boxDocRef, {
-                                            'value':
-                                                isAddition ? -amount : amount
-                                          });
-                                        }
-                                      });
+                                      await boxDocRef.set(
+                                        {
+                                          'value': FieldValue.increment(
+                                              isAddition ? -amount : amount)
+                                        },
+                                        SetOptions(merge: true),
+                                      );
 
                                       // Add change to the subcollection
                                       await boxDocRef
