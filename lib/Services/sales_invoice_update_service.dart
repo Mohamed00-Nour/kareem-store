@@ -220,17 +220,10 @@ class SalesInvoiceUpdateService {
     if (paidDelta.abs() > 0.001) {
       final boxDocRef =
           FirebaseFirestore.instance.collection('box').doc('mainBox');
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        final boxSnapshot = await transaction.get(boxDocRef);
-        final currentBoxValue = boxSnapshot.exists
-            ? invoiceNum(boxSnapshot.data()?['value'])
-            : 0.0;
-        transaction.set(
-          boxDocRef,
-          {'value': currentBoxValue + paidDelta},
-          SetOptions(merge: true),
-        );
-      });
+      await boxDocRef.set(
+        {'value': FieldValue.increment(paidDelta)},
+        SetOptions(merge: true),
+      );
       await boxDocRef.collection('changes').add({
         'date': FieldValue.serverTimestamp(),
         'value': paidDelta,

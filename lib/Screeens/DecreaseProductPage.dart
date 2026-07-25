@@ -1504,6 +1504,13 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     }
   }
 
+  String _getProductDescription(String name) {
+    if (name.isEmpty) return '';
+    final idx = _products.indexWhere((p) => p.name == name);
+    if (idx < 0) return '';
+    return _products[idx].description?.trim() ?? '';
+  }
+
   void _incrementInvoiceLineQuantity(int index) {
     setState(() {
       final p = Map<String, dynamic>.from(_addedProducts[index]);
@@ -1793,16 +1800,44 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       ),
                     ),
                     if (sheetProduct.description != null &&
-                        sheetProduct.description!.isNotEmpty) ...[
-                      SizedBox(height: 4.h),
-                      Align(
-                        alignment: Alignment.centerRight,
-                        child: Text(
-                          'الوصف: ${sheetProduct.description}',
-                          style: TextStyle(
-                            fontSize: 11.sp,
-                            color: Colors.black54,
-                          ),
+                        sheetProduct.description!.trim().isNotEmpty) ...[
+                      SizedBox(height: 6.h),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 10.w, vertical: 8.h),
+                        decoration: BoxDecoration(
+                          color: Colors.blue.shade50,
+                          border: Border.all(color: Colors.blue.shade200),
+                          borderRadius: BorderRadius.circular(8.r),
+                        ),
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.start,
+                          children: [
+                            Row(
+                              children: [
+                                Icon(Icons.info_outline,
+                                    size: 16.sp, color: Colors.blue.shade800),
+                                SizedBox(width: 6.w),
+                                Text(
+                                  'وصف المنتج (تلميح للاسترشاد فقط - لا يظهر بالفاتورة):',
+                                  style: TextStyle(
+                                    fontSize: 11.sp,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.blue.shade900,
+                                  ),
+                                ),
+                              ],
+                            ),
+                            SizedBox(height: 3.h),
+                            Text(
+                              sheetProduct.description!.trim(),
+                              style: TextStyle(
+                                fontSize: 12.sp,
+                                color: Colors.blue.shade900,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                     ],
@@ -3884,6 +3919,22 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                                           overflow: TextOverflow
                                                               .ellipsis,
                                                         ),
+                                                        if (_getProductDescription(p['product']?.toString() ?? '').isNotEmpty)
+                                                          Text(
+                                                            '💡 ${_getProductDescription(p['product']?.toString() ?? '')}',
+                                                            textAlign:
+                                                                TextAlign.right,
+                                                            style: TextStyle(
+                                                              fontSize: 8.5.sp,
+                                                              color: Colors.blue
+                                                                  .shade800,
+                                                              fontStyle:
+                                                                  FontStyle.italic,
+                                                            ),
+                                                            maxLines: 1,
+                                                            overflow: TextOverflow
+                                                                .ellipsis,
+                                                          ),
                                                       ],
                                                     ),
                                                   ),

@@ -1523,13 +1523,6 @@ class _ClientOpeningBalancesPageState
                                               .collection('box')
                                               .doc('mainBox');
 
-                                      await FirebaseFirestore.instance
-                                          .runTransaction((transaction) async {
-                                        DocumentSnapshot boxSnapshot =
-                                            await transaction.get(boxDocRef);
-
-                                        if (boxSnapshot.exists) {
-                                          final boxData = boxSnapshot.data() as Map<String, dynamic>?;
                                           double currentBoxValue =
                                               (boxData?['value'] ?? 0.0)
                                                   .toDouble();

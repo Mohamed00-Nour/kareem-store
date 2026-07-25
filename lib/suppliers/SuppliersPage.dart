@@ -1182,15 +1182,10 @@ class _SupplierOpeningBalancesPageState
                                         'timestamp':
                                             FieldValue.serverTimestamp(),
                                       });
-
                                       // Construct notes for the balance history
                                       String noteStr = 'سند $direction';
                                       noteStr += ' رقم $vNumber';
                                       final dText = descCtrl.text.trim();
-                                      if (dText.isNotEmpty) {
-                                        noteStr += ' ($dText)';
-                                      }
-
                                       // Add to balanceHistory
                                       await FirebaseFirestore.instance
                                           .collection('suppliers')
@@ -1211,15 +1206,6 @@ class _SupplierOpeningBalancesPageState
                                               .collection('box')
                                               .doc('mainBox');
 
-                                      await FirebaseFirestore.instance
-                                          .runTransaction((transaction) async {
-                                        DocumentSnapshot boxSnapshot =
-                                            await transaction.get(boxDocRef);
-
-                                        if (boxSnapshot.exists) {
-                                          double currentBoxValue =
-                                              (boxSnapshot['value'] ?? 0.0)
-                                                  .toDouble();
                                           transaction.update(boxDocRef, {
                                             'value': isOwedToSupplier
                                                 ? currentBoxValue - amount

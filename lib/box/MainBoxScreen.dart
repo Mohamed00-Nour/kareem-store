@@ -39,18 +39,11 @@ class _MainBoxScreenState extends State<MainBoxScreen> {
       DocumentReference boxDocRef =
           FirebaseFirestore.instance.collection('box').doc('mainBox');
 
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        DocumentSnapshot boxSnapshot = await transaction.get(boxDocRef);
-
-        if (boxSnapshot.exists) {
-          double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-          double newBoxValue = type == 'addition'
-              ? currentBoxValue + value
-              : currentBoxValue - value;
-
-          transaction.update(boxDocRef, {'value': newBoxValue});
-        }
-      });
+      final changeAmount = type == 'addition' ? value : -value;
+      await boxDocRef.set(
+        {'value': FieldValue.increment(changeAmount)},
+        SetOptions(merge: true),
+      );
 
       // Add change to the subcollection
       await boxDocRef.collection('changes').add({

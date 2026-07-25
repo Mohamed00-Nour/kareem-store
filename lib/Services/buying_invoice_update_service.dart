@@ -110,17 +110,10 @@ class BuyingInvoiceUpdateService {
     final paidDelta = paidAmount - oldPaid;
     if (paidDelta.abs() > 0.001) {
       final boxDocRef = _db.collection('box').doc('mainBox');
-      await _db.runTransaction((transaction) async {
-        final boxSnap = await transaction.get(boxDocRef);
-        final currentValue = boxSnap.exists
-            ? invoiceNum(boxSnap.data()?['value'])
-            : 0.0;
-        transaction.set(
-          boxDocRef,
-          {'value': currentValue - paidDelta},
-          SetOptions(merge: true),
-        );
-      });
+      await boxDocRef.set(
+        {'value': FieldValue.increment(-paidDelta)},
+        SetOptions(merge: true),
+      );
       await boxDocRef.collection('changes').add({
         'date': FieldValue.serverTimestamp(),
         'value': paidDelta.abs(),

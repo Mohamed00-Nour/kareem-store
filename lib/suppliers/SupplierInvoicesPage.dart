@@ -296,16 +296,10 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
         // Update box - payment to supplier decreases box
         DocumentReference boxDocRef =
             FirebaseFirestore.instance.collection('box').doc('mainBox');
-        await FirebaseFirestore.instance.runTransaction((transaction) async {
-          DocumentSnapshot boxSnapshot = await transaction.get(boxDocRef);
-          if (boxSnapshot.exists) {
-            double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-            transaction
-                .update(boxDocRef, {'value': currentBoxValue - enteredBalance});
-          } else {
-            transaction.set(boxDocRef, {'value': -enteredBalance});
-          }
-        });
+        await boxDocRef.set(
+          {'value': FieldValue.increment(-enteredBalance)},
+          SetOptions(merge: true),
+        );
 
         await boxDocRef.collection('changes').add({
           'date': FieldValue.serverTimestamp(),

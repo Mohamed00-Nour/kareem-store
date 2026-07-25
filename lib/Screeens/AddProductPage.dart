@@ -457,20 +457,14 @@ class _AddProductPageState extends State<AddProductPage> {
       }
       logProgress('20. Products loop completed');
 
-      logProgress('21. Initializing box transaction');
+      logProgress('21. Updating box balance');
       DocumentReference boxDocRef =
           FirebaseFirestore.instance.collection('box').doc('mainBox');
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        DocumentSnapshot boxSnapshot = await transaction.get(boxDocRef);
-        if (boxSnapshot.exists) {
-          double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-          transaction
-              .update(boxDocRef, {'value': currentBoxValue - effectivePaid});
-        } else {
-          transaction.set(boxDocRef, {'value': -effectivePaid});
-        }
-      });
-      logProgress('22. Box transaction completed. Adding box change entry');
+      await boxDocRef.set(
+        {'value': FieldValue.increment(-effectivePaid)},
+        SetOptions(merge: true),
+      );
+      logProgress('22. Box balance updated. Adding box change entry');
       await boxDocRef.collection('changes').add({
         'date': FieldValue.serverTimestamp(),
         'value': effectivePaid,

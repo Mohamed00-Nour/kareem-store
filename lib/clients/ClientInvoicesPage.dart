@@ -377,21 +377,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       DocumentReference boxDocRef =
           FirebaseFirestore.instance.collection('box').doc('mainBox');
 
-      await FirebaseFirestore.instance.runTransaction((transaction) async {
-        DocumentSnapshot boxSnapshot = await transaction.get(boxDocRef);
-
-        if (boxSnapshot.exists) {
-          double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-          transaction.update(boxDocRef, {
-            'value': isAddition
-                ? currentBoxValue - enteredBalance
-                : currentBoxValue + enteredBalance
-          });
-        } else {
-          transaction.set(boxDocRef,
-              {'value': isAddition ? -enteredBalance : enteredBalance});
-        }
-      });
+      await boxDocRef.set(
+        {
+          'value': FieldValue.increment(
+              isAddition ? -enteredBalance : enteredBalance)
+        },
+        SetOptions(merge: true),
+      );
 
       // Add change to the subcollection
       await boxDocRef.collection('changes').add({
@@ -2674,14 +2666,10 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       if (boxDelta.abs() > 0.001) {
         final boxDocRef =
             FirebaseFirestore.instance.collection('box').doc('mainBox');
-        await FirebaseFirestore.instance.runTransaction((transaction) async {
-          final boxSnapshot = await transaction.get(boxDocRef);
-          if (boxSnapshot.exists) {
-            double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-            transaction
-                .update(boxDocRef, {'value': currentBoxValue + boxDelta});
-          }
-        });
+        await boxDocRef.set(
+          {'value': FieldValue.increment(boxDelta)},
+          SetOptions(merge: true),
+        );
 
         await boxDocRef.collection('changes').add({
           'date': FieldValue.serverTimestamp(),
@@ -2880,14 +2868,10 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       if (boxDelta.abs() > 0.001) {
         final boxDocRef =
             FirebaseFirestore.instance.collection('box').doc('mainBox');
-        await FirebaseFirestore.instance.runTransaction((transaction) async {
-          final boxSnapshot = await transaction.get(boxDocRef);
-          if (boxSnapshot.exists) {
-            double currentBoxValue = (boxSnapshot['value'] ?? 0.0).toDouble();
-            transaction
-                .update(boxDocRef, {'value': currentBoxValue + boxDelta});
-          }
-        });
+        await boxDocRef.set(
+          {'value': FieldValue.increment(boxDelta)},
+          SetOptions(merge: true),
+        );
 
         await boxDocRef.collection('changes').add({
           'date': FieldValue.serverTimestamp(),
