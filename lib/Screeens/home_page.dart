@@ -16,6 +16,7 @@ import 'PrinterSettingsPage.dart';
 import 'Invoices/SpecialInvoicesPage.dart';
 import '../expenses/ExpensesPage.dart';
 import 'ChangeCredentialsPage.dart';
+import '../sync/ui/sync_status_badge.dart';
 
 class HomePage extends StatelessWidget {
   /// When false, back is handled by [GNavPage] (return to home tab, then exit).
@@ -139,6 +140,7 @@ class HomePage extends StatelessWidget {
         backgroundColor: Colors.black.withOpacity(0.7),
         centerTitle: false,
         actions: [
+          const SyncStatusBadge(),
           IconButton(
             icon: const Icon(Icons.manage_accounts, color: Colors.white),
             tooltip: 'تغيير بيانات الحساب',

@@ -7,12 +7,20 @@ import 'Screeens/SplashScreen.dart';
 import 'firebase_options.dart';
 import 'Widgets/app_responsive.dart';
 import 'Widgets/responsive_screen_util_host.dart';
+import 'local_db/hive_init.dart';
+import 'repositories/data_sync_service.dart';
+import 'sync/connectivity_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  await initHive(); // Initialize local Hive database first
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  // Kick off background cache sync — fails silently if offline
+  DataSyncService.instance.syncOnStartup();
+  // Start connectivity listener — auto-syncs queue when internet returns
+  ConnectivityService.instance.startListening();
   runApp(const MyApp());
 }
 

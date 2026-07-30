@@ -19,6 +19,10 @@ import '../EditProductPage.dart';
 import 'g_Nav.dart';
 import '../Widgets/app_bar_navigation.dart';
 import 'home_page.dart';
+import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
+import '../repositories/client_repository.dart';
+import '../local_db/hive_init.dart';
 
 class DecreaseProductPage extends StatefulWidget {
   /// When true, saves as [returnInvoices] (stock in, reversed profit/sales/box).
@@ -370,25 +374,25 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       : EgyptPhoneField.toWhatsappDigits(
                                           phoneText);
                                   final docRef = FirebaseFirestore.instance
-                                       .collection('clients')
-                                       .doc();
-                                   final clientId = docRef.id;
-                                   await docRef.set({
-                                     'clientName': newName,
-                                     'balance': balance,
-                                     'phone': phone,
-                                     'id': clientId,
-                                   }, SetOptions(merge: true));
-                                   if (balance != 0) {
-                                     await docRef
-                                         .collection('balanceHistory')
-                                         .add({
-                                       'enteredBalance': balance,
-                                       'balanceBefore': 0.0,
-                                       'type': 'opening',
-                                       'timestamp': FieldValue.serverTimestamp(),
-                                     });
-                                   }
+                                      .collection('clients')
+                                      .doc();
+                                  final clientId = docRef.id;
+                                  await docRef.set({
+                                    'clientName': newName,
+                                    'balance': balance,
+                                    'phone': phone,
+                                    'id': clientId,
+                                  }, SetOptions(merge: true));
+                                  if (balance != 0) {
+                                    await docRef
+                                        .collection('balanceHistory')
+                                        .add({
+                                      'enteredBalance': balance,
+                                      'balanceBefore': 0.0,
+                                      'type': 'opening',
+                                      'timestamp': FieldValue.serverTimestamp(),
+                                    });
+                                  }
 
                                   if (!ctx.mounted) return;
                                   setSheet(() {
@@ -1029,10 +1033,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           }
         }
 
-        final docId =
-            (_editingRootInvoiceId != null && _editingRootInvoiceId!.isNotEmpty)
-                ? _editingRootInvoiceId!
-                : FirebaseFirestore.instance.collection('price_quotes').doc().id;
+        final docId = (_editingRootInvoiceId != null &&
+                _editingRootInvoiceId!.isNotEmpty)
+            ? _editingRootInvoiceId!
+            : FirebaseFirestore.instance.collection('price_quotes').doc().id;
 
         final quoteRef =
             FirebaseFirestore.instance.collection('price_quotes').doc(docId);
@@ -1050,7 +1054,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'invoiceDiscount': effectiveDiscountAmt,
           'discountIsPercent': false,
           'products': List<Map<String, dynamic>>.from(_addedProducts),
-          'createdAt': _originalInvoice?['createdAt'] ?? FieldValue.serverTimestamp(),
+          'createdAt':
+              _originalInvoice?['createdAt'] ?? FieldValue.serverTimestamp(),
         };
         await quoteRef.set(quoteData, SetOptions(merge: true));
 
@@ -1168,31 +1173,47 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         final boxDocRef =
             FirebaseFirestore.instance.collection('box').doc('mainBox');
 
-        await Future.wait([
-          docRef.set(invoiceData),
-          InvoiceStockService.applyStockChanges(
-            lines: lines,
-            restore: false,
-            changeDate: _selectedDate,
-            catalog: catalog,
-          ),
-          _commitClientAndBoxWrites(
-            clientDocRef: clientDocRef,
-            boxDocRef: boxDocRef,
-            effectiveClient: effectiveClient,
-            updatedBalance: updatedBalance,
-            invoiceId: docRef.id,
-            newInvoiceNumber: newInvoiceNumber,
-            totalSumFinal: totalSumFinal,
-            effectivePaid: effectivePaid,
-            balance: balance,
-            paymentMethod: paymentMethod,
-            notes: notes,
-            products: lines,
-            existingBalance: existingBalance,
-            invoiceDiscount: effectiveDiscountAmt,
-          ),
-        ]);
+        final isOnline = ConnectivityService.instance.isOnline;
+        if (isOnline) {
+          await Future.wait([
+            docRef.set(invoiceData),
+            InvoiceStockService.applyStockChanges(
+              lines: lines,
+              restore: false,
+              changeDate: _selectedDate,
+              catalog: catalog,
+            ),
+            _commitClientAndBoxWrites(
+              clientDocRef: clientDocRef,
+              boxDocRef: boxDocRef,
+              effectiveClient: effectiveClient,
+              updatedBalance: updatedBalance,
+              invoiceId: docRef.id,
+              newInvoiceNumber: newInvoiceNumber,
+              totalSumFinal: totalSumFinal,
+              effectivePaid: effectivePaid,
+              balance: balance,
+              paymentMethod: paymentMethod,
+              notes: notes,
+              products: lines,
+              existingBalance: existingBalance,
+              invoiceDiscount: effectiveDiscountAmt,
+            ),
+          ]);
+        } else {
+          // Offline queue: Enqueue operation so BatchSyncEngine syncs it automatically when online
+          await SyncQueueManager.instance.enqueue(
+            operationType: 'createInvoice',
+            payload: {
+              'clientId': resolvedClientId ?? docRef.id,
+              'invoiceId': docRef.id,
+              'invoiceData': invoiceData,
+              'products': lines,
+              'totalSum': totalSumFinal,
+              'paidAmount': effectivePaid,
+            },
+          );
+        }
       }
 
       if (resolvedClientId != null && resolvedClientId.isNotEmpty) {
@@ -1388,6 +1409,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final name = clientName.trim();
     if (name.isEmpty) return false;
     if (_clientNameInList(name)) return true;
+    if (!ConnectivityService.instance.isOnline) {
+      final local = ClientRepository.instance.findByName(name);
+      return local != null;
+    }
     final query = await FirebaseFirestore.instance
         .collection('clients')
         .where('clientName', isEqualTo: name)
@@ -1399,6 +1424,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   Future<double> _fetchClientBalance(String clientName) async {
     final name = clientName.trim();
     if (name.isEmpty) return 0.0;
+    if (!ConnectivityService.instance.isOnline) {
+      final local = ClientRepository.instance.findByName(name);
+      return local?.balance ?? 0.0;
+    }
     final query = await FirebaseFirestore.instance
         .collection('clients')
         .where('clientName', isEqualTo: name)
@@ -1411,13 +1440,32 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   }
 
   Future<int> _fetchNextInvoiceNumber() async {
-    final invoiceQuery = await FirebaseFirestore.instance
-        .collection(_mainCollection)
-        .orderBy('invoiceNumber', descending: true)
-        .limit(1)
-        .get();
-    if (invoiceQuery.docs.isEmpty) return 1;
-    return (invoiceQuery.docs.first['invoiceNumber'] as num).toInt() + 1;
+    if (!ConnectivityService.instance.isOnline) {
+      final lastNum =
+          (appMetaBox.get('lastInvoiceNumber', defaultValue: 1000) as int);
+      final nextNum = lastNum + 1;
+      await appMetaBox.put('lastInvoiceNumber', nextNum);
+      return nextNum;
+    }
+    try {
+      final invoiceQuery = await FirebaseFirestore.instance
+          .collection(_mainCollection)
+          .orderBy('invoiceNumber', descending: true)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 4));
+      if (invoiceQuery.docs.isEmpty) return 1;
+      final numVal =
+          (invoiceQuery.docs.first['invoiceNumber'] as num).toInt() + 1;
+      await appMetaBox.put('lastInvoiceNumber', numVal);
+      return numVal;
+    } catch (_) {
+      final lastNum =
+          (appMetaBox.get('lastInvoiceNumber', defaultValue: 1000) as int);
+      final nextNum = lastNum + 1;
+      await appMetaBox.put('lastInvoiceNumber', nextNum);
+      return nextNum;
+    }
   }
 
   Future<void> _commitClientAndBoxWrites({
@@ -2333,7 +2381,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               activePrice = sp1;
                             }
 
-                            if (sheetProduct.costPrice > 0 && activePrice < sheetProduct.costPrice) {
+                            if (sheetProduct.costPrice > 0 &&
+                                activePrice < sheetProduct.costPrice) {
                               final proceed = await showDialog<bool>(
                                 context: context,
                                 builder: (dialogCtx) => Directionality(
@@ -2344,13 +2393,20 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                         'سعر البيع ($activePrice) أقل من سعر التكلفة (${sheetProduct.costPrice}). هل تريد الاستمرار؟'),
                                     actions: [
                                       TextButton(
-                                        onPressed: () => Navigator.pop(dialogCtx, false),
-                                        child: const Text('تعديل السعر', style: TextStyle(color: Colors.red)),
+                                        onPressed: () =>
+                                            Navigator.pop(dialogCtx, false),
+                                        child: const Text('تعديل السعر',
+                                            style:
+                                                TextStyle(color: Colors.red)),
                                       ),
                                       ElevatedButton(
-                                        style: ElevatedButton.styleFrom(backgroundColor: Colors.green),
-                                        onPressed: () => Navigator.pop(dialogCtx, true),
-                                        child: const Text('استمرار', style: TextStyle(color: Colors.white)),
+                                        style: ElevatedButton.styleFrom(
+                                            backgroundColor: Colors.green),
+                                        onPressed: () =>
+                                            Navigator.pop(dialogCtx, true),
+                                        child: const Text('استمرار',
+                                            style:
+                                                TextStyle(color: Colors.white)),
                                       ),
                                     ],
                                   ),
@@ -2422,7 +2478,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                               _dataModified = true;
                             });
                           },
-                          child: Text(widget.isQuote ? 'حفظ عرض السعر' : 'متابعة',
+                          child: Text(
+                              widget.isQuote ? 'حفظ عرض السعر' : 'متابعة',
                               style: TextStyle(
                                   color: Colors.white,
                                   fontSize: 15.sp,
@@ -2999,7 +3056,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                     color: Colors.white,
                                   ),
                                 )
-                              : Text(widget.isQuote ? 'حفظ عرض السعر' : 'متابعة',
+                              : Text(
+                                  widget.isQuote ? 'حفظ عرض السعر' : 'متابعة',
                                   style: TextStyle(
                                       color: Colors.white,
                                       fontSize: 15.sp,
@@ -3977,7 +4035,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                                           overflow: TextOverflow
                                                               .ellipsis,
                                                         ),
-                                                        if (_getProductDescription(p['product']?.toString() ?? '').isNotEmpty)
+                                                        if (_getProductDescription(
+                                                                p['product']
+                                                                        ?.toString() ??
+                                                                    '')
+                                                            .isNotEmpty)
                                                           Text(
                                                             '💡 ${_getProductDescription(p['product']?.toString() ?? '')}',
                                                             textAlign:
@@ -3987,11 +4049,13 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                                               color: Colors.blue
                                                                   .shade800,
                                                               fontStyle:
-                                                                  FontStyle.italic,
+                                                                  FontStyle
+                                                                      .italic,
                                                             ),
                                                             maxLines: 1,
-                                                            overflow: TextOverflow
-                                                                .ellipsis,
+                                                            overflow:
+                                                                TextOverflow
+                                                                    .ellipsis,
                                                           ),
                                                       ],
                                                     ),

@@ -32,12 +32,16 @@ dependencies:
   screenshot:
   firebase_storage:
   hive: ^2.2.3
+  hive_flutter: ^1.1.0
+  connectivity_plus: ^6.1.4
   print_bluetooth_thermal: ^1.2.1
   url_launcher: ^6.3.2
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  hive_generator: ^2.0.1
+  build_runner: ^2.4.13
   flutter_launcher_icons: ^0.14.4
   flutter_lints: ^2.0.0
 

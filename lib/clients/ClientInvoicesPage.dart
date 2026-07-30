@@ -18,6 +18,7 @@ import '../Services/invoice_number_utils.dart';
 import '../Services/sales_invoice_actions_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
+import '../repositories/product_repository.dart';
 
 part 'invoice_edit_sheet.dart';
 
@@ -72,9 +73,32 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   final TextEditingController _searchController = TextEditingController();
   String _searchQuery = '';
 
+  /// Loads all products from the **local Hive cache** — zero Firestore reads.
+  /// Falls back to a direct Firestore fetch if the cache is empty (first launch
+  /// before [DataSyncService.syncOnStartup()] completes).
   Future<void> _fetchAllProds() async {
     try {
-      final qs = await FirebaseFirestore.instance.collection('products').get();
+      final cached = ProductRepository.instance.getAll();
+      if (cached.isNotEmpty) {
+        // Serve from local cache instantly (< 1ms).
+        if (mounted) {
+          setState(() {
+            _allProds = cached
+                .map((p) => _ProdInfo(
+                      name: p.name,
+                      sellingPrice1: p.sellingPrice1,
+                      sellingPrice2: p.sellingPrice2,
+                      sellingPrice3: p.sellingPrice3,
+                      quantity: p.quantity,
+                    ))
+                .toList();
+          });
+        }
+        return;
+      }
+      // Cache empty (first-ever launch): fall back to Firestore.
+      final qs =
+          await FirebaseFirestore.instance.collection('products').get();
       if (mounted) {
         setState(() {
           _allProds = qs.docs.map((doc) {
