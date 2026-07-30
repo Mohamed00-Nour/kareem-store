@@ -39,6 +39,7 @@ class _QuickAddProductSheet extends StatefulWidget {
 class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
   final _formKey = GlobalKey<FormState>();
   late final TextEditingController _nameCtrl;
+  final _descCtrl = TextEditingController();
   final _costCtrl = TextEditingController();
   final _sp1Ctrl = TextEditingController();
   final _sp2Ctrl = TextEditingController();
@@ -57,6 +58,7 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
   @override
   void dispose() {
     _nameCtrl.dispose();
+    _descCtrl.dispose();
     _costCtrl.dispose();
     _sp1Ctrl.dispose();
     _sp2Ctrl.dispose();
@@ -111,8 +113,10 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
             ((snap.docs.first['randomNumber'] ?? 0) as num).toInt() + 1;
       }
 
+      final descText = _descCtrl.text.trim();
       final data = <String, dynamic>{
         'name': name,
+        'description': descText.isNotEmpty ? descText : null,
         'sellingPrice1': _optionalDouble(_sp1Ctrl),
         'sellingPrice2': _optionalDouble(_sp2Ctrl),
         'sellingPrice3': _optionalDouble(_sp3Ctrl),
@@ -208,6 +212,8 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
                 ),
                 SizedBox(height: 8.h),
                 _field('اسم المنتج', _nameCtrl, required: true),
+                SizedBox(height: 10.h),
+                _field('الوصف', _descCtrl),
                 SizedBox(height: 10.h),
                 _field('سعر التكلفة', _costCtrl, isNumber: true),
                 SizedBox(height: 10.h),

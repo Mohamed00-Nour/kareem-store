@@ -1129,9 +1129,10 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     final formattedDate = invoiceDate.toString().split(' ')[0];
     final formattedTime = intl.DateFormat('hh:mm a').format(invoiceDate);
 
-    final totalSum = invoiceData.containsKey('totalSum')
-        ? (double.tryParse(invoiceData['totalSum'].toString()) ?? 0.0)
-        : 0.0;
+    final previousBalance = invoiceDynamicPreviousBalance(invoiceData);
+    final remainingOwed = invoiceSupplierRemainingOwed(invoiceData);
+    final totalSum = invoiceNum(invoiceData['totalSum']);
+    final discount = invoiceResolveDiscount(invoiceData);
 
     final invoiceId = invoice.id;
     final isExpanded = _expandedInvoiceIds.contains(invoiceId);
@@ -1251,23 +1252,64 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 10.0),
                 child: Row(
-                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  mainAxisAlignment: MainAxisAlignment.end,
                   children: [
-                    Text(
-                      'المدفوع: ${invoiceAmount(invoiceData['paidAmount'])}',
-                      style: const TextStyle(
-                        fontSize: 16,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.green,
-                      ),
-                    ),
-                    Text(
-                      'المتبقي من الفاتورة: ${invoiceAmount(totalSum - invoiceNum(invoiceData['paidAmount']))}',
-                      style: const TextStyle(
-                        fontSize: 14,
-                        fontWeight: FontWeight.bold,
-                        color: Colors.orange,
-                      ),
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Row(
+                          children: [
+                            Text(
+                              'الرصيد السابق: ${invoiceAmount(previousBalance)}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                            SizedBox(width: 20.w),
+                            Text(
+                              'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.bold,
+                              ),
+                            ),
+                          ],
+                        ),
+                        if (discount > 0)
+                          Text(
+                            'خصم الفاتورة: ${invoiceAmount(discount)}',
+                            style: const TextStyle(
+                              fontSize: 14,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red,
+                            ),
+                          ),
+                        Text(
+                          'المدفوع: ${invoiceAmount(invoiceData['paidAmount'])}',
+                          style: const TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green,
+                          ),
+                        ),
+                        Text(
+                          'المتبقي من الفاتورة: ${invoiceAmount(totalSum - invoiceNum(invoiceData['paidAmount']))}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange,
+                          ),
+                        ),
+                        Text(
+                          'المتبقي عليكم: ${invoiceAmount(remainingOwed)}',
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ],
                     ),
                   ],
                 ),

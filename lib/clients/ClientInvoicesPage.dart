@@ -77,18 +77,16 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       final qs = await FirebaseFirestore.instance.collection('products').get();
       if (mounted) {
         setState(() {
-          _allProds = qs.docs
-              .map((doc) {
-                final docData = doc.data() as Map<String, dynamic>?;
-                return _ProdInfo(
-                  name: (docData?['name'] ?? '').toString(),
-                  sellingPrice1: (docData?['sellingPrice1'] ?? 0.0).toDouble(),
-                  sellingPrice2: (docData?['sellingPrice2'] ?? 0.0).toDouble(),
-                  sellingPrice3: (docData?['sellingPrice3'] ?? 0.0).toDouble(),
-                  quantity: (docData?['quantity'] as num?)?.toDouble() ?? 0.0,
-                );
-              })
-              .toList();
+          _allProds = qs.docs.map((doc) {
+            final docData = doc.data() as Map<String, dynamic>?;
+            return _ProdInfo(
+              name: (docData?['name'] ?? '').toString(),
+              sellingPrice1: (docData?['sellingPrice1'] ?? 0.0).toDouble(),
+              sellingPrice2: (docData?['sellingPrice2'] ?? 0.0).toDouble(),
+              sellingPrice3: (docData?['sellingPrice3'] ?? 0.0).toDouble(),
+              quantity: (docData?['quantity'] as num?)?.toDouble() ?? 0.0,
+            );
+          }).toList();
         });
       }
     } catch (_) {}
@@ -227,9 +225,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       final Future<QuerySnapshot?> returnFuture = reset
           ? _returnInvoicesQuery().get()
           : Future<QuerySnapshot?>.value(null);
-      final Future<QuerySnapshot?> paymentFuture = reset
-          ? _paymentsQuery().get()
-          : Future<QuerySnapshot?>.value(null);
+      final Future<QuerySnapshot?> paymentFuture =
+          reset ? _paymentsQuery().get() : Future<QuerySnapshot?>.value(null);
       final snap = await invoiceFuture;
       final retSnap = await returnFuture;
       // Fetch payments separately with its own error guard (needs a Firestore index;
@@ -248,7 +245,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           _returnInvoices = retSnap?.docs ?? [];
           // Exclude 'sale' and 'return' types — those are shown as invoice cards
           _payments = (paySnap?.docs ?? []).where((doc) {
-            final t = (doc.data() as Map<String, dynamic>)['type']?.toString() ?? '';
+            final t =
+                (doc.data() as Map<String, dynamic>)['type']?.toString() ?? '';
             return t != 'sale' && t != 'return';
           }).toList();
         } else {
@@ -319,6 +317,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       return;
     }
 
+    if (notesText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال البيان')),
+      );
+      return;
+    }
+
     final isAddition = addText.isNotEmpty;
     final valueText = isAddition ? addText : deductText;
     double enteredBalance = double.tryParse(valueText) ?? 0.0;
@@ -370,7 +375,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         'balanceBefore': currentBalance,
         'type': isAddition ? 'addition' : 'deduction',
         'notes': notesText,
-        'timestamp': DateTime.now(), // local timestamp so it's immediately queryable
+        'timestamp':
+            DateTime.now(), // local timestamp so it's immediately queryable
       });
 
       // Update the box collection
@@ -783,9 +789,11 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                         .where('name', isEqualTo: oldName)
                                         .get();
                                     for (var doc in oldQ.docs) {
-                                      final docData = doc.data() as Map<String, dynamic>?;
+                                      final docData =
+                                          doc.data() as Map<String, dynamic>?;
                                       final qty =
-                                          ((docData?['quantity'] ?? 0.0) as num).toDouble();
+                                          ((docData?['quantity'] ?? 0.0) as num)
+                                              .toDouble();
                                       await FirebaseFirestore.instance
                                           .collection('products')
                                           .doc(doc.id)
@@ -809,9 +817,11 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                         .where('name', isEqualTo: newName)
                                         .get();
                                     for (var doc in newQ.docs) {
-                                      final docData = doc.data() as Map<String, dynamic>?;
+                                      final docData =
+                                          doc.data() as Map<String, dynamic>?;
                                       final qty =
-                                          ((docData?['quantity'] ?? 0.0) as num).toDouble();
+                                          ((docData?['quantity'] ?? 0.0) as num)
+                                              .toDouble();
                                       await FirebaseFirestore.instance
                                           .collection('products')
                                           .doc(doc.id)
@@ -836,7 +846,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                         .collection('invoices')
                                         .doc(invoiceId);
                                     final snap = await invoiceRef.get();
-                                    final snapData = snap.data() as Map<String, dynamic>?;
+                                    final snapData =
+                                        snap.data() as Map<String, dynamic>?;
                                     final List<Map<String, dynamic>> prods =
                                         List<Map<String, dynamic>>.from(
                                             snapData?['products'] ?? []);
@@ -974,7 +985,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       }
 
       final invoiceData = invoiceDoc.data() as Map<String, dynamic>?;
-      final products = List<Map<String, dynamic>>.from(invoiceData?['products'] ?? []);
+      final products =
+          List<Map<String, dynamic>>.from(invoiceData?['products'] ?? []);
 
       // Add the product's amount back to the product's quantity
       for (var product in products) {
@@ -1097,8 +1109,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           ),
           TextButton(
             onPressed: () => Navigator.of(ctx).pop(true),
-            child: const Text('حذف',
-                style: TextStyle(color: Colors.red)),
+            child: const Text('حذف', style: TextStyle(color: Colors.red)),
           ),
         ],
       ),
@@ -1463,7 +1474,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                       focusedBorder: const OutlineInputBorder(
                         borderSide: BorderSide(color: Colors.orange),
                       ),
-                      labelText: 'البيان / ملاحظات العملية (اختياري)',
+                      labelText: 'البيان / ملاحظات العملية (مطلوب)',
                       labelStyle: TextStyle(
                         color: Colors.black.withOpacity(0.7),
                         fontSize: 14.sp,
@@ -1496,6 +1507,24 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                       borderRadius: BorderRadius.circular(8.r)),
                 ),
                 onPressed: () {
+                  final deductText = _balanceController.text.trim();
+                  final addText = _addBalanceController.text.trim();
+                  final notesText = _notesController.text.trim();
+
+                  if (deductText.isEmpty && addText.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('يرجى إدخال المبلغ')),
+                    );
+                    return;
+                  }
+
+                  if (notesText.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('يرجى إدخال البيان')),
+                    );
+                    return;
+                  }
+
                   Navigator.pop(ctx);
                   _saveBalance();
                 },
@@ -1582,8 +1611,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           ),
           for (final p in rows)
             TableRow(
-              decoration:
-                  BoxDecoration(color: Colors.orange.withOpacity(0.12)),
+              decoration: BoxDecoration(color: Colors.orange.withOpacity(0.12)),
               children: [
                 cell(invoiceProductName(p), align: TextAlign.right),
                 cell(invoiceQty(p['amount'])),
@@ -1646,8 +1674,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                 cell(invoiceQty(p['amount'])),
                 cell(invoiceAmount(p['selectedPrice'])),
                 Padding(
-                  padding:
-                      EdgeInsets.symmetric(horizontal: 4.w, vertical: 8.h),
+                  padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 8.h),
                   child: Text(
                     discountLabel,
                     textAlign: TextAlign.center,
@@ -1685,7 +1712,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     final data = entry.data;
     final type = data['type']?.toString() ?? 'deduction';
     final amount = (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
-    final notes = (data['notes'] ?? data['description'] ?? '').toString().trim();
+    final notes =
+        (data['notes'] ?? data['description'] ?? '').toString().trim();
     final ts = data['timestamp'];
     final date = ts is Timestamp ? ts.toDate().toLocal() : null;
     final formattedDate =
@@ -1955,7 +1983,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   List<_InvoiceEntry> get _allMergedInvoices {
     final List<_InvoiceEntry> merged = [
       ..._invoices.map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.invoice)),
-      ..._returnInvoices.map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.returnInvoice)),
+      ..._returnInvoices
+          .map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.returnInvoice)),
       ..._payments.map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.payment)),
     ];
     merged.sort((a, b) => _entryDate(b).compareTo(_entryDate(a)));
@@ -1974,7 +2003,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       final data = entry.data;
       if (entry.kind == _EntryKind.payment) {
         // Search payments by notes or amount
-        final notes = (data['notes'] ?? data['description'] ?? '').toString().toLowerCase();
+        final notes = (data['notes'] ?? data['description'] ?? '')
+            .toString()
+            .toLowerCase();
         final amount = (data['enteredBalance'] ?? 0).toString();
         return notes.contains(q) || amount.contains(q);
       }
@@ -2137,8 +2168,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                         onPressed: () => _handleEditReturnInvoice(invoice),
                       ),
                       IconButton(
-                        icon: const Icon(Icons.delete_forever,
-                            color: Colors.red),
+                        icon:
+                            const Icon(Icons.delete_forever, color: Colors.red),
                         tooltip: 'حذف المرتجع',
                         onPressed: () => _handleDeleteReturnInvoice(invoice),
                       ),
@@ -2249,9 +2280,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                 icon: AnimatedSwitcher(
                   duration: const Duration(milliseconds: 200),
                   child: Icon(
-                    _showPayments
-                        ? Icons.payments
-                        : Icons.payments_outlined,
+                    _showPayments ? Icons.payments : Icons.payments_outlined,
                     key: ValueKey(_showPayments),
                     color: _showPayments
                         ? Colors.greenAccent.shade200
@@ -2288,8 +2317,110 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           ),
           body: Column(
             children: [
+              // ── Client Name & Balance Header Card ──
+              StreamBuilder<DocumentSnapshot>(
+                stream: FirebaseFirestore.instance
+                    .collection('clients')
+                    .doc(widget.clientId)
+                    .snapshots(),
+                builder: (context, snapshot) {
+                  String name = _clientName ?? 'جاري التحميل...';
+                  double balance = _currentClientBalance ?? 0.0;
+                  if (snapshot.hasData &&
+                      snapshot.data != null &&
+                      snapshot.data!.exists) {
+                    final data = snapshot.data!.data() as Map<String, dynamic>?;
+                    name = data?['clientName']?.toString() ??
+                        data?['name']?.toString() ??
+                        name;
+                    balance = (data?['balance'] as num?)?.toDouble() ?? balance;
+                  }
+
+                  return Container(
+                    margin: EdgeInsets.fromLTRB(12.w, 10.h, 12.w, 4.h),
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [
+                          Colors.orange.shade800,
+                          Colors.orange.shade600
+                        ],
+                        begin: Alignment.centerRight,
+                        end: Alignment.centerLeft,
+                      ),
+                      borderRadius: BorderRadius.circular(12.r),
+                      boxShadow: [
+                        BoxShadow(
+                          color: Colors.orange.withOpacity(0.25),
+                          blurRadius: 6,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Directionality(
+                      textDirection: TextDirection.rtl,
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Expanded(
+                            child: Row(
+                              children: [
+                                Icon(Icons.person,
+                                    color: Colors.white, size: 22.sp),
+                                SizedBox(width: 8.w),
+                                Expanded(
+                                  child: Text(
+                                    name,
+                                    overflow: TextOverflow.ellipsis,
+                                    maxLines: 1,
+                                    style: TextStyle(
+                                      fontSize: 16.sp,
+                                      fontWeight: FontWeight.bold,
+                                      color: Colors.white,
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                          SizedBox(width: 12.w),
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                                horizontal: 10.w, vertical: 4.h),
+                            decoration: BoxDecoration(
+                              color: Colors.black.withOpacity(0.2),
+                              borderRadius: BorderRadius.circular(8.r),
+                            ),
+                            child: Row(
+                              mainAxisSize: MainAxisSize.min,
+                              children: [
+                                Text(
+                                  'الرصيد: ',
+                                  style: TextStyle(
+                                    fontSize: 13.sp,
+                                    color: Colors.white.withOpacity(0.9),
+                                  ),
+                                ),
+                                Text(
+                                  '${balance.toStringAsFixed(2)} ج.م',
+                                  style: TextStyle(
+                                    fontSize: 15.sp,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  );
+                },
+              ),
               Padding(
-                padding: EdgeInsets.fromLTRB(12.w, 10.h, 12.w, 6.h),
+                padding: EdgeInsets.fromLTRB(12.w, 4.h, 12.w, 6.h),
                 child: Directionality(
                   textDirection: TextDirection.rtl,
                   child: TextField(
@@ -2352,7 +2483,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                     ),
                                   );
                                 }
-                                return _buildInvoiceCard(_filteredInvoices[index]);
+                                return _buildInvoiceCard(
+                                    _filteredInvoices[index]);
                               },
                             ),
                           ),
@@ -2905,7 +3037,7 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       children: [
         Scaffold(
           appBar: AppBar(
-            title: const Text('تاريخ الرصيد'),
+            title: const Text('تاريخ سس'),
             backgroundColor: Colors.black.withOpacity(0.7),
             foregroundColor: Colors.white,
           ),

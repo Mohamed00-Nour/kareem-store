@@ -78,6 +78,7 @@ class DailyInvoicesPdfService {
           periodStr: periodStr,
           nowStr: nowStr,
           salesInvoiceFooter: settings.salesInvoiceFooter,
+          storeName: settings.receiptStoreName.trim(),
           cell: cell,
           rtl: rtl,
           center: center,
@@ -99,6 +100,7 @@ class DailyInvoicesPdfService {
     required String periodStr,
     required String nowStr,
     required String salesInvoiceFooter,
+    required String storeName,
     required pw.TextStyle Function({bool bold, double fontSize}) cell,
     required pw.Widget Function(String text, {bool bold, double fontSize}) rtl,
     required pw.Widget Function(String text, {bool bold, double fontSize}) center,
@@ -137,7 +139,7 @@ class DailyInvoicesPdfService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              pw.Center(child: rtl('أبو مجدي للحدايد والعدد', bold: true, fontSize: 14)),
+              pw.Center(child: rtl(storeName.isNotEmpty ? storeName : 'أبو مجدي للحدايد والعدد', bold: true, fontSize: 14)),
               pw.SizedBox(height: 6),
               pw.Center(child: rtl('فاتورة مبيعات', bold: true, fontSize: 16)),
               pw.SizedBox(height: 4),

@@ -37,17 +37,23 @@ class SupplierStatementPdfService {
     final amiriBold = pw.Font.ttf(
         (await rootBundle.load('fonts/Amiri-Bold.ttf')).buffer.asByteData());
     final tajawalFont = pw.Font.ttf(
-        (await rootBundle.load('fonts/Tajawal-Medium.ttf')).buffer.asByteData());
+        (await rootBundle.load('fonts/Tajawal-Medium.ttf'))
+            .buffer
+            .asByteData());
 
     pw.TextStyle cell(
-            {bool bold = false, double fontSize = 10, bool useTajawal = false}) =>
+            {bool bold = false,
+            double fontSize = 10,
+            bool useTajawal = false}) =>
         pw.TextStyle(
           font: useTajawal ? tajawalFont : (bold ? amiriBold : amiriRegular),
           fontSize: fontSize,
         );
 
     pw.Widget rtl(String text,
-            {bool bold = false, double fontSize = 10, bool useTajawal = false}) =>
+            {bool bold = false,
+            double fontSize = 10,
+            bool useTajawal = false}) =>
         pw.Text(
           text,
           textDirection: pw.TextDirection.rtl,
@@ -63,7 +69,9 @@ class SupplierStatementPdfService {
     final reportFooter = settings.a4ReportFooter;
 
     pw.Widget center(String text,
-            {bool bold = false, double fontSize = 10, bool useTajawal = false}) =>
+            {bool bold = false,
+            double fontSize = 10,
+            bool useTajawal = false}) =>
         pw.Text(
           text,
           textDirection: pw.TextDirection.rtl,
@@ -76,7 +84,10 @@ class SupplierStatementPdfService {
     switch (type) {
       case SupplierStatementType.financial:
         final supplierBalance = supplierDoc.exists
-            ? (supplierDoc.data()?['totalBalance'] ?? supplierDoc.data()?['balance'] as num?)?.toDouble() ?? 0.0
+            ? (supplierDoc.data()?['totalBalance'] ??
+                        supplierDoc.data()?['balance'] as num?)
+                    ?.toDouble() ??
+                0.0
             : 0.0;
         await _addFinancialPages(
           pdf: pdf,
@@ -91,6 +102,7 @@ class SupplierStatementPdfService {
           rtl: rtl,
           center: center,
           reportFooter: reportFooter,
+          storeName: settings.receiptStoreName.trim(),
         );
         break;
       case SupplierStatementType.invoices:
@@ -106,6 +118,7 @@ class SupplierStatementPdfService {
           rtl: rtl,
           center: center,
           invoiceFooter: invoiceFooter,
+          storeName: settings.receiptStoreName.trim(),
           invoicesSubcollection: 'buying invoices',
           statementHeader: 'كشف حساب فواتير الشراء',
           invoiceTypeLabel: 'فاتورة شراء',
@@ -125,6 +138,7 @@ class SupplierStatementPdfService {
           rtl: rtl,
           center: center,
           invoiceFooter: invoiceFooter,
+          storeName: settings.receiptStoreName.trim(),
           invoicesSubcollection: 'returnBuyingInvoices',
           statementHeader: 'كشف حساب فواتير المرتجع للمورد',
           invoiceTypeLabel: 'فاتورة مرتجع شراء',
@@ -160,9 +174,16 @@ class SupplierStatementPdfService {
     required String periodStr,
     required String nowStr,
     required String reportFooter,
-    required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
-    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
-    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
+    required String storeName,
+    required pw.TextStyle Function(
+            {bool bold, double fontSize, bool useTajawal})
+        cell,
+    required pw.Widget Function(String text,
+            {bool bold, double fontSize, bool useTajawal})
+        rtl,
+    required pw.Widget Function(String text,
+            {bool bold, double fontSize, bool useTajawal})
+        center,
   }) async {
     final snap = await FirebaseFirestore.instance
         .collection('suppliers')
@@ -185,7 +206,8 @@ class SupplierStatementPdfService {
 
       final type = data['type']?.toString() ?? 'voucher';
       final voucherNumber = data['voucherNumber']?.toString() ?? '';
-      final notes = (data['notes'] ?? data['description'] ?? '').toString().trim();
+      final notes =
+          (data['notes'] ?? data['description'] ?? '').toString().trim();
 
       String description = '';
       if (type == 'buying') {
@@ -193,7 +215,9 @@ class SupplierStatementPdfService {
       } else if (type == 'buying_payment') {
         description = 'سداد فاتورة شراء';
       } else if (type == 'voucher' || type == 'deduction') {
-        description = voucherNumber.isNotEmpty ? 'سداد نقدي (إيصال #$voucherNumber)' : 'سداد نقدي للمورد';
+        description = voucherNumber.isNotEmpty
+            ? 'سداد نقدي (إيصال #$voucherNumber)'
+            : 'سداد نقدي للمورد';
       } else if (type == 'addition') {
         description = 'إضافة رصيد للمورد';
       } else if (type == 'opening') {
@@ -205,7 +229,8 @@ class SupplierStatementPdfService {
         description += ' ($notes)';
       }
 
-      final isIncrease = type == 'buying' || type == 'addition' || type == 'opening';
+      final isIncrease =
+          type == 'buying' || type == 'addition' || type == 'opening';
       final after = isIncrease ? before + entered : before - entered;
       final sign = isIncrease ? '+' : '-';
 
@@ -259,7 +284,12 @@ class SupplierStatementPdfService {
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
               pw.Center(
-                child: rtl('أبو مجدي للحدايد والعدد', bold: true, fontSize: 14),
+                child: rtl(
+                    storeName.isNotEmpty
+                        ? storeName
+                        : 'أبو مجدي للحدايد والعدد',
+                    bold: true,
+                    fontSize: 14),
               ),
               pw.SizedBox(height: 8),
               pw.Center(
@@ -272,7 +302,9 @@ class SupplierStatementPdfService {
               pw.SizedBox(height: 4),
               pw.Align(
                 alignment: pw.Alignment.centerLeft,
-                child: pw.Text('تاريخ التقرير: $nowStr', textDirection: pw.TextDirection.rtl, style: cell(fontSize: 8, useTajawal: true)),
+                child: pw.Text('تاريخ التقرير: $nowStr',
+                    textDirection: pw.TextDirection.rtl,
+                    style: cell(fontSize: 8, useTajawal: true)),
               ),
               pw.SizedBox(height: 16),
               if (payments.isEmpty)
@@ -281,7 +313,8 @@ class SupplierStatementPdfService {
                 )
               else
                 pw.Table(
-                  border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+                  border:
+                      pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                   columnWidths: const {
                     0: pw.FlexColumnWidth(1.5),
                     1: pw.FlexColumnWidth(3.0),
@@ -307,7 +340,8 @@ class SupplierStatementPdfService {
                           dataCell(DateFormat('dd/MM/yyyy')
                               .format(p['date'] as DateTime)),
                           dataCell(p['description'] as String),
-                          dataCell('${p['sign']}${(p['entered'] as double).toStringAsFixed(2)}'),
+                          dataCell(
+                              '${p['sign']}${(p['entered'] as double).toStringAsFixed(2)}'),
                           dataCell((p['before'] as double).toStringAsFixed(2)),
                           dataCell((p['after'] as double).toStringAsFixed(2)),
                         ],
@@ -316,7 +350,8 @@ class SupplierStatementPdfService {
                 ),
               pw.Spacer(),
               pw.Container(
-                padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+                padding:
+                    const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 10),
                 decoration: const pw.BoxDecoration(
                   color: PdfColors.grey100,
                   border: pw.Border(
@@ -327,7 +362,8 @@ class SupplierStatementPdfService {
                 child: pw.Row(
                   mainAxisAlignment: pw.MainAxisAlignment.spaceBetween,
                   children: [
-                    rtl(invoiceAmount(supplierBalance), bold: true, fontSize: 11),
+                    rtl(invoiceAmount(supplierBalance),
+                        bold: true, fontSize: 11),
                     rtl('الرصيد الحالي للمورد:', bold: true, fontSize: 11),
                   ],
                 ),
@@ -354,9 +390,16 @@ class SupplierStatementPdfService {
     required String periodStr,
     required String nowStr,
     required String invoiceFooter,
-    required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
-    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
-    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
+    required String storeName,
+    required pw.TextStyle Function(
+            {bool bold, double fontSize, bool useTajawal})
+        cell,
+    required pw.Widget Function(String text,
+            {bool bold, double fontSize, bool useTajawal})
+        rtl,
+    required pw.Widget Function(String text,
+            {bool bold, double fontSize, bool useTajawal})
+        center,
     required String invoicesSubcollection,
     required String statementHeader,
     required String invoiceTypeLabel,
@@ -402,13 +445,12 @@ class SupplierStatementPdfService {
     for (final doc in invoices) {
       final data = Map<String, dynamic>.from(doc.data() as Map);
       final date = (data['date'] as Timestamp).toDate();
-      final products =
-          List<Map<String, dynamic>>.from(data['products'] ?? []);
-      final totalSum =
-          (data['totalSum'] as num?)?.toDouble() ?? 0.0;
-      final paid =
-          (data['paidAmount'] as num?)?.toDouble() ?? 0.0;
-      final invoiceNumber = data['invoiceNumber']?.toString() ?? data['invoiceId']?.toString() ?? '-';
+      final products = List<Map<String, dynamic>>.from(data['products'] ?? []);
+      final totalSum = (data['totalSum'] as num?)?.toDouble() ?? 0.0;
+      final paid = (data['paidAmount'] as num?)?.toDouble() ?? 0.0;
+      final invoiceNumber = data['invoiceNumber']?.toString() ??
+          data['invoiceId']?.toString() ??
+          '-';
 
       pw.Widget h(String t) => pw.Padding(
             padding: const pw.EdgeInsets.all(4),
@@ -435,7 +477,12 @@ class SupplierStatementPdfService {
               crossAxisAlignment: pw.CrossAxisAlignment.stretch,
               children: [
                 pw.Center(
-                    child: rtl('أبو مجدي للحدايد والعدد', bold: true, fontSize: 12)),
+                    child: rtl(
+                        storeName.isNotEmpty
+                            ? storeName
+                            : 'أبو مجدي للحدايد والعدد',
+                        bold: true,
+                        fontSize: 12)),
                 pw.SizedBox(height: 6),
                 pw.Center(
                     child: rtl(statementHeader, bold: true, fontSize: 14)),
@@ -477,15 +524,16 @@ class SupplierStatementPdfService {
                         children: [
                           d((p['product'] ?? '').toString()),
                           d(p['amount']?.toString() ?? ''),
-                          d(invoiceAmount(p['buyingPrice'] ?? p['selectedPrice'] ?? p['price'])),
+                          d(invoiceAmount(p['buyingPrice'] ??
+                              p['selectedPrice'] ??
+                              p['price'])),
                           d(invoiceAmount(p['total'] ?? p['totalCost'])),
                         ],
                       ),
                   ],
                 ),
                 pw.SizedBox(height: 12),
-                rtl('إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
-                    bold: true),
+                rtl('إجمالي الفاتورة: ${invoiceAmount(totalSum)}', bold: true),
                 rtl('المدفوع: ${invoiceAmount(paid)}'),
                 rtl('المتبقي من الفاتورة: ${invoiceAmount(totalSum - paid)}'),
                 if ((data['notes']?.toString() ?? '').isNotEmpty) ...[

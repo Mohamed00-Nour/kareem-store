@@ -8,7 +8,8 @@ class EditProductPage extends StatefulWidget {
   final String productId;
   final Map<String, dynamic> productData;
 
-  const EditProductPage({required this.productId, required this.productData, super.key});
+  const EditProductPage(
+      {required this.productId, required this.productData, super.key});
 
   @override
   _EditProductPageState createState() => _EditProductPageState();
@@ -17,6 +18,7 @@ class EditProductPage extends StatefulWidget {
 class _EditProductPageState extends State<EditProductPage> {
   final _formKey = GlobalKey<FormState>();
   late TextEditingController _nameController;
+  late TextEditingController _descriptionController;
   late TextEditingController _sellingPrice1Controller;
   late TextEditingController _sellingPrice2Controller;
   late TextEditingController _sellingPrice3Controller;
@@ -37,14 +39,24 @@ class _EditProductPageState extends State<EditProductPage> {
   void initState() {
     super.initState();
     _nameController = TextEditingController(text: widget.productData['name']);
-    _sellingPrice1Controller = TextEditingController(text: widget.productData['sellingPrice1'].toString());
-    _sellingPrice2Controller = TextEditingController(text: widget.productData['sellingPrice2'].toString());
-    _sellingPrice3Controller = TextEditingController(text: widget.productData['sellingPrice3'].toString());
-    _costPriceController = TextEditingController(text: widget.productData['costPrice'].toString());
-    _quantityController = TextEditingController(text: widget.productData['quantity'].toString());
-    _alertAmountController = TextEditingController(text: widget.productData['alertAmount'].toString());
-    _imageController = TextEditingController(text: widget.productData['image'] ?? '');
-    _randomNumberController = TextEditingController(text: widget.productData['randomNumber'].toString());
+    _descriptionController =
+        TextEditingController(text: widget.productData['description'] ?? '');
+    _sellingPrice1Controller = TextEditingController(
+        text: widget.productData['sellingPrice1'].toString());
+    _sellingPrice2Controller = TextEditingController(
+        text: widget.productData['sellingPrice2'].toString());
+    _sellingPrice3Controller = TextEditingController(
+        text: widget.productData['sellingPrice3'].toString());
+    _costPriceController =
+        TextEditingController(text: widget.productData['costPrice'].toString());
+    _quantityController =
+        TextEditingController(text: widget.productData['quantity'].toString());
+    _alertAmountController = TextEditingController(
+        text: widget.productData['alertAmount'].toString());
+    _imageController =
+        TextEditingController(text: widget.productData['image'] ?? '');
+    _randomNumberController = TextEditingController(
+        text: widget.productData['randomNumber'].toString());
     _departmentController = TextEditingController();
     _selectedDepartment = widget.productData['department'];
     _onDemand = widget.productData['onDemand'] == true;
@@ -52,11 +64,31 @@ class _EditProductPageState extends State<EditProductPage> {
     _loadDepartments();
   }
 
+  @override
+  void dispose() {
+    _nameController.dispose();
+    _descriptionController.dispose();
+    _sellingPrice1Controller.dispose();
+    _sellingPrice2Controller.dispose();
+    _sellingPrice3Controller.dispose();
+    _costPriceController.dispose();
+    _quantityController.dispose();
+    _alertAmountController.dispose();
+    _imageController.dispose();
+    _randomNumberController.dispose();
+    _departmentController.dispose();
+    super.dispose();
+  }
+
   Future<void> _loadDepartments() async {
     try {
-      QuerySnapshot querySnapshot = await FirebaseFirestore.instance.collection('departments').get();
+      QuerySnapshot querySnapshot =
+          await FirebaseFirestore.instance.collection('departments').get();
       setState(() {
-        _departments = querySnapshot.docs.map((doc) => doc['name'] as String).toSet().toList(); // Ensure unique values
+        _departments = querySnapshot.docs
+            .map((doc) => doc['name'] as String)
+            .toSet()
+            .toList(); // Ensure unique values
         if (!_departments.contains(_selectedDepartment)) {
           _selectedDepartment = null; // Reset if the value is not in the list
         }
@@ -72,7 +104,9 @@ class _EditProductPageState extends State<EditProductPage> {
     if (_departmentController.text.isNotEmpty) {
       String newDepartment = _departmentController.text;
       try {
-        await FirebaseFirestore.instance.collection('departments').add({'name': newDepartment});
+        await FirebaseFirestore.instance
+            .collection('departments')
+            .add({'name': newDepartment});
         setState(() {
           _departments.add(newDepartment);
           _selectedDepartment = newDepartment;
@@ -95,6 +129,9 @@ class _EditProductPageState extends State<EditProductPage> {
           .doc(widget.productId)
           .update({
         'name': _nameController.text,
+        'description': _descriptionController.text.trim().isNotEmpty
+            ? _descriptionController.text.trim()
+            : null,
         'sellingPrice1': double.parse(_sellingPrice1Controller.text),
         'sellingPrice2': double.parse(_sellingPrice2Controller.text),
         'sellingPrice3': double.parse(_sellingPrice3Controller.text),
@@ -260,7 +297,8 @@ class _EditProductPageState extends State<EditProductPage> {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('تعديل المنتج', style: TextStyle(fontSize: 20.sp, color: Colors.white)),
+        title: Text('تعديل المنتج',
+            style: TextStyle(fontSize: 20.sp, color: Colors.white)),
         backgroundColor: Colors.black.withOpacity(0.7),
       ),
       body: Stack(
@@ -272,6 +310,9 @@ class _EditProductPageState extends State<EditProductPage> {
               child: ListView(
                 children: [
                   _buildCard('اسم المنتج', _nameController, TextInputType.text),
+                  _buildCard(
+                      'الوصف', _descriptionController, TextInputType.text,
+                      isOptional: true),
                   Row(
                     children: [
                       Expanded(
@@ -372,7 +413,9 @@ class _EditProductPageState extends State<EditProductPage> {
     );
   }
 
-  Widget _buildCard(String label, TextEditingController controller, TextInputType keyboardType, {bool isOptional = false}) {
+  Widget _buildCard(String label, TextEditingController controller,
+      TextInputType keyboardType,
+      {bool isOptional = false}) {
     return Card(
       margin: EdgeInsets.symmetric(horizontal: 20.w, vertical: 8.h),
       elevation: 2,
@@ -407,7 +450,8 @@ class ProductChangesPage extends StatelessWidget {
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
-        title: Text('تغييرات المنتج', style: TextStyle(fontSize: 20.sp, color: Colors.white)),
+        title: Text('تغييرات المنتج',
+            style: TextStyle(fontSize: 20.sp, color: Colors.white)),
         backgroundColor: Colors.black.withOpacity(0.7),
       ),
       body: StreamBuilder<QuerySnapshot>(
@@ -427,16 +471,35 @@ class ProductChangesPage extends StatelessWidget {
             scrollDirection: Axis.horizontal,
             child: DataTable(
               columns: [
-                DataColumn(label: Text('التاريخ', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('الكمية', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.bold))),
-                DataColumn(label: Text('النوع', style: TextStyle(fontSize: 18.sp, fontWeight: FontWeight.bold))),
+                DataColumn(
+                    label: Text('التاريخ',
+                        style: TextStyle(
+                            fontSize: 18.sp, fontWeight: FontWeight.bold))),
+                DataColumn(
+                    label: Text('الكمية',
+                        style: TextStyle(
+                            fontSize: 18.sp, fontWeight: FontWeight.bold))),
+                DataColumn(
+                    label: Text('النوع',
+                        style: TextStyle(
+                            fontSize: 18.sp, fontWeight: FontWeight.bold))),
               ],
               rows: changes.map((change) {
                 return DataRow(cells: [
-                  DataCell(Text((change['date'] as Timestamp).toDate().toString().split(' ')[0], style: TextStyle(fontSize: 14.sp))),
-                  DataCell(Text(invoiceAmount(change['amount']), style: TextStyle(fontSize: 14.sp))),
                   DataCell(Text(
-                    change['type'] == 'decrease' ? 'بيع' : change['type'] == 'update' ? 'تحديث' : 'شراء',
+                      (change['date'] as Timestamp)
+                          .toDate()
+                          .toString()
+                          .split(' ')[0],
+                      style: TextStyle(fontSize: 14.sp))),
+                  DataCell(Text(invoiceAmount(change['amount']),
+                      style: TextStyle(fontSize: 14.sp))),
+                  DataCell(Text(
+                    change['type'] == 'decrease'
+                        ? 'بيع'
+                        : change['type'] == 'update'
+                            ? 'تحديث'
+                            : 'شراء',
                     style: TextStyle(fontSize: 14.sp),
                   )),
                 ]);

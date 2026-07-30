@@ -86,6 +86,7 @@ class ClientStatementPdfService {
           rtl: rtl,
           center: center,
           reportFooter: reportFooter,
+          storeName: settings.receiptStoreName.trim(),
         );
         break;
       case ClientStatementType.invoices:
@@ -101,6 +102,7 @@ class ClientStatementPdfService {
           rtl: rtl,
           center: center,
           invoiceFooter: invoiceFooter,
+          storeName: settings.receiptStoreName.trim(),
           invoicesSubcollection: 'invoices',
           statementHeader: 'كشف حساب الفواتير',
           invoiceTypeLabel: 'فاتورة مبيعات',
@@ -120,6 +122,7 @@ class ClientStatementPdfService {
           rtl: rtl,
           center: center,
           invoiceFooter: invoiceFooter,
+          storeName: settings.receiptStoreName.trim(),
           invoicesSubcollection: 'returnInvoices',
           statementHeader: 'كشف حساب فواتير المرتجع',
           invoiceTypeLabel: 'فاتورة مرتجع',
@@ -155,6 +158,7 @@ class ClientStatementPdfService {
     required String periodStr,
     required String nowStr,
     required String reportFooter,
+    required String storeName,
     required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
     required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
     required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
@@ -297,7 +301,7 @@ class ClientStatementPdfService {
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
               pw.Center(
-                child: rtl('أبو مجدي للحدايد والعدد', bold: true, fontSize: 14),
+                child: rtl(storeName.isNotEmpty ? storeName : 'أبو مجدي للحدايد والعدد', bold: true, fontSize: 14),
               ),
               pw.SizedBox(height: 8),
               pw.Center(
@@ -392,6 +396,7 @@ class ClientStatementPdfService {
     required String periodStr,
     required String nowStr,
     required String invoiceFooter,
+    required String storeName,
     required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
     required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
     required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
@@ -476,7 +481,7 @@ class ClientStatementPdfService {
               crossAxisAlignment: pw.CrossAxisAlignment.stretch,
               children: [
                 pw.Center(
-                    child: rtl('أبو مجدي للحدايد والعدد', bold: true, fontSize: 12)),
+                    child: rtl(storeName.isNotEmpty ? storeName : 'أبو مجدي للحدايد والعدد', bold: true, fontSize: 12)),
                 pw.SizedBox(height: 6),
                 pw.Center(
                     child: rtl(statementHeader, bold: true, fontSize: 14)),
