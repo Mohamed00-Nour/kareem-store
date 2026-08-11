@@ -1,6 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../../sync/connectivity_service.dart';
+import '../../sync/sync_queue_manager.dart';
+import '../../repositories/product_repository.dart';
 
 /// Opens a bottom sheet to create a product in Firestore without leaving the invoice.
 /// Returns the saved product map (including [id]) or null if cancelled.
@@ -78,6 +81,10 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
   }
 
   Future<bool> _productExists(String name) async {
+    if (!ConnectivityService.instance.isOnline) {
+      final local = ProductRepository.instance.findByName(name);
+      return local != null;
+    }
     final q = await FirebaseFirestore.instance
         .collection('products')
         .where('name', isEqualTo: name)
@@ -102,15 +109,20 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
         return;
       }
 
-      final snap = await FirebaseFirestore.instance
-          .collection('products')
-          .orderBy('randomNumber', descending: true)
-          .limit(1)
-          .get();
       int nextRandom = 1;
-      if (snap.docs.isNotEmpty) {
-        nextRandom =
-            ((snap.docs.first['randomNumber'] ?? 0) as num).toInt() + 1;
+      if (ConnectivityService.instance.isOnline) {
+        try {
+          final snap = await FirebaseFirestore.instance
+              .collection('products')
+              .orderBy('randomNumber', descending: true)
+              .limit(1)
+              .get()
+              .timeout(const Duration(seconds: 4));
+          if (snap.docs.isNotEmpty) {
+            nextRandom =
+                ((snap.docs.first['randomNumber'] ?? 0) as num).toInt() + 1;
+          }
+        } catch (_) {}
       }
 
       final descText = _descCtrl.text.trim();
@@ -129,12 +141,30 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
         'retail': widget.showRetailOption && _retail,
       };
 
-      final ref =
-          await FirebaseFirestore.instance.collection('products').add(data);
-      await ref.update({'id': ref.id});
+      String productId;
+      if (ConnectivityService.instance.isOnline) {
+        final ref =
+            await FirebaseFirestore.instance.collection('products').add(data);
+        productId = ref.id;
+        data['id'] = productId;
+        await ref.update({'id': productId});
+      } else {
+        productId = FirebaseFirestore.instance.collection('products').doc().id;
+        data['id'] = productId;
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'createProduct',
+          payload: {
+            'productId': productId,
+            'data': data,
+          },
+        );
+      }
+
+      // Update local Hive cache immediately so product is instantly available
+      await ProductRepository.instance.upsertLocal(productId, data);
 
       if (!mounted) return;
-      Navigator.pop(context, {...data, 'id': ref.id});
+      Navigator.pop(context, {...data, 'id': productId});
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

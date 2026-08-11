@@ -5,6 +5,9 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'dart:io';
 import 'package:image_picker/image_picker.dart';
 import 'dart:math';
+import '../../sync/connectivity_service.dart';
+import '../../sync/sync_queue_manager.dart';
+import '../../repositories/product_repository.dart';
 
 class DataEntryScreen extends StatefulWidget {
   const DataEntryScreen({super.key});
@@ -47,6 +50,7 @@ class _DataEntryScreenState extends State<DataEntryScreen> {
 
   Future<void> _loadDepartments() async {
     try {
+      if (!ConnectivityService.instance.isOnline) return;
       QuerySnapshot querySnapshot =
           await FirebaseFirestore.instance.collection('departments').get();
       setState(() {
@@ -64,6 +68,15 @@ Future<void> _addDepartment() async {
     String newDepartment = _departmentController.text.trim();
 
     try {
+      if (!ConnectivityService.instance.isOnline) {
+        setState(() {
+          if (!_departments.contains(newDepartment)) {
+            _departments.add(newDepartment);
+          }
+          _departmentController.clear();
+        });
+        return;
+      }
       // Check if the department already exists
       QuerySnapshot query = await FirebaseFirestore.instance
           .collection('departments')
@@ -105,6 +118,10 @@ double _optionalDouble(TextEditingController controller) {
 }
 
 Future<bool> _productExistsInDatabase(String productName) async {
+  if (!ConnectivityService.instance.isOnline) {
+    final local = ProductRepository.instance.findByName(productName);
+    return local != null;
+  }
   final query = await FirebaseFirestore.instance
       .collection('products')
       .where('name', isEqualTo: productName)
@@ -140,7 +157,6 @@ Future<void> _addProduct() async {
     }
 
     final random = Random();
-    // Firestore document IDs cannot contain "/"; use auto id, store name as field.
     final docId =
         FirebaseFirestore.instance.collection('products').doc().id;
     final newProduct = Product(
@@ -209,10 +225,23 @@ Future<void> _saveData() async {
         skippedCount++;
         continue;
       }
-      if (product.image != null) {
-        product.image = await _uploadImage(File(product.image!));
+      final productMap = product.toMap();
+      if (ConnectivityService.instance.isOnline) {
+        if (product.image != null) {
+          productMap['image'] = await _uploadImage(File(product.image!));
+        }
+        await productsRef.doc(product.id).set(productMap);
+      } else {
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'createProduct',
+          payload: {
+            'productId': product.id,
+            'data': productMap,
+          },
+        );
       }
-      await productsRef.doc(product.id).set(product.toMap());
+      // Save to local Hive cache immediately
+      await ProductRepository.instance.upsertLocal(product.id, productMap);
       savedCount++;
     }
 

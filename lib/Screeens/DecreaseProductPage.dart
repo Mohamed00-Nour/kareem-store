@@ -22,6 +22,7 @@ import 'home_page.dart';
 import '../sync/connectivity_service.dart';
 import '../sync/sync_queue_manager.dart';
 import '../repositories/client_repository.dart';
+import '../repositories/product_repository.dart';
 import '../local_db/hive_init.dart';
 
 class DecreaseProductPage extends StatefulWidget {
@@ -831,8 +832,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
   Future<void> _fetchProducts() async {
     try {
+      if (!ConnectivityService.instance.isOnline) {
+        // Offline: load from local Hive cache
+        _loadProductsFromLocalCache();
+        return;
+      }
       QuerySnapshot querySnapshot =
           await FirebaseFirestore.instance.collection('products').get();
+      if (!mounted) return;
       setState(() {
         _products
           ..clear()
@@ -846,10 +853,33 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       print('the number of the products ' + _products.length.toString());
     } catch (e) {
       print('Error fetching products: $e');
-      setState(() {
-        _isFetching = false;
-      });
+      // Fallback to local cache on network error
+      _loadProductsFromLocalCache();
     }
+  }
+
+  /// Loads products from Hive local cache (used when offline or on error).
+  void _loadProductsFromLocalCache() {
+    if (!mounted) return;
+    final locals = ProductRepository.instance.getAll();
+    setState(() {
+      _products
+        ..clear()
+        ..addAll(locals.map((p) => Product(
+              id: p.id,
+              randomNumber: 0,
+              name: p.name,
+              description: p.description,
+              sellingPrice1: p.sellingPrice1,
+              sellingPrice2: p.sellingPrice2,
+              sellingPrice3: p.sellingPrice3,
+              costPrice: p.costPrice,
+              quantity: p.quantity,
+              alertAmount: 0,
+              retail: false,
+            )));
+      _isFetching = false;
+    });
   }
 
   Iterable<Product> _productsMatchingSearch(String query) {
@@ -902,15 +932,22 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
   Future<void> _fetchClients() async {
     try {
+      if (!ConnectivityService.instance.isOnline) {
+        // Offline: load from local Hive cache
+        _loadClientsFromLocalCache();
+        return;
+      }
       final querySnapshot =
           await FirebaseFirestore.instance.collection('clients').get();
       final names = <String>[];
       for (final doc in querySnapshot.docs) {
         final data = doc.data() as Map<String, dynamic>?;
-        final name = data?['clientName'];
-        if (name != null && name is String && name.trim().isNotEmpty) {
+        if (data == null) continue;
+        final name = (data['clientName'] ?? data['name'])?.toString();
+        if (name != null && name.trim().isNotEmpty) {
           names.add(name.trim());
         }
+        await ClientRepository.instance.upsertLocal(doc.id, data);
       }
       if (mounted) {
         setState(() {
@@ -919,6 +956,56 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       }
     } catch (e) {
       print('Error fetching clients: $e');
+      // Fallback to local cache on network error
+      _loadClientsFromLocalCache();
+    }
+  }
+
+  /// Loads client names from Hive local cache (used when offline or on error).
+  Future<void> _loadClientsFromLocalCache() async {
+    if (!mounted) return;
+    final locals = ClientRepository.instance.getAll();
+    final names = locals
+        .map((c) => c.name.trim())
+        .where((n) => n.isNotEmpty)
+        .toList();
+
+    if (names.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _clients = names;
+        });
+      }
+      return;
+    }
+
+    // Fallback: If Hive has empty names or no clients stored, read from Firestore offline SDK cache
+    try {
+      final cacheSnap = await FirebaseFirestore.instance
+          .collection('clients')
+          .get(const GetOptions(source: Source.cache));
+
+      final fallbackNames = <String>[];
+      for (final doc in cacheSnap.docs) {
+        final data = doc.data();
+        final name = (data['clientName'] ?? data['name'])?.toString();
+        if (name != null && name.trim().isNotEmpty) {
+          fallbackNames.add(name.trim());
+        }
+        await ClientRepository.instance.upsertLocal(doc.id, data);
+      }
+
+      if (mounted && fallbackNames.isNotEmpty) {
+        setState(() {
+          _clients = fallbackNames;
+        });
+      }
+    } catch (_) {
+      if (mounted && locals.isNotEmpty) {
+        setState(() {
+          _clients = locals.map((c) => c.id).toList();
+        });
+      }
     }
   }
 
@@ -944,7 +1031,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         );
       },
     );
-    if (picked != null) {
+    if (picked != null && mounted) {
       setState(() {
         _selectedDate = picked;
         _dateController.text = "${picked.toLocal()}".split(' ')[0];
@@ -995,21 +1082,29 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     try {
       String? resolvedClientId;
       if (effectiveClient.isNotEmpty) {
-        final clientQuery = await FirebaseFirestore.instance
-            .collection('clients')
-            .where('clientName', isEqualTo: effectiveClient)
-            .limit(1)
-            .get();
-        if (clientQuery.docs.isNotEmpty) {
-          resolvedClientId = clientQuery.docs.first.id;
+        if (ConnectivityService.instance.isOnline) {
+          final clientQuery = await FirebaseFirestore.instance
+              .collection('clients')
+              .where('clientName', isEqualTo: effectiveClient)
+              .limit(1)
+              .get();
+          if (clientQuery.docs.isNotEmpty) {
+            resolvedClientId = clientQuery.docs.first.id;
+          } else {
+            final newRef = FirebaseFirestore.instance.collection('clients').doc();
+            resolvedClientId = newRef.id;
+            await newRef.set({
+              'clientName': effectiveClient,
+              'balance': 0.0,
+              'id': resolvedClientId,
+            });
+          }
         } else {
-          final newRef = FirebaseFirestore.instance.collection('clients').doc();
-          resolvedClientId = newRef.id;
-          await newRef.set({
-            'clientName': effectiveClient,
-            'balance': 0.0,
-            'id': resolvedClientId,
-          });
+          // Offline: resolve client ID from local Hive cache
+          final localClient = ClientRepository.instance.findByName(effectiveClient);
+          resolvedClientId = localClient?.id;
+          // If the client doesn't exist locally, generate a temporary ID
+          resolvedClientId ??= FirebaseFirestore.instance.collection('clients').doc().id;
         }
       }
 
@@ -1021,30 +1116,19 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             : invoiceDiscount;
         final totalSumFinal = totalSum - effectiveDiscountAmt;
 
-        String? resolvedClientIdForQuote;
-        if (effectiveClient.isNotEmpty) {
-          final cq = await FirebaseFirestore.instance
-              .collection('clients')
-              .where('clientName', isEqualTo: effectiveClient)
-              .limit(1)
-              .get();
-          if (cq.docs.isNotEmpty) {
-            resolvedClientIdForQuote = cq.docs.first.id;
-          }
-        }
+        // Use the already-resolved client ID from above
+        final resolvedClientIdForQuote = resolvedClientId ?? '';
 
         final docId = (_editingRootInvoiceId != null &&
                 _editingRootInvoiceId!.isNotEmpty)
             ? _editingRootInvoiceId!
             : FirebaseFirestore.instance.collection('price_quotes').doc().id;
 
-        final quoteRef =
-            FirebaseFirestore.instance.collection('price_quotes').doc(docId);
         final quoteData = <String, dynamic>{
           'id': docId,
           'clientName': effectiveClient,
-          'clientId': resolvedClientIdForQuote ?? '',
-          'date': _selectedDate,
+          'clientId': resolvedClientIdForQuote,
+          'date': _selectedDate?.toIso8601String(),
           'totalSum': totalSumFinal,
           'paidAmount': effectivePaid,
           'balance': totalSumFinal - effectivePaid,
@@ -1054,31 +1138,72 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'invoiceDiscount': effectiveDiscountAmt,
           'discountIsPercent': false,
           'products': List<Map<String, dynamic>>.from(_addedProducts),
-          'createdAt':
-              _originalInvoice?['createdAt'] ?? FieldValue.serverTimestamp(),
         };
-        await quoteRef.set(quoteData, SetOptions(merge: true));
+
+        if (ConnectivityService.instance.isOnline) {
+          final quoteRef =
+              FirebaseFirestore.instance.collection('price_quotes').doc(docId);
+          quoteData['date'] = _selectedDate; // Firestore can handle DateTime
+          quoteData['createdAt'] =
+              _originalInvoice?['createdAt'] ?? FieldValue.serverTimestamp();
+          await quoteRef.set(quoteData, SetOptions(merge: true));
+        } else {
+          // Offline: quotes don't modify stock/balance, just enqueue the doc write
+          await SyncQueueManager.instance.enqueue(
+            operationType: 'createQuote',
+            payload: {
+              'quoteId': docId,
+              'quoteData': quoteData,
+            },
+          );
+        }
 
         _lastInvoice = Map<String, dynamic>.from(quoteData);
       } else if (_isEditing &&
           _originalInvoice != null &&
           _editingRootInvoiceId != null) {
         final totalSumBeforeDiscount = _calculateTotalSum();
-        await SalesInvoiceUpdateService.updateSalesInvoice(
-          rootInvoiceId: _editingRootInvoiceId!,
-          clientSubInvoiceDocId: _editingClientSubDocId,
-          originalInvoice: _originalInvoice!,
-          newProducts: List<Map<String, dynamic>>.from(_addedProducts),
-          clientName: effectiveClient,
-          selectedDate: _selectedDate,
-          paidAmount: effectivePaid,
-          paymentMethod: paymentMethod,
-          notes: notes,
-          invoiceDiscount: invoiceDiscount,
-          discountIsPercent: discountIsPercent,
-          totalSumBeforeDiscount: totalSumBeforeDiscount,
-          sourceCollection: _editingSourceCollection,
-        );
+        if (ConnectivityService.instance.isOnline) {
+          await SalesInvoiceUpdateService.updateSalesInvoice(
+            rootInvoiceId: _editingRootInvoiceId!,
+            clientSubInvoiceDocId: _editingClientSubDocId,
+            originalInvoice: _originalInvoice!,
+            newProducts: List<Map<String, dynamic>>.from(_addedProducts),
+            clientName: effectiveClient,
+            selectedDate: _selectedDate,
+            paidAmount: effectivePaid,
+            paymentMethod: paymentMethod,
+            notes: notes,
+            invoiceDiscount: invoiceDiscount,
+            discountIsPercent: discountIsPercent,
+            totalSumBeforeDiscount: totalSumBeforeDiscount,
+            sourceCollection: _editingSourceCollection,
+          );
+        } else {
+          // Offline: enqueue edit for later sync
+          await SyncQueueManager.instance.enqueue(
+            operationType: 'editInvoice',
+            payload: {
+              'clientId': resolvedClientId ?? '',
+              'invoiceId': _editingRootInvoiceId!,
+              'updateData': {
+                'clientName': effectiveClient,
+                'date': _selectedDate?.toIso8601String(),
+                'paidAmount': effectivePaid,
+                'paymentMethod': paymentMethod,
+                'notes': notes,
+                'invoiceDiscount': discountIsPercent
+                    ? totalSumBeforeDiscount * invoiceDiscount / 100
+                    : invoiceDiscount,
+                'products': List<Map<String, dynamic>>.from(_addedProducts),
+                'totalSum': totalSumBeforeDiscount -
+                    (discountIsPercent
+                        ? totalSumBeforeDiscount * invoiceDiscount / 100
+                        : invoiceDiscount),
+              },
+            },
+          );
+        }
 
         final effectiveDiscountAmt = discountIsPercent
             ? totalSumBeforeDiscount * invoiceDiscount / 100
@@ -1102,20 +1227,63 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'products': List<Map<String, dynamic>>.from(_addedProducts),
         };
       } else if (widget.isReturnInvoice) {
-        _lastInvoice = await ReturnInvoiceSaveService.save(
-          clientName: effectiveClient,
-          selectedDate: _selectedDate,
-          products: List<Map<String, dynamic>>.from(_addedProducts),
-          paidAmount: effectivePaid,
-          paymentMethod: paymentMethod,
-          notes: notes,
-          invoiceDiscount: invoiceDiscount,
-          discountIsPercent: discountIsPercent,
-          previousBalanceSnapshot: _clientBalance,
-          totalSumBeforeDiscount: _calculateTotalSum(),
-          calculateTotalCost: (_) => _calculateTotalCost(),
-          productCatalog: _productCatalog,
-        );
+        if (ConnectivityService.instance.isOnline) {
+          _lastInvoice = await ReturnInvoiceSaveService.save(
+            clientName: effectiveClient,
+            selectedDate: _selectedDate,
+            products: List<Map<String, dynamic>>.from(_addedProducts),
+            paidAmount: effectivePaid,
+            paymentMethod: paymentMethod,
+            notes: notes,
+            invoiceDiscount: invoiceDiscount,
+            discountIsPercent: discountIsPercent,
+            previousBalanceSnapshot: _clientBalance,
+            totalSumBeforeDiscount: _calculateTotalSum(),
+            calculateTotalCost: (_) => _calculateTotalCost(),
+            productCatalog: _productCatalog,
+          );
+        } else {
+          // Offline: enqueue return invoice for later sync
+          final totalSum = _calculateTotalSum();
+          final effectiveDiscountAmt = discountIsPercent
+              ? totalSum * invoiceDiscount / 100
+              : invoiceDiscount;
+          final totalSumFinal = totalSum - effectiveDiscountAmt;
+          final balance = totalSumFinal - effectivePaid;
+          final docId = FirebaseFirestore.instance.collection('returnInvoices').doc().id;
+          final nextNum = (appMetaBox.get('lastReturnInvoiceNumber', defaultValue: 1000) as int) + 1;
+          await appMetaBox.put('lastReturnInvoiceNumber', nextNum);
+
+          final invoiceData = <String, dynamic>{
+            'id': docId,
+            'invoiceNumber': nextNum,
+            'clientName': effectiveClient,
+            'clientId': resolvedClientId ?? '',
+            'date': _selectedDate?.toIso8601String(),
+            'totalSum': totalSumFinal,
+            'paidAmount': effectivePaid,
+            'balance': balance,
+            'previousBalance': _clientBalance,
+            'paymentMethod': paymentMethod,
+            'notes': notes,
+            'invoiceDiscount': effectiveDiscountAmt,
+            'invoiceType': 'return',
+            'isSpecial': false,
+            'products': List<Map<String, dynamic>>.from(_addedProducts),
+          };
+          await SyncQueueManager.instance.enqueue(
+            operationType: 'createReturn',
+            payload: {
+              'clientId': resolvedClientId ?? docId,
+              'invoiceId': docId,
+              'invoiceData': invoiceData,
+              'products': List<Map<String, dynamic>>.from(_addedProducts),
+              'totalSum': totalSumFinal,
+              'paidAmount': effectivePaid,
+            },
+          );
+          _lastInvoice = Map<String, dynamic>.from(invoiceData);
+        }
       } else {
         final totalSum = _calculateTotalSum();
         final effectiveDiscountAmt = discountIsPercent
@@ -1151,7 +1319,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'invoiceNumber': newInvoiceNumber,
           'clientName': effectiveClient,
           'clientId': resolvedClientId,
-          'date': _selectedDate,
+          'date': (_selectedDate ?? DateTime.now()).toIso8601String(),
           'totalSum': totalSumFinal,
           'profitMargin': profitMargin,
           'paidAmount': effectivePaid,
@@ -1216,7 +1384,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         }
       }
 
-      if (resolvedClientId != null && resolvedClientId.isNotEmpty) {
+      if (resolvedClientId != null && resolvedClientId.isNotEmpty && ConnectivityService.instance.isOnline) {
         await ClientInvoiceBalanceSyncService.syncForClient(resolvedClientId);
       }
 

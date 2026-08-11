@@ -1,6 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
+import '../repositories/product_repository.dart';
 
 class CreateProductPage extends StatefulWidget {
   const CreateProductPage({super.key});
@@ -63,21 +66,25 @@ class _CreateProductPageState extends State<CreateProductPage> {
 
     setState(() => _isSaving = true);
     try {
-      // Get next random number
-      final snap = await FirebaseFirestore.instance
-          .collection('products')
-          .orderBy('randomNumber', descending: true)
-          .limit(1)
-          .get();
       int nextRandom = 1;
-      if (snap.docs.isNotEmpty) {
-        nextRandom = ((snap.docs.first['randomNumber'] ?? 0) as num).toInt() + 1;
+      if (ConnectivityService.instance.isOnline) {
+        try {
+          final snap = await FirebaseFirestore.instance
+              .collection('products')
+              .orderBy('randomNumber', descending: true)
+              .limit(1)
+              .get()
+              .timeout(const Duration(seconds: 4));
+          if (snap.docs.isNotEmpty) {
+            nextRandom = ((snap.docs.first['randomNumber'] ?? 0) as num).toInt() + 1;
+          }
+        } catch (_) {}
       }
       if (_randomNumberController.text.isNotEmpty) {
         nextRandom = int.tryParse(_randomNumberController.text) ?? nextRandom;
       }
 
-      final ref = await FirebaseFirestore.instance.collection('products').add({
+      final data = <String, dynamic>{
         'name': _nameController.text.trim(),
         'sellingPrice1': double.tryParse(_sellingPrice1Controller.text) ?? 0.0,
         'sellingPrice2': double.tryParse(_sellingPrice2Controller.text) ?? 0.0,
@@ -88,8 +95,28 @@ class _CreateProductPageState extends State<CreateProductPage> {
         'image': _imageController.text.isNotEmpty ? _imageController.text : null,
         'randomNumber': nextRandom,
         'department': _selectedDepartment,
-      });
-      await ref.update({'id': ref.id});
+      };
+
+      String productId;
+      if (ConnectivityService.instance.isOnline) {
+        final ref = await FirebaseFirestore.instance.collection('products').add(data);
+        productId = ref.id;
+        data['id'] = productId;
+        await ref.update({'id': productId});
+      } else {
+        productId = FirebaseFirestore.instance.collection('products').doc().id;
+        data['id'] = productId;
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'createProduct',
+          payload: {
+            'productId': productId,
+            'data': data,
+          },
+        );
+      }
+
+      // Upsert into local Hive cache immediately
+      await ProductRepository.instance.upsertLocal(productId, data);
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

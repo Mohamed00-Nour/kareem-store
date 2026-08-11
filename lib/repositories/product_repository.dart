@@ -86,7 +86,13 @@ class ProductRepository {
         .where('updatedAt', isGreaterThan: Timestamp.fromDate(lastSync))
         .get();
 
-    if (snap.docs.isEmpty) return; // Nothing changed.
+    if (snap.docs.isEmpty) {
+      await appMetaBox.put(
+        HiveMetaKeys.lastProductSyncAt,
+        DateTime.now().toIso8601String(),
+      );
+      return;
+    }
 
     final box = productsBox;
     for (final doc in snap.docs) {

@@ -12,6 +12,10 @@ import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/buying_invoice_update_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
+import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
+import '../repositories/supplier_repository.dart';
+import '../local_db/hive_init.dart';
 import 'g_Nav.dart';
 
 void _selectAllField(TextEditingController controller) {
@@ -140,17 +144,79 @@ class _AddProductPageState extends State<AddProductPage> {
 
   Future<void> _fetchSuppliers() async {
     try {
+      if (!ConnectivityService.instance.isOnline) {
+        _loadSuppliersFromLocalCache();
+        return;
+      }
       QuerySnapshot querySnapshot =
           await FirebaseFirestore.instance.collection('suppliers').get();
+      final suppliersList = <Supplier>[];
+      for (final doc in querySnapshot.docs) {
+        final data = Map<String, dynamic>.from(doc.data() as Map);
+        data['id'] = doc.id;
+        final name = (data['supplierName'] ?? data['name'])?.toString() ?? '';
+        if (name.isNotEmpty) {
+          data['name'] = name;
+        }
+        data['balance'] = (data['balance'] ?? data['totalBalance'] as num?)?.toDouble() ?? 0.0;
+        suppliersList.add(Supplier.fromMap(data));
+        await SupplierRepository.instance.upsertLocal(doc.id, data);
+      }
       if (!mounted) return;
       setState(() {
-        _suppliers = querySnapshot.docs
-            .map((doc) => Supplier.fromMap(doc.data() as Map<String, dynamic>))
-            .toList();
+        _suppliers = suppliersList;
       });
     } catch (e) {
       print('Error fetching suppliers: $e');
+      _loadSuppliersFromLocalCache();
     }
+  }
+
+  /// Loads suppliers from local Hive cache (or Firestore offline SDK cache fallback).
+  Future<void> _loadSuppliersFromLocalCache() async {
+    if (!mounted) return;
+    final locals = SupplierRepository.instance.getAll();
+    final validSuppliers = locals
+        .map((s) => Supplier(
+              id: s.id,
+              name: (s.name.trim().isNotEmpty ? s.name : s.id).trim(),
+            ))
+        .where((s) => s.name.isNotEmpty)
+        .toList();
+
+    if (validSuppliers.isNotEmpty) {
+      if (mounted) {
+        setState(() {
+          _suppliers = validSuppliers;
+        });
+      }
+      return;
+    }
+
+    // Fallback: If Hive has no suppliers stored, read from Firestore offline SDK cache
+    try {
+      final cacheSnap = await FirebaseFirestore.instance
+          .collection('suppliers')
+          .get(const GetOptions(source: Source.cache));
+
+      final fallbackSuppliers = <Supplier>[];
+      for (final doc in cacheSnap.docs) {
+        final data = doc.data();
+        data['id'] = doc.id;
+        final name = (data['supplierName'] ?? data['name'])?.toString();
+        if (name != null && name.trim().isNotEmpty) {
+          data['name'] = name.trim();
+          fallbackSuppliers.add(Supplier.fromMap(data));
+        }
+        await SupplierRepository.instance.upsertLocal(doc.id, data);
+      }
+
+      if (mounted && fallbackSuppliers.isNotEmpty) {
+        setState(() {
+          _suppliers = fallbackSuppliers;
+        });
+      }
+    } catch (_) {}
   }
 
   double _calculateTotalSum() {
@@ -314,35 +380,36 @@ class _AddProductPageState extends State<AddProductPage> {
     try {
       Supplier workingSupplier = effectiveSupplier;
       if (workingSupplier.id.isEmpty) {
-        logProgress('2. Supplier ID is empty, fetching from database');
-        QuerySnapshot sq = await FirebaseFirestore.instance
-            .collection('suppliers')
-            .where('name', isEqualTo: workingSupplier.name)
-            .limit(1)
-            .get();
-        if (sq.docs.isNotEmpty) {
-          workingSupplier =
-              Supplier(id: sq.docs.first.id, name: workingSupplier.name);
-          logProgress('3. Found existing supplier ID: ${workingSupplier.id}');
-        } else {
-          logProgress('4. Creating new supplier document');
-          DocumentReference r = await FirebaseFirestore.instance
+        if (ConnectivityService.instance.isOnline) {
+          logProgress('2. Supplier ID is empty, fetching from database');
+          QuerySnapshot sq = await FirebaseFirestore.instance
               .collection('suppliers')
-              .add({'name': workingSupplier.name});
-          workingSupplier = Supplier(id: r.id, name: workingSupplier.name);
-          logProgress('5. Created new supplier ID: ${workingSupplier.id}');
+              .where('name', isEqualTo: workingSupplier.name)
+              .limit(1)
+              .get();
+          if (sq.docs.isNotEmpty) {
+            workingSupplier =
+                Supplier(id: sq.docs.first.id, name: workingSupplier.name);
+            logProgress('3. Found existing supplier ID: ${workingSupplier.id}');
+          } else {
+            logProgress('4. Creating new supplier document');
+            DocumentReference r = await FirebaseFirestore.instance
+                .collection('suppliers')
+                .add({'name': workingSupplier.name});
+            workingSupplier = Supplier(id: r.id, name: workingSupplier.name);
+            logProgress('5. Created new supplier ID: ${workingSupplier.id}');
+          }
+        } else {
+          final localSup =
+              SupplierRepository.instance.findByName(workingSupplier.name);
+          final id = localSup?.id ??
+              FirebaseFirestore.instance.collection('suppliers').doc().id;
+          workingSupplier = Supplier(id: id, name: workingSupplier.name);
         }
       }
 
       logProgress('6. Fetching buying invoice number');
-      QuerySnapshot invoiceQuery = await FirebaseFirestore.instance
-          .collection('buying invoices')
-          .orderBy('invoiceNumber', descending: true)
-          .limit(1)
-          .get();
-      int newInvoiceNumber = invoiceQuery.docs.isNotEmpty
-          ? invoiceQuery.docs.first['invoiceNumber'] + 1
-          : 1;
+      int newInvoiceNumber = await _fetchNextBuyingInvoiceNumber();
       logProgress('7. Invoice number resolved: $newInvoiceNumber');
 
       final totalBeforeDiscount = _calculateTotalSum();
@@ -351,11 +418,17 @@ class _AddProductPageState extends State<AddProductPage> {
           : invoiceDiscount;
       final totalSum = totalBeforeDiscount - effectiveDiscountAmt;
       double balance = totalSum - effectivePaid;
+      final String docId = FirebaseFirestore.instance
+          .collection('buying invoices')
+          .doc()
+          .id;
 
       Map<String, dynamic> invoiceData = {
+        'id': docId,
         'invoiceNumber': newInvoiceNumber,
         'supplierName': workingSupplier.name,
-        'date': _selectedDate,
+        'supplierId': workingSupplier.id,
+        'date': (_selectedDate ?? DateTime.now()).toIso8601String(),
         'totalSum': totalSum,
         'paidAmount': effectivePaid,
         'balance': balance,
@@ -369,110 +442,133 @@ class _AddProductPageState extends State<AddProductPage> {
                   'amount': (p['amount'] as num).toDouble(),
                   'cost': (p['cost'] as num).toDouble(),
                   'totalCost': (p['totalCost'] as num).toDouble(),
+                  if (p['newCostPrice'] != null)
+                    'newCostPrice': (p['newCostPrice'] as num).toDouble(),
+                  if (p['newSellingPrice1'] != null)
+                    'newSellingPrice1':
+                        (p['newSellingPrice1'] as num).toDouble(),
+                  if (p['newSellingPrice2'] != null)
+                    'newSellingPrice2':
+                        (p['newSellingPrice2'] as num).toDouble(),
+                  if (p['newSellingPrice3'] != null)
+                    'newSellingPrice3':
+                        (p['newSellingPrice3'] as num).toDouble(),
                 })
             .toList(),
       };
 
-      logProgress('8. Writing buying invoice to Firestore');
-      DocumentReference docRef = await FirebaseFirestore.instance
-          .collection('buying invoices')
-          .add(invoiceData);
-      logProgress('9. Buying invoice saved with ID: ${docRef.id}');
-      _lastInvoice = {...invoiceData, 'id': docRef.id};
-      logProgress('10. Updating invoice ID field self reference');
-      await docRef.update({'id': docRef.id});
-      logProgress('11. Updated invoice ID field');
+      _lastInvoice = Map<String, dynamic>.from(invoiceData);
 
-      logProgress('12. Writing invoice to supplier subcollection');
-      DocumentReference supplierDocRef = FirebaseFirestore.instance
-          .collection('suppliers')
-          .doc(workingSupplier.id);
-      await supplierDocRef.collection('buying invoices').add({
-        ...invoiceData,
-        'invoiceId': docRef.id,
-      });
-      logProgress('13. Invoice added to supplier subcollection');
+      if (ConnectivityService.instance.isOnline) {
+        logProgress('8. Writing buying invoice to Firestore');
+        DocumentReference docRef = FirebaseFirestore.instance
+            .collection('buying invoices')
+            .doc(docId);
+        await docRef.set(invoiceData);
+        logProgress('9. Buying invoice saved with ID: ${docRef.id}');
 
-      logProgress('14. Updating supplier document name');
-      await supplierDocRef.set(
-        {'name': workingSupplier.name},
-        SetOptions(merge: true),
-      );
-      logProgress('15. Supplier document updated. Syncing supplier balance');
-      await SupplierInvoiceBalanceSyncService.syncForSupplier(
-        workingSupplier.id,
-      );
-      logProgress('16. Supplier balance sync completed');
+        logProgress('12. Writing invoice to supplier subcollection');
+        if (workingSupplier.id.isNotEmpty) {
+          DocumentReference supplierDocRef = FirebaseFirestore.instance
+              .collection('suppliers')
+              .doc(workingSupplier.id);
+          await supplierDocRef
+              .collection('buying invoices')
+              .doc(docId)
+              .set({
+            ...invoiceData,
+            'invoiceId': docRef.id,
+          });
 
-      logProgress('17. Updating products stock quantities');
-      for (var product in _addedProducts) {
-        final productId = product['productId']?.toString() ?? '';
-        DocumentSnapshot? productDoc;
-        if (productId.isNotEmpty) {
-          productDoc = await FirebaseFirestore.instance
-              .collection('products')
-              .doc(productId)
-              .get();
-        }
-        if (productDoc == null || !productDoc.exists) {
-          final query = await FirebaseFirestore.instance
-              .collection('products')
-              .where('name', isEqualTo: product['product'])
-              .get();
-          if (query.docs.isEmpty) continue;
-          productDoc = query.docs.first;
+          await supplierDocRef.set(
+            {'name': workingSupplier.name},
+            SetOptions(merge: true),
+          );
+          await SupplierInvoiceBalanceSyncService.syncForSupplier(
+            workingSupplier.id,
+          );
         }
 
-        final docRef = productDoc.reference;
-        final docData = productDoc.data() as Map<String, dynamic>;
-        double existingQty = (docData['quantity'] as num).toDouble();
-        double addedQty = (product['amount'] as num).toDouble();
-        Map<String, dynamic> updateData = {
-          'quantity': existingQty + addedQty,
-        };
-        if (product['newCostPrice'] != null) {
-          updateData['costPrice'] = (product['newCostPrice'] as num).toDouble();
+        logProgress('17. Updating products stock quantities');
+        for (var product in _addedProducts) {
+          final productId = product['productId']?.toString() ?? '';
+          DocumentSnapshot? productDoc;
+          if (productId.isNotEmpty) {
+            productDoc = await FirebaseFirestore.instance
+                .collection('products')
+                .doc(productId)
+                .get();
+          }
+          if (productDoc == null || !productDoc.exists) {
+            final query = await FirebaseFirestore.instance
+                .collection('products')
+                .where('name', isEqualTo: product['product'])
+                .get();
+            if (query.docs.isEmpty) continue;
+            productDoc = query.docs.first;
+          }
+
+          final docRef = productDoc.reference;
+          final docData = productDoc.data() as Map<String, dynamic>;
+          double existingQty = (docData['quantity'] as num).toDouble();
+          double addedQty = (product['amount'] as num).toDouble();
+          Map<String, dynamic> updateData = {
+            'quantity': existingQty + addedQty,
+          };
+          if (product['newCostPrice'] != null) {
+            updateData['costPrice'] =
+                (product['newCostPrice'] as num).toDouble();
+          }
+          if (product['newSellingPrice1'] != null) {
+            updateData['sellingPrice1'] =
+                (product['newSellingPrice1'] as num).toDouble();
+          }
+          if (product['newSellingPrice2'] != null) {
+            updateData['sellingPrice2'] =
+                (product['newSellingPrice2'] as num).toDouble();
+          }
+          if (product['newSellingPrice3'] != null) {
+            updateData['sellingPrice3'] =
+                (product['newSellingPrice3'] as num).toDouble();
+          }
+          await docRef.update(updateData);
+          await docRef.collection('changes').add({
+            'date': product['date'] ?? FieldValue.serverTimestamp(),
+            'amount': addedQty,
+            'type': 'increase',
+          });
         }
-        if (product['newSellingPrice1'] != null) {
-          updateData['sellingPrice1'] =
-              (product['newSellingPrice1'] as num).toDouble();
+
+        if (effectivePaid > 0) {
+          DocumentReference boxDocRef =
+              FirebaseFirestore.instance.collection('box').doc('mainBox');
+          await boxDocRef.set(
+            {'value': FieldValue.increment(-effectivePaid)},
+            SetOptions(merge: true),
+          );
+          await boxDocRef.collection('changes').add({
+            'date': FieldValue.serverTimestamp(),
+            'value': effectivePaid,
+            'type': 'decrement',
+            'name': workingSupplier.name,
+            'invoiceNumber': newInvoiceNumber,
+          });
         }
-        if (product['newSellingPrice2'] != null) {
-          updateData['sellingPrice2'] =
-              (product['newSellingPrice2'] as num).toDouble();
-        }
-        if (product['newSellingPrice3'] != null) {
-          updateData['sellingPrice3'] =
-              (product['newSellingPrice3'] as num).toDouble();
-        }
-        logProgress('18. Updating product stock for: ${product['product']}');
-        await docRef.update(updateData);
-        logProgress(
-            '19. Adding change log under product changes subcollection');
-        await docRef.collection('changes').add({
-          'date': product['date'],
-          'amount': addedQty,
-          'type': 'increase',
-        });
+      } else {
+        // Offline: Enqueue buying invoice for background sync when online
+        logProgress('8. Queueing buying invoice offline');
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'createBuyingInvoice',
+          payload: {
+            'supplierId': workingSupplier.id,
+            'supplierName': workingSupplier.name,
+            'invoiceId': docId,
+            'invoiceData': invoiceData,
+            'products': invoiceData['products'],
+            'paidAmount': effectivePaid,
+          },
+        );
       }
-      logProgress('20. Products loop completed');
-
-      logProgress('21. Updating box balance');
-      DocumentReference boxDocRef =
-          FirebaseFirestore.instance.collection('box').doc('mainBox');
-      await boxDocRef.set(
-        {'value': FieldValue.increment(-effectivePaid)},
-        SetOptions(merge: true),
-      );
-      logProgress('22. Box balance updated. Adding box change entry');
-      await boxDocRef.collection('changes').add({
-        'date': FieldValue.serverTimestamp(),
-        'value': effectivePaid,
-        'type': 'decrement',
-        'name': workingSupplier.name,
-        'invoiceNumber': newInvoiceNumber,
-      });
-      logProgress('23. Box change entry added');
 
       if (!mounted) return;
       setState(() {
@@ -490,6 +586,34 @@ class _AddProductPageState extends State<AddProductPage> {
       setState(() => _isSaving = false);
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('Error saving data: $e')));
+    }
+  }
+
+  Future<int> _fetchNextBuyingInvoiceNumber() async {
+    if (!ConnectivityService.instance.isOnline) {
+      final lastNum =
+          (appMetaBox.get('lastBuyingInvoiceNumber', defaultValue: 1000) as int);
+      final nextNum = lastNum + 1;
+      await appMetaBox.put('lastBuyingInvoiceNumber', nextNum);
+      return nextNum;
+    }
+    try {
+      final query = await FirebaseFirestore.instance
+          .collection('buying invoices')
+          .orderBy('invoiceNumber', descending: true)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 4));
+      if (query.docs.isEmpty) return 1;
+      final numVal = (query.docs.first['invoiceNumber'] as num).toInt() + 1;
+      await appMetaBox.put('lastBuyingInvoiceNumber', numVal);
+      return numVal;
+    } catch (_) {
+      final lastNum =
+          (appMetaBox.get('lastBuyingInvoiceNumber', defaultValue: 1000) as int);
+      final nextNum = lastNum + 1;
+      await appMetaBox.put('lastBuyingInvoiceNumber', nextNum);
+      return nextNum;
     }
   }
 
@@ -657,17 +781,24 @@ class _AddProductPageState extends State<AddProductPage> {
   Future<double> _fetchSupplierBalance(String supplierName) async {
     final name = supplierName.trim();
     if (name.isEmpty) return 0.0;
+    if (!ConnectivityService.instance.isOnline) {
+      final localSup = SupplierRepository.instance.findByName(name);
+      return localSup?.balance ?? 0.0;
+    }
     try {
       final query = await FirebaseFirestore.instance
           .collection('suppliers')
           .where('name', isEqualTo: name)
           .limit(1)
-          .get();
+          .get()
+          .timeout(const Duration(seconds: 4));
       if (query.docs.isNotEmpty) {
-        return invoiceNum(query.docs.first['totalBalance']);
+        final data = query.docs.first.data();
+        return invoiceNum(data['totalBalance'] ?? data['balance']);
       }
     } catch (e) {
-      print('Error fetching supplier balance: $e');
+      final localSup = SupplierRepository.instance.findByName(name);
+      if (localSup != null) return localSup.balance;
     }
     return 0.0;
   }

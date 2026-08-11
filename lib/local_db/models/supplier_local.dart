@@ -34,10 +34,10 @@ class SupplierLocal extends HiveObject {
   factory SupplierLocal.fromFirestore(String docId, Map<String, dynamic> data) {
     return SupplierLocal(
       id: docId,
-      name: data['name']?.toString() ?? '',
+      name: (data['supplierName'] ?? data['name'])?.toString() ?? '',
       balance: (data['balance'] as num?)?.toDouble() ?? 0.0,
-      phone: data['phone']?.toString() ?? '',
-      address: data['address']?.toString() ?? '',
+      phone: (data['phone'] ?? data['supplierPhone'])?.toString() ?? '',
+      address: (data['address'] ?? data['supplierAddress'])?.toString() ?? '',
       updatedAt: DateTime.now(),
     );
   }

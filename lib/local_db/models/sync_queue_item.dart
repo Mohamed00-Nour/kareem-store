@@ -14,6 +14,7 @@ enum SyncOperationType {
   createProduct,
   editProduct,
   deleteProduct,
+  createQuote,
 }
 
 @HiveType(typeId: 3)

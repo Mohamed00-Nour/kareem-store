@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
-
+import 'package:kareem_store/sync/connectivity_service.dart';
 import 'BoxChangesScreen.dart';
 
 class MainBoxScreen extends StatefulWidget {
@@ -23,41 +23,51 @@ class _MainBoxScreenState extends State<MainBoxScreen> {
   }
 
   Future<void> _fetchBoxValue() async {
-    DocumentSnapshot boxDoc =
-        await FirebaseFirestore.instance.collection('box').doc('mainBox').get();
+    try {
+      if (!ConnectivityService.instance.isOnline) return;
+      DocumentSnapshot boxDoc = await FirebaseFirestore.instance
+          .collection('box')
+          .doc('mainBox')
+          .get()
+          .timeout(const Duration(seconds: 4));
 
-    if (boxDoc.exists) {
-      setState(() {
-        _boxValue = (boxDoc['value'] ?? 0.0).toDouble();
-      });
-    }
+      if (!mounted) return;
+      if (boxDoc.exists) {
+        setState(() {
+          _boxValue = (boxDoc['value'] ?? 0.0).toDouble();
+        });
+      }
+    } catch (_) {}
   }
 
   Future<void> _updateBoxValue(double value, String type,
       {String? name}) async {
     try {
-      DocumentReference boxDocRef =
-          FirebaseFirestore.instance.collection('box').doc('mainBox');
+      if (ConnectivityService.instance.isOnline) {
+        DocumentReference boxDocRef =
+            FirebaseFirestore.instance.collection('box').doc('mainBox');
 
-      final changeAmount = type == 'addition' ? value : -value;
-      await boxDocRef.set(
-        {'value': FieldValue.increment(changeAmount)},
-        SetOptions(merge: true),
-      );
+        final changeAmount = type == 'addition' ? value : -value;
+        await boxDocRef.set(
+          {'value': FieldValue.increment(changeAmount)},
+          SetOptions(merge: true),
+        );
 
-      // Add change to the subcollection
-      await boxDocRef.collection('changes').add({
-        'date': _selectedDate,
-        'value': value,
-        'type': type,
-        if (name != null) 'name': name,
-      });
+        await boxDocRef.collection('changes').add({
+          'date': _selectedDate,
+          'value': value,
+          'type': type,
+          if (name != null) 'name': name,
+        });
+      }
 
-      _fetchBoxValue();
+      await _fetchBoxValue();
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم تحديث الصندوق بنجاح')),
       );
     } catch (e) {
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error: $e')),
       );

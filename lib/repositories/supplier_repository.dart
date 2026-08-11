@@ -63,32 +63,11 @@ class SupplierRepository {
     );
   }
 
-  /// Delta sync — only downloads suppliers modified since the last sync.
+  /// Delta sync — fetches suppliers into Hive.
+  /// Performs fullSync to guarantee complete supplier list caching because supplier documents
+  /// in Firestore may not contain an updatedAt field.
   Future<void> deltaSync() async {
-    final lastSyncStr =
-        appMetaBox.get(HiveMetaKeys.lastSupplierSyncAt) as String?;
-    if (lastSyncStr == null) {
-      await fullSync();
-      return;
-    }
-    final lastSync = DateTime.parse(lastSyncStr);
-    final snap = await _fs
-        .collection('suppliers')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(lastSync))
-        .get();
-    if (snap.docs.isEmpty) return;
-    for (final doc in snap.docs) {
-      if (doc.data()['deleted'] == true) {
-        await suppliersBox.delete(doc.id);
-      } else {
-        await suppliersBox.put(
-            doc.id, SupplierLocal.fromFirestore(doc.id, doc.data()));
-      }
-    }
-    appMetaBox.put(
-      HiveMetaKeys.lastSupplierSyncAt,
-      DateTime.now().toIso8601String(),
-    );
+    await fullSync();
   }
 
   /// Upsert a single supplier into local cache.

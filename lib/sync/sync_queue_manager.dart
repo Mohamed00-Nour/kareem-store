@@ -31,13 +31,20 @@ class SyncQueueManager {
     final item = SyncQueueItem(
       operationId: id,
       operationType: operationType,
-      payloadJson: jsonEncode(payload),
+      payloadJson: jsonEncode(payload, toEncodable: _toEncodable),
       createdAt: DateTime.now(),
       retryCount: 0,
       status: 'pending',
     );
     await syncQueueBox.put(id, item);
     return id;
+  }
+
+  static dynamic _toEncodable(dynamic nonEncodable) {
+    if (nonEncodable is DateTime) {
+      return nonEncodable.toIso8601String();
+    }
+    return nonEncodable.toString();
   }
 
   // ── Read ──────────────────────────────────────────────────────────────────
@@ -65,6 +72,15 @@ class SyncQueueManager {
 
   /// True when there are items waiting to be synced.
   bool get hasPending => pendingCount > 0;
+
+  /// True when there are operations currently being uploaded.
+  bool get hasSyncingItems {
+    if (!_isBoxReady) return false;
+    return syncQueueBox.values.any((item) => item.status == 'syncing');
+  }
+
+  /// Total count of all items in queue (any status).
+  int get totalCount => getAll().length;
 
   // ── Status updates ────────────────────────────────────────────────────────
 

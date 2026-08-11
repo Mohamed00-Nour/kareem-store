@@ -1,8 +1,12 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart' as intl;
 import '../../local_db/hive_init.dart';
 import '../../local_db/models/sync_queue_item.dart';
+import '../../repositories/data_sync_service.dart';
+import '../../sync/batch_sync_engine.dart';
 import '../../sync/connectivity_service.dart';
 import '../../sync/sync_queue_manager.dart';
 
@@ -23,24 +27,36 @@ class SyncDashboardScreen extends StatefulWidget {
 
 class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
   bool _isSyncing = false;
-  List<SyncQueueItem> _items = [];
+  StreamSubscription? _connectivitySub;
 
   @override
   void initState() {
     super.initState();
-    _refresh();
+    _connectivitySub = ConnectivityService.instance.onlineStream.listen((_) {
+      if (mounted) setState(() {});
+    });
   }
 
-  void _refresh() {
-    setState(() {
-      _items = SyncQueueManager.instance.getAll();
-    });
+  @override
+  void dispose() {
+    _connectivitySub?.cancel();
+    super.dispose();
+  }
+
+  Future<void> _refresh() async {
+    if (ConnectivityService.instance.isOnline) {
+      await DataSyncService.instance.syncOnStartup();
+    }
+    if (mounted) {
+      setState(() {});
+    }
   }
 
   Future<void> _forceSync() async {
     setState(() => _isSyncing = true);
     try {
       await ConnectivityService.instance.forceSync();
+      await DataSyncService.instance.syncOnStartup();
     } finally {
       if (mounted) {
         setState(() => _isSyncing = false);
@@ -115,9 +131,6 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
 
   @override
   Widget build(BuildContext context) {
-    final isOnline = ConnectivityService.instance.isOnline;
-    final pending = SyncQueueManager.instance.pendingCount;
-
     return Scaffold(
       backgroundColor: const Color(0xff1a1a2e),
       appBar: AppBar(
@@ -135,87 +148,110 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
           ),
         ],
       ),
-      body: RefreshIndicator(
-        onRefresh: () async => _refresh(),
-        color: Colors.orange,
-        child: ListView(
-          padding: EdgeInsets.all(16.w),
-          children: [
-            // ── Status Card ────────────────────────────────────────────
-            _StatusCard(
-              isOnline: isOnline,
-              pendingCount: pending,
-              isSyncing: _isSyncing,
-            ),
-            SizedBox(height: 16.h),
+      body: ValueListenableBuilder<Box<SyncQueueItem>>(
+        valueListenable: syncQueueBox.listenable(),
+        builder: (context, box, _) {
+          final isOnline = ConnectivityService.instance.isOnline;
+          final pending = SyncQueueManager.instance.pendingCount;
+          final totalCount = SyncQueueManager.instance.totalCount;
+          final hasSyncing = SyncQueueManager.instance.hasSyncingItems;
+          final isBatchRunning = BatchSyncEngine.instance.isRunning;
+          final items = SyncQueueManager.instance.getAll();
 
-            // ── Sync Now Button ────────────────────────────────────────
-            ElevatedButton.icon(
-              style: ElevatedButton.styleFrom(
-                backgroundColor: _isSyncing
-                    ? Colors.grey.shade700
-                    : Colors.orange.shade700,
-                foregroundColor: Colors.white,
-                padding: EdgeInsets.symmetric(vertical: 14.h),
-                shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12.r)),
-              ),
-              onPressed: _isSyncing ? null : _forceSync,
-              icon: _isSyncing
-                  ? SizedBox(
-                      width: 18.w,
-                      height: 18.h,
-                      child: const CircularProgressIndicator(
-                          color: Colors.white, strokeWidth: 2),
-                    )
-                  : const Icon(Icons.cloud_upload_outlined),
-              label: Text(
-                _isSyncing ? 'جارٍ المزامنة...' : 'مزامنة الآن',
-                style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
-              ),
-            ),
-            SizedBox(height: 20.h),
+          return RefreshIndicator(
+            onRefresh: () async => _refresh(),
+            color: Colors.orange,
+            child: ListView(
+              padding: EdgeInsets.all(16.w),
+              children: [
+                // ── Status Card ────────────────────────────────────────────
+                _StatusCard(
+                  isOnline: isOnline,
+                  pendingCount: pending,
+                  totalCount: totalCount,
+                  hasSyncingItems: hasSyncing,
+                  isSyncing: _isSyncing || isBatchRunning,
+                ),
+                SizedBox(height: 16.h),
 
-            // ── Last Sync Info ─────────────────────────────────────────
-            const _SectionTitle(title: 'آخر مزامنة ناجحة'),
-            SizedBox(height: 8.h),
-            _InfoRow(
-              icon: Icons.inventory_2_outlined,
-              label: 'المنتجات',
-              value: _lastSyncTime(HiveMetaKeys.lastProductSyncAt),
-            ),
-            _InfoRow(
-              icon: Icons.people_outline,
-              label: 'العملاء',
-              value: _lastSyncTime(HiveMetaKeys.lastClientSyncAt),
-            ),
-            _InfoRow(
-              icon: Icons.local_shipping_outlined,
-              label: 'الموردون',
-              value: _lastSyncTime(HiveMetaKeys.lastSupplierSyncAt),
-            ),
-            SizedBox(height: 20.h),
+                // ── Sync Now Button ────────────────────────────────────────
+                ElevatedButton.icon(
+                  style: ElevatedButton.styleFrom(
+                    backgroundColor: (_isSyncing || isBatchRunning)
+                        ? Colors.grey.shade700
+                        : Colors.orange.shade700,
+                    foregroundColor: Colors.white,
+                    padding: EdgeInsets.symmetric(vertical: 14.h),
+                    shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(12.r)),
+                  ),
+                  onPressed: (_isSyncing || isBatchRunning) ? null : _forceSync,
+                  icon: (_isSyncing || isBatchRunning)
+                      ? SizedBox(
+                          width: 18.w,
+                          height: 18.h,
+                          child: const CircularProgressIndicator(
+                              color: Colors.white, strokeWidth: 2),
+                        )
+                      : const Icon(Icons.cloud_upload_outlined),
+                  label: Text(
+                    (_isSyncing || isBatchRunning) ? 'جارٍ المزامنة...' : 'مزامنة الآن',
+                    style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                  ),
+                ),
+                SizedBox(height: 20.h),
 
-            // ── Pending Queue ──────────────────────────────────────────
-            _SectionTitle(
-              title: _items.isEmpty
-                  ? 'قائمة العمليات المعلقة'
-                  : 'قائمة العمليات (${_items.length})',
-            ),
-            SizedBox(height: 8.h),
+                // ── Last Sync Info ─────────────────────────────────────────
+                const _SectionTitle(title: 'آخر مزامنة ناجحة'),
+                SizedBox(height: 8.h),
+                ValueListenableBuilder<Box>(
+                  valueListenable: appMetaBox.listenable(),
+                  builder: (context, metaBox, _) {
+                    return Column(
+                      children: [
+                        _InfoRow(
+                          icon: Icons.inventory_2_outlined,
+                          label: 'المنتجات',
+                          value: _lastSyncTime(HiveMetaKeys.lastProductSyncAt),
+                        ),
+                        _InfoRow(
+                          icon: Icons.people_outline,
+                          label: 'العملاء',
+                          value: _lastSyncTime(HiveMetaKeys.lastClientSyncAt),
+                        ),
+                        _InfoRow(
+                          icon: Icons.local_shipping_outlined,
+                          label: 'الموردون',
+                          value: _lastSyncTime(HiveMetaKeys.lastSupplierSyncAt),
+                        ),
+                      ],
+                    );
+                  },
+                ),
+                SizedBox(height: 20.h),
 
-            if (_items.isEmpty)
-              _EmptyQueueCard()
-            else
-              ..._items.map((item) => _QueueItemCard(
-                    item: item,
-                    operationLabel: _operationLabel(item.operationType),
-                    statusColor: _statusColor(item.status),
-                    statusLabel: _statusLabel(item.status),
-                    statusIcon: _statusIcon(item.status),
-                  )),
-          ],
-        ),
+                // ── Pending Queue ──────────────────────────────────────────
+                _SectionTitle(
+                  title: items.isEmpty
+                      ? 'قائمة العمليات المعلقة'
+                      : 'قائمة العمليات (${items.length})',
+                ),
+                SizedBox(height: 8.h),
+
+                if (items.isEmpty)
+                  _EmptyQueueCard()
+                else
+                  ...items.map((item) => _QueueItemCard(
+                        item: item,
+                        operationLabel: _operationLabel(item.operationType),
+                        statusColor: _statusColor(item.status),
+                        statusLabel: _statusLabel(item.status),
+                        statusIcon: _statusIcon(item.status),
+                      )),
+              ],
+            ),
+          );
+        },
       ),
     );
   }
@@ -226,11 +262,15 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
 class _StatusCard extends StatelessWidget {
   final bool isOnline;
   final int pendingCount;
+  final int totalCount;
+  final bool hasSyncingItems;
   final bool isSyncing;
 
   const _StatusCard({
     required this.isOnline,
     required this.pendingCount,
+    required this.totalCount,
+    required this.hasSyncingItems,
     required this.isSyncing,
   });
 
@@ -241,21 +281,26 @@ class _StatusCard extends StatelessWidget {
     String title;
     String subtitle;
 
-    if (isSyncing) {
+    if (isSyncing || hasSyncingItems) {
       bg = Colors.blue.shade800;
       icon = Icons.sync;
       title = 'جارٍ المزامنة...';
       subtitle = 'يتم رفع البيانات إلى الخادم';
-    } else if (!isOnline && pendingCount > 0) {
+    } else if (!isOnline && totalCount > 0) {
       bg = Colors.orange.shade800;
       icon = Icons.cloud_off;
       title = 'غير متصل بالإنترنت';
-      subtitle = '$pendingCount عملية محفوظة محلياً — ستُرفع تلقائياً عند الاتصال';
+      subtitle = '$totalCount عملية محفوظة محلياً — ستُرفع تلقائياً عند الاتصال';
     } else if (!isOnline) {
       bg = Colors.grey.shade800;
       icon = Icons.cloud_off_outlined;
       title = 'غير متصل بالإنترنت';
       subtitle = 'لا توجد عمليات معلقة — جميع البيانات محفوظة';
+    } else if (totalCount > 0) {
+      bg = Colors.amber.shade800;
+      icon = Icons.schedule;
+      title = 'في انتظار المزامنة';
+      subtitle = '$totalCount عملية في القائمة بانتظار الرفع';
     } else {
       bg = Colors.green.shade800;
       icon = Icons.cloud_done;

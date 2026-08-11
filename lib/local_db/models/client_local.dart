@@ -34,10 +34,10 @@ class ClientLocal extends HiveObject {
   factory ClientLocal.fromFirestore(String docId, Map<String, dynamic> data) {
     return ClientLocal(
       id: docId,
-      name: data['name']?.toString() ?? '',
+      name: (data['clientName'] ?? data['name'])?.toString() ?? '',
       balance: (data['balance'] as num?)?.toDouble() ?? 0.0,
-      phone: data['phone']?.toString() ?? '',
-      address: data['address']?.toString() ?? '',
+      phone: (data['phone'] ?? data['clientPhone'])?.toString() ?? '',
+      address: (data['address'] ?? data['clientAddress'])?.toString() ?? '',
       updatedAt: DateTime.now(),
     );
   }

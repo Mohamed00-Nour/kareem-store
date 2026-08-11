@@ -1,7 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-
+import 'sync/connectivity_service.dart';
+import 'sync/sync_queue_manager.dart';
+import 'repositories/product_repository.dart';
 import 'Services/invoice_number_utils.dart';
 
 class EditProductPage extends StatefulWidget {
@@ -82,19 +84,18 @@ class _EditProductPageState extends State<EditProductPage> {
 
   Future<void> _loadDepartments() async {
     try {
+      if (!ConnectivityService.instance.isOnline) return;
       QuerySnapshot querySnapshot =
           await FirebaseFirestore.instance.collection('departments').get();
       setState(() {
         _departments = querySnapshot.docs
             .map((doc) => doc['name'] as String)
             .toSet()
-            .toList(); // Ensure unique values
+            .toList();
         if (!_departments.contains(_selectedDepartment)) {
-          _selectedDepartment = null; // Reset if the value is not in the list
+          _selectedDepartment = null;
         }
       });
-      print('Departments: $_departments');
-      print('Selected Department: $_selectedDepartment');
     } catch (e) {
       print('Error loading departments: $e');
     }
@@ -124,11 +125,8 @@ class _EditProductPageState extends State<EditProductPage> {
     setState(() => _isSaving = true);
 
     try {
-      await FirebaseFirestore.instance
-          .collection('products')
-          .doc(widget.productId)
-          .update({
-        'name': _nameController.text,
+      final updateData = <String, dynamic>{
+        'name': _nameController.text.trim(),
         'description': _descriptionController.text.trim().isNotEmpty
             ? _descriptionController.text.trim()
             : null,
@@ -144,7 +142,30 @@ class _EditProductPageState extends State<EditProductPage> {
         'department': _selectedDepartment,
         'onDemand': _onDemand,
         'retail': _retail,
+      };
+
+      if (ConnectivityService.instance.isOnline) {
+        await FirebaseFirestore.instance
+            .collection('products')
+            .doc(widget.productId)
+            .update(updateData);
+      } else {
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'editProduct',
+          payload: {
+            'productId': widget.productId,
+            'data': updateData,
+          },
+        );
+      }
+
+      // Update local Hive cache immediately
+      await ProductRepository.instance.upsertLocal(widget.productId, {
+        ...widget.productData,
+        ...updateData,
+        'id': widget.productId,
       });
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم حفظ البيانات بنجاح')),

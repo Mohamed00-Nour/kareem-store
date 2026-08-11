@@ -63,32 +63,11 @@ class ClientRepository {
     );
   }
 
-  /// Delta sync — only downloads clients modified since the last sync.
+  /// Delta sync — fetches clients into Hive.
+  /// Performs fullSync to guarantee complete client list caching because client documents
+  /// in Firestore may not contain an updatedAt field.
   Future<void> deltaSync() async {
-    final lastSyncStr =
-        appMetaBox.get(HiveMetaKeys.lastClientSyncAt) as String?;
-    if (lastSyncStr == null) {
-      await fullSync();
-      return;
-    }
-    final lastSync = DateTime.parse(lastSyncStr);
-    final snap = await _fs
-        .collection('clients')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(lastSync))
-        .get();
-    if (snap.docs.isEmpty) return;
-    for (final doc in snap.docs) {
-      if (doc.data()['deleted'] == true) {
-        await clientsBox.delete(doc.id);
-      } else {
-        await clientsBox.put(
-            doc.id, ClientLocal.fromFirestore(doc.id, doc.data()));
-      }
-    }
-    appMetaBox.put(
-      HiveMetaKeys.lastClientSyncAt,
-      DateTime.now().toIso8601String(),
-    );
+    await fullSync();
   }
 
   /// Upsert a single client into the local cache.
