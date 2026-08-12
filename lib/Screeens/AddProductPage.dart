@@ -158,7 +158,9 @@ class _AddProductPageState extends State<AddProductPage> {
         if (name.isNotEmpty) {
           data['name'] = name;
         }
-        data['balance'] = (data['balance'] ?? data['totalBalance'] as num?)?.toDouble() ?? 0.0;
+        data['balance'] =
+            (data['balance'] ?? data['totalBalance'] as num?)?.toDouble() ??
+                0.0;
         suppliersList.add(Supplier.fromMap(data));
         await SupplierRepository.instance.upsertLocal(doc.id, data);
       }
