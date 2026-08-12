@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Screeens/g_Nav.dart';
+import '../sync/connectivity_service.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -13,6 +14,29 @@ class LoginScreen extends StatefulWidget {
 class _LoginScreenState extends State<LoginScreen> {
   final TextEditingController _emailController = TextEditingController();
   final TextEditingController _passwordController = TextEditingController();
+  bool _isLoading = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSavedCredentials();
+  }
+
+  Future<void> _loadSavedCredentials() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final savedEmail =
+          prefs.getString('saved_email') ?? prefs.getString('user_email') ?? '';
+      final savedPassword = prefs.getString('saved_password') ?? '';
+      if (mounted) {
+        setState(() {
+          if (savedEmail.isNotEmpty) _emailController.text = savedEmail;
+          if (savedPassword.isNotEmpty)
+            _passwordController.text = savedPassword;
+        });
+      }
+    } catch (_) {}
+  }
 
   @override
   void dispose() {
@@ -25,61 +49,108 @@ class _LoginScreenState extends State<LoginScreen> {
     final email = _emailController.text.trim();
     final password = _passwordController.text.trim();
 
-    print('Login attempt started for email: $email');
+    if (email.isEmpty || password.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('Please enter both email and password')),
+      );
+      return;
+    }
+
+    setState(() => _isLoading = true);
 
     try {
-      print('Querying Firestore for user data...');
-      QuerySnapshot<Map<String, dynamic>> snapshot = await FirebaseFirestore
-          .instance
-          .collection('users')
-          .where('email', isEqualTo: email)
-          .limit(1)
-          .get();
+      final bool isOnline = ConnectivityService.instance.isOnline;
 
-      if (snapshot.docs.isNotEmpty) {
-        print('User document found.');
-        final userData = snapshot.docs.first.data();
-        if (userData['password'] == password) {
-          print('Password is correct.');
-          final role = userData['role'];
-          print('User role is: $role');
+      if (isOnline) {
+        try {
+          QuerySnapshot<Map<String, dynamic>> snapshot = await FirebaseFirestore
+              .instance
+              .collection('users')
+              .where('email', isEqualTo: email)
+              .limit(1)
+              .get()
+              .timeout(const Duration(seconds: 4));
 
-          // Save user role to SharedPreferences
-          final prefs = await SharedPreferences.getInstance();
-          await prefs.setString('user_role', role);
-          await prefs.setString('user_email', email);
-
-          if (role == 'admin') {
-            print('Navigating to admin home.');
-            Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => GNavPage(),
-                ));
-          } else if (role == 'user') {
-            print('Navigating to admin home.');
-            Navigator.pushReplacement(
-                context,
-                MaterialPageRoute(
-                  builder: (context) => GNavPage(),
-                ));
+          if (snapshot.docs.isNotEmpty) {
+            final userData = snapshot.docs.first.data();
+            if (userData['password'] == password) {
+              final role = userData['role']?.toString() ?? 'admin';
+              await _saveSessionAndNavigate(email, password, role);
+              return;
+            } else {
+              if (mounted) {
+                ScaffoldMessenger.of(context).showSnackBar(
+                  const SnackBar(content: Text('Invalid password')),
+                );
+              }
+              return;
+            }
           }
-        } else {
-          print('Invalid password provided.');
-          ScaffoldMessenger.of(context)
-              .showSnackBar(const SnackBar(content: Text('Invalid password')));
+        } catch (_) {
+          // Network query timed out or failed — fall through to offline check
         }
-      } else {
-        print('No user document found.');
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('User not found')));
+      }
+
+      // Offline Login Verification via saved credentials
+      final prefs = await SharedPreferences.getInstance();
+      final savedEmail =
+          prefs.getString('saved_email') ?? prefs.getString('user_email') ?? '';
+      final savedPassword = prefs.getString('saved_password') ?? '';
+      final savedRole = prefs.getString('user_role') ?? 'admin';
+
+      if (savedEmail.isNotEmpty &&
+          email.toLowerCase() == savedEmail.toLowerCase()) {
+        if (password == savedPassword) {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Logged in locally (Offline mode)')),
+            );
+          }
+          await _saveSessionAndNavigate(email, password, savedRole);
+          return;
+        } else {
+          if (mounted) {
+            ScaffoldMessenger.of(context).showSnackBar(
+              const SnackBar(content: Text('Invalid password')),
+            );
+          }
+          return;
+        }
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text(isOnline
+                ? 'User not found'
+                : 'Offline mode: Please connect to the internet for initial login'),
+          ),
+        );
       }
     } catch (e) {
-      print('Error during login: $e');
-      if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(SnackBar(content: Text('Error during login: $e')));
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('Error during login: $e')),
+        );
+      }
+    } finally {
+      if (mounted) setState(() => _isLoading = false);
     }
+  }
+
+  Future<void> _saveSessionAndNavigate(
+      String email, String password, String role) async {
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setString('user_role', role);
+    await prefs.setString('user_email', email);
+    await prefs.setString('saved_email', email);
+    await prefs.setString('saved_password', password);
+
+    if (!mounted) return;
+    Navigator.pushReplacement(
+      context,
+      MaterialPageRoute(builder: (context) => GNavPage()),
+    );
   }
 
   InputDecoration _buildInputDecoration(String hint) {
@@ -140,11 +211,20 @@ class _LoginScreenState extends State<LoginScreen> {
               width: double.infinity,
               child: ElevatedButton(
                 style: _buildButtonStyle(),
-                onPressed: _login,
-                child: Text(
-                  'Login',
-                  style: TextStyle(fontSize: 16.sp),
-                ),
+                onPressed: _isLoading ? null : _login,
+                child: _isLoading
+                    ? const SizedBox(
+                        width: 24,
+                        height: 24,
+                        child: CircularProgressIndicator(
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
+                      )
+                    : Text(
+                        'Login',
+                        style: TextStyle(fontSize: 16.sp),
+                      ),
               ),
             ),
           ],

@@ -79,14 +79,21 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     });
   }
 
+  DateTime _parseInvoiceDate(dynamic raw) {
+    if (raw is Timestamp) return raw.toDate();
+    if (raw is DateTime) return raw;
+    if (raw is String) return DateTime.tryParse(raw) ?? DateTime.now();
+    return DateTime.now();
+  }
+
   void _filterInvoices() {
     final query = _searchController.text.toLowerCase();
     setState(() {
       _filteredInvoices.clear();
       _filteredInvoices.addAll(_invoices.where((invoice) {
-        final supplierName = invoice['supplierName'].toLowerCase();
-        final invoiceNumber = invoice['invoiceNumber'].toString();
-        final invoiceDate = (invoice['date'] as Timestamp).toDate();
+        final supplierName = (invoice['supplierName'] ?? '').toString().toLowerCase();
+        final invoiceNumber = (invoice['invoiceNumber'] ?? '').toString();
+        final invoiceDate = _parseInvoiceDate(invoice['date']);
         final isInSelectedMonth = _selectedMonth == null ||
             (invoiceDate.year == _selectedMonth!.year &&
                 invoiceDate.month == _selectedMonth!.month);

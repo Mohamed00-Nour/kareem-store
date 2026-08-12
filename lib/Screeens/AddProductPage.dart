@@ -420,10 +420,8 @@ class _AddProductPageState extends State<AddProductPage> {
           : invoiceDiscount;
       final totalSum = totalBeforeDiscount - effectiveDiscountAmt;
       double balance = totalSum - effectivePaid;
-      final String docId = FirebaseFirestore.instance
-          .collection('buying invoices')
-          .doc()
-          .id;
+      final String docId =
+          FirebaseFirestore.instance.collection('buying invoices').doc().id;
 
       Map<String, dynamic> invoiceData = {
         'id': docId,
@@ -463,9 +461,8 @@ class _AddProductPageState extends State<AddProductPage> {
 
       if (ConnectivityService.instance.isOnline) {
         logProgress('8. Writing buying invoice to Firestore');
-        DocumentReference docRef = FirebaseFirestore.instance
-            .collection('buying invoices')
-            .doc(docId);
+        DocumentReference docRef =
+            FirebaseFirestore.instance.collection('buying invoices').doc(docId);
         await docRef.set(invoiceData);
         logProgress('9. Buying invoice saved with ID: ${docRef.id}');
 
@@ -474,10 +471,7 @@ class _AddProductPageState extends State<AddProductPage> {
           DocumentReference supplierDocRef = FirebaseFirestore.instance
               .collection('suppliers')
               .doc(workingSupplier.id);
-          await supplierDocRef
-              .collection('buying invoices')
-              .doc(docId)
-              .set({
+          await supplierDocRef.collection('buying invoices').doc(docId).set({
             ...invoiceData,
             'invoiceId': docRef.id,
           });
@@ -593,8 +587,8 @@ class _AddProductPageState extends State<AddProductPage> {
 
   Future<int> _fetchNextBuyingInvoiceNumber() async {
     if (!ConnectivityService.instance.isOnline) {
-      final lastNum =
-          (appMetaBox.get('lastBuyingInvoiceNumber', defaultValue: 1000) as int);
+      final lastNum = (appMetaBox.get('lastBuyingInvoiceNumber',
+          defaultValue: 1000) as int);
       final nextNum = lastNum + 1;
       await appMetaBox.put('lastBuyingInvoiceNumber', nextNum);
       return nextNum;
@@ -611,8 +605,8 @@ class _AddProductPageState extends State<AddProductPage> {
       await appMetaBox.put('lastBuyingInvoiceNumber', numVal);
       return numVal;
     } catch (_) {
-      final lastNum =
-          (appMetaBox.get('lastBuyingInvoiceNumber', defaultValue: 1000) as int);
+      final lastNum = (appMetaBox.get('lastBuyingInvoiceNumber',
+          defaultValue: 1000) as int);
       final nextNum = lastNum + 1;
       await appMetaBox.put('lastBuyingInvoiceNumber', nextNum);
       return nextNum;

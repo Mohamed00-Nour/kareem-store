@@ -19,6 +19,9 @@ import '../Services/sales_invoice_actions_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../repositories/product_repository.dart';
+import '../sync/connectivity_service.dart';
+import '../repositories/client_repository.dart';
+import '../sync/sync_queue_manager.dart';
 
 part 'invoice_edit_sheet.dart';
 
@@ -97,8 +100,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         return;
       }
       // Cache empty (first-ever launch): fall back to Firestore.
-      final qs =
-          await FirebaseFirestore.instance.collection('products').get();
+      final qs = await FirebaseFirestore.instance.collection('products').get();
       if (mounted) {
         setState(() {
           _allProds = qs.docs.map((doc) {
@@ -244,22 +246,52 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         query = query.startAfterDocument(_lastInvoiceDoc!);
       }
 
-      // Fetch invoices, returnInvoices, and payments in parallel on reset
-      final Future<QuerySnapshot> invoiceFuture = query.get();
+      final bool isOnline = ConnectivityService.instance.isOnline;
+      final GetOptions options = GetOptions(
+        source: isOnline ? Source.serverAndCache : Source.cache,
+      );
+
+      final Future<QuerySnapshot> invoiceFuture = query.get(options);
       final Future<QuerySnapshot?> returnFuture = reset
-          ? _returnInvoicesQuery().get()
+          ? _returnInvoicesQuery().get(options)
           : Future<QuerySnapshot?>.value(null);
-      final Future<QuerySnapshot?> paymentFuture =
-          reset ? _paymentsQuery().get() : Future<QuerySnapshot?>.value(null);
-      final snap = await invoiceFuture;
-      final retSnap = await returnFuture;
-      // Fetch payments separately with its own error guard (needs a Firestore index;
-      // if the index doesn't exist yet, degrade gracefully instead of crashing)
+      final Future<QuerySnapshot?> paymentFuture = reset
+          ? _paymentsQuery().get(options)
+          : Future<QuerySnapshot?>.value(null);
+
+      QuerySnapshot snap;
+      try {
+        snap = await invoiceFuture;
+      } catch (_) {
+        snap = await query.get(const GetOptions(source: Source.cache));
+      }
+
+      QuerySnapshot? retSnap;
+      try {
+        retSnap = await returnFuture;
+      } catch (_) {
+        if (reset) {
+          try {
+            retSnap = await _returnInvoicesQuery()
+                .get(const GetOptions(source: Source.cache));
+          } catch (_) {
+            retSnap = null;
+          }
+        }
+      }
+
       QuerySnapshot? paySnap;
       try {
         paySnap = await paymentFuture;
       } catch (_) {
-        paySnap = null;
+        if (reset) {
+          try {
+            paySnap = await _paymentsQuery()
+                .get(const GetOptions(source: Source.cache));
+          } catch (_) {
+            paySnap = null;
+          }
+        }
       }
       if (!mounted) return;
 
@@ -363,6 +395,71 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       _isSaving = true; // Show loading overlay
     });
 
+    final bool isOnline = ConnectivityService.instance.isOnline;
+
+    if (!isOnline) {
+      try {
+        final clientLocal = ClientRepository.instance.getById(widget.clientId);
+        final double currentBalance =
+            clientLocal?.balance ?? _currentClientBalance ?? 0.0;
+
+        final double newBalance = isAddition
+            ? currentBalance + enteredBalance
+            : currentBalance - enteredBalance;
+
+        await ClientRepository.instance
+            .updateLocalBalance(widget.clientId, newBalance);
+
+        final logEntry = <String, dynamic>{
+          'enteredBalance': enteredBalance,
+          'balanceBefore': currentBalance,
+          'type': isAddition ? 'addition' : 'deduction',
+          'notes': notesText,
+          'timestamp': DateTime.now().toIso8601String(),
+        };
+
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'adjustClientBalance',
+          payload: {
+            'clientId': widget.clientId,
+            'amount': enteredBalance,
+            'isAddition': isAddition,
+            'logEntry': logEntry,
+            'newBalance': newBalance,
+          },
+        );
+
+        _balanceController.clear();
+        _addBalanceController.clear();
+        _notesController.clear();
+
+        if (mounted) {
+          setState(() {
+            _currentClientBalance = newBalance;
+          });
+          _refreshInvoices();
+          ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(
+                content: Text(
+                    'تم حفظ الرصيد محلياً وسيتم مزامنته عند الاتصال بالإنترنت')),
+          );
+        }
+      } catch (e) {
+        if (mounted) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
+          );
+        }
+      } finally {
+        if (mounted) {
+          setState(() {
+            _isSaving = false;
+          });
+        }
+      }
+      return;
+    }
+
     try {
       // Get current client balance
       DocumentSnapshot clientDoc = await FirebaseFirestore.instance
@@ -388,6 +485,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           .collection('clients')
           .doc(widget.clientId)
           .update({'balance': newBalance});
+
+      await ClientRepository.instance
+          .updateLocalBalance(widget.clientId, newBalance);
 
       // Add to client's balance history
       await FirebaseFirestore.instance
@@ -1952,17 +2052,43 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   Future<void> _fetchClientName() async {
     try {
+      final bool isOnline = ConnectivityService.instance.isOnline;
+      if (!isOnline) {
+        final local = ClientRepository.instance.getById(widget.clientId);
+        if (local != null && mounted) {
+          setState(() {
+            _clientName = local.name;
+            _currentClientBalance = local.balance;
+          });
+          return;
+        }
+      }
+
       final snap = await FirebaseFirestore.instance
           .collection('clients')
           .doc(widget.clientId)
-          .get();
+          .get(GetOptions(
+              source: isOnline ? Source.serverAndCache : Source.cache));
+
       if (snap.exists && mounted) {
+        final data = snap.data();
         setState(() {
-          _clientName = snap.data()?['clientName']?.toString();
-          _currentClientBalance = (snap.data()?['balance'] as num?)?.toDouble();
+          _clientName = (data?['clientName'] ?? data?['name'])?.toString();
+          _currentClientBalance = (data?['balance'] as num?)?.toDouble();
+        });
+        if (data != null && _clientName != null) {
+          ClientRepository.instance.upsertLocal(widget.clientId, data);
+        }
+      }
+    } catch (_) {
+      final local = ClientRepository.instance.getById(widget.clientId);
+      if (local != null && mounted) {
+        setState(() {
+          _clientName = local.name;
+          _currentClientBalance = local.balance;
         });
       }
-    } catch (_) {}
+    }
   }
 
   Future<void> _syncClientInvoiceBalances() async {
@@ -2569,6 +2695,15 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     }
   }
 
+  static DateTime? _parseDocDate(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is Timestamp) return raw.toDate();
+    if (raw is DateTime) return raw;
+    if (raw is String) return DateTime.tryParse(raw);
+    if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+    return null;
+  }
+
   static List<QueryDocumentSnapshot> _sortDocs(
       List<QueryDocumentSnapshot> docs) {
     final sorted = List<QueryDocumentSnapshot>.from(docs);
@@ -2578,32 +2713,22 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       final typeA = dataA['type']?.toString() ?? '';
       final typeB = dataB['type']?.toString() ?? '';
 
-      // Opening always last (oldest) in a descending list
-      if (typeA == 'opening' && typeB != 'opening') return 1;
-      if (typeB == 'opening' && typeA != 'opening') return -1;
-
-      // Group by same invoiceId
-      final invA = dataA['invoiceId']?.toString() ?? '';
-      final invB = dataB['invoiceId']?.toString() ?? '';
-      if (invA.isNotEmpty && invA == invB) {
-        return _typePriority(typeA).compareTo(_typePriority(typeB));
-      }
-
-      // Then by timestamp descending (newest first)
-      final tsA = dataA['timestamp'];
-      final tsB = dataB['timestamp'];
-      DateTime? dateA, dateB;
-      if (tsA is Timestamp) dateA = tsA.toDate();
-      if (tsB is Timestamp) dateB = tsB.toDate();
+      // Compare by date and time descending (newest first at the top)
+      final dateA = _parseDocDate(dataA['timestamp'] ?? dataA['date']);
+      final dateB = _parseDocDate(dataB['timestamp'] ?? dataB['date']);
 
       if (dateA != null && dateB != null) {
-        final cmp = dateB.compareTo(dateA); // Descending!
+        final cmp = dateB.compareTo(dateA);
         if (cmp != 0) return cmp;
       } else if (dateA != null) {
         return -1;
       } else if (dateB != null) {
         return 1;
       }
+
+      // If dates are identical, opening goes last (oldest) in a descending view
+      if (typeA == 'opening' && typeB != 'opening') return 1;
+      if (typeB == 'opening' && typeA != 'opening') return -1;
 
       return _typePriority(typeA).compareTo(_typePriority(typeB));
     });
@@ -3061,7 +3186,7 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       children: [
         Scaffold(
           appBar: AppBar(
-            title: const Text('تاريخ سس'),
+            title: const Text('تاريخ الحركات'),
             backgroundColor: Colors.black.withOpacity(0.7),
             foregroundColor: Colors.white,
           ),
@@ -3070,7 +3195,7 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                 .collection('clients')
                 .doc(widget.clientId)
                 .collection('balanceHistory')
-                .orderBy('timestamp')
+                .orderBy('timestamp', descending: true)
                 .snapshots(),
             builder: (context, snapshot) {
               if (!snapshot.hasData) {
@@ -3163,9 +3288,17 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                               final color = _colorForType(type, isIncrease);
                               final description = _descriptionForEntry(data);
 
-                              final timestamp = data['timestamp'] != null
-                                  ? (data['timestamp'] as Timestamp).toDate()
-                                  : DateTime.now();
+                              final rawTs = data['timestamp'] ?? data['date'];
+                              DateTime timestamp = DateTime.now();
+                              if (rawTs is Timestamp) {
+                                timestamp = rawTs.toDate();
+                              } else if (rawTs is DateTime) {
+                                timestamp = rawTs;
+                              } else if (rawTs is String) {
+                                timestamp = DateTime.tryParse(rawTs) ?? DateTime.now();
+                              } else if (rawTs is int) {
+                                timestamp = DateTime.fromMillisecondsSinceEpoch(rawTs);
+                              }
                               final formattedDate =
                                   intl.DateFormat('yyyy-MM-dd hh:mm a')
                                       .format(timestamp);

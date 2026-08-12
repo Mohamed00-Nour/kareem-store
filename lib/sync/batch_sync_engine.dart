@@ -6,6 +6,7 @@ import '../repositories/product_repository.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/supplier_repository.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
+import '../Services/client_invoice_balance_sync_service.dart';
 import 'sync_queue_manager.dart';
 
 /// Processes the [SyncQueueManager] queue and uploads operations to Firestore.
@@ -119,6 +120,9 @@ class BatchSyncEngine {
         break;
       case 'createBuyingInvoice':
         await _syncCreateBuyingInvoice(payload);
+        break;
+      case 'createClient':
+        await _syncCreateClient(payload);
         break;
       default:
         throw UnsupportedError('Unknown operation type: $operationType');
@@ -584,5 +588,57 @@ class BatchSyncEngine {
     if (supplierId.isNotEmpty) {
       await SupplierInvoiceBalanceSyncService.syncForSupplier(supplierId);
     }
+  }
+
+  // ── Create Client (offline sync) ──────────────────────────────────────────
+
+  /// Syncs an offline-created client document to Firestore.
+  /// Writes the client doc and (if balance != 0) an opening balanceHistory entry.
+  Future<void> _syncCreateClient(Map<String, dynamic> payload) async {
+    final String clientId = payload['clientId'] as String? ?? '';
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(payload['data'] as Map? ?? {});
+    final double openingBalance =
+        (payload['openingBalance'] as num?)?.toDouble() ?? 0.0;
+
+    if (clientId.isEmpty) {
+      throw ArgumentError('createClient payload missing clientId');
+    }
+
+    // Remove the local 'id' field before writing — Firestore uses doc ID.
+    data.remove('id');
+
+    final docRef = _fs.collection('clients').doc(clientId);
+
+    // Check if doc already exists (e.g. written on another device while offline).
+    final existingSnap = await docRef.get();
+    if (existingSnap.exists) {
+      // Already synced — nothing to do.
+      await ClientRepository.instance.upsertLocal(
+          clientId, existingSnap.data()!);
+      return;
+    }
+
+    final batch = _fs.batch();
+    batch.set(docRef, data, SetOptions(merge: true));
+
+    if (openingBalance != 0) {
+      final histRef = docRef.collection('balanceHistory').doc();
+      batch.set(histRef, {
+        'enteredBalance': openingBalance,
+        'balanceBefore': 0.0,
+        'type': 'opening',
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+
+    if (openingBalance != 0) {
+      await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+    }
+
+    // Update local cache with confirmed Firestore data.
+    await ClientRepository.instance.upsertLocal(clientId, data);
   }
 }

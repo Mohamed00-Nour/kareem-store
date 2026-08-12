@@ -1,4 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../sync/connectivity_service.dart';
+import '../repositories/client_repository.dart';
 import 'invoice_number_utils.dart';
 
 class ClientInvoiceBalanceSyncService {
@@ -67,10 +69,19 @@ class ClientInvoiceBalanceSyncService {
   }
 
   static Future<void> syncForClient(String clientId) async {
+    // 1. Do not run calculation offline
+    if (!ConnectivityService.instance.isOnline) return;
+
     final trimmed = clientId.trim();
     if (trimmed.isEmpty) return;
 
     final clientRef = _firestore.collection('clients').doc(trimmed);
+
+    // Fetch existing client document to get stored balance
+    final clientSnap = await clientRef.get();
+    if (!clientSnap.exists) return;
+    final clientData = clientSnap.data() as Map<String, dynamic>? ?? {};
+    final double existingClientBalance = (clientData['balance'] as num?)?.toDouble() ?? 0.0;
 
     final results = await Future.wait([
       clientRef.collection('invoices').get(),
@@ -80,7 +91,7 @@ class ClientInvoiceBalanceSyncService {
 
     final saleDocs = results[0].docs;
     final returnDocs = results[1].docs;
-    final historyDocs = results[2].docs;
+    var historyDocs = results[2].docs;
 
     final Map<String, DocumentSnapshot> salesMap = {
       for (var doc in saleDocs) doc.id: doc
@@ -282,6 +293,10 @@ class ClientInvoiceBalanceSyncService {
     final sorted = _sortDocsAscending(finalHistoryDocs);
 
     var running = 0.0;
+    if (!sorted.any((d) => (d.data() as Map)['type'] == 'opening') && existingClientBalance != 0.0) {
+      running = existingClientBalance;
+    }
+
     final Map<String, double> invPreviousBalances = {};
     final Map<String, double> invAfterBalances = {};
     WriteBatch recalculateBatch = _firestore.batch();
@@ -330,8 +345,9 @@ class ClientInvoiceBalanceSyncService {
       await recalculateBatch.commit();
     }
 
-    // Update client balance on main doc
+    // Update client balance on main doc and update local cache
     await clientRef.set({'balance': running}, SetOptions(merge: true));
+    await ClientRepository.instance.updateLocalBalance(trimmed, running);
 
     WriteBatch finalBatch = _firestore.batch();
     var finalOpCount = 0;

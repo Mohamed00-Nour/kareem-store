@@ -157,7 +157,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'dart:io';
 import 'dart:ui' as ui;
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:hive/hive.dart';
@@ -175,6 +174,9 @@ import 'ClientInvoicesPage.dart';
 import '../Services/client_invoice_balance_sync_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
+import '../sync/connectivity_service.dart';
+import '../repositories/client_repository.dart';
+import '../sync/sync_queue_manager.dart';
 
 // ─── Main Menu Page ──────────────────────────────────────────────────────────
 
@@ -227,31 +229,53 @@ class ClientsPage extends StatelessWidget {
                   backgroundColor: Colors.black.withOpacity(0.7)),
               onPressed: () async {
                 final name = nameCtrl.text.trim();
+                // Capture messenger before any await to avoid BuildContext-across-async-gap lint.
+                final messenger = ScaffoldMessenger.of(ctx);
                 if (name.isEmpty) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
+                  messenger.showSnackBar(
                     const SnackBar(content: Text('يرجى إدخال اسم العميل')),
                   );
                   return;
                 }
-                // Check if client name already exists
-                final query = await FirebaseFirestore.instance
-                    .collection('clients')
-                    .where('clientName', isEqualTo: name)
-                    .limit(1)
-                    .get();
-                if (query.docs.isNotEmpty) {
-                  if (ctx.mounted) {
-                    ScaffoldMessenger.of(ctx).showSnackBar(
+
+                final bool isOnline = ConnectivityService.instance.isOnline;
+
+                // ── Duplicate-name check ──────────────────────────────────
+                if (isOnline) {
+                  try {
+                    final query = await FirebaseFirestore.instance
+                        .collection('clients')
+                        .where('clientName', isEqualTo: name)
+                        .limit(1)
+                        .get()
+                        .timeout(const Duration(seconds: 5));
+                    if (query.docs.isNotEmpty) {
+                      messenger.showSnackBar(
+                        const SnackBar(
+                            content: Text('يوجد عميل بهذا الاسم بالفعل')),
+                      );
+                      return;
+                    }
+                  } catch (_) {
+                    // Network error during check — fall through and save.
+                  }
+                } else {
+                  // Offline: check against Hive local cache.
+                  final existing = ClientRepository.instance.findByName(name);
+                  if (existing != null) {
+                    messenger.showSnackBar(
                       const SnackBar(
                           content: Text('يوجد عميل بهذا الاسم بالفعل')),
                     );
+                    return;
                   }
-                  return;
                 }
+
+                // ── Phone validation ──────────────────────────────────────
                 final phoneLocal = phoneCtrl.text.trim();
                 if (phoneLocal.isNotEmpty &&
                     !EgyptPhoneField.isValidLocalPart(phoneCtrl.text)) {
-                  ScaffoldMessenger.of(ctx).showSnackBar(
+                  messenger.showSnackBar(
                     const SnackBar(
                       content: Text(
                           'رقم الهاتف غير صحيح. اتركه فارغاً أو أدخل رقماً صالحاً'),
@@ -259,8 +283,8 @@ class ClientsPage extends StatelessWidget {
                   );
                   return;
                 }
-                final balance = double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
 
+                final balance = double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
                 final docRef =
                     FirebaseFirestore.instance.collection('clients').doc();
                 final clientId = docRef.id;
@@ -274,15 +298,45 @@ class ClientsPage extends StatelessWidget {
                   data['phone'] =
                       EgyptPhoneField.toWhatsappDigits(phoneCtrl.text);
                 }
-                await docRef.set(data, SetOptions(merge: true));
-                if (balance != 0) {
-                  await docRef.collection('balanceHistory').add({
-                    'enteredBalance': balance,
-                    'balanceBefore': 0.0,
-                    'type': 'opening',
-                    'timestamp': FieldValue.serverTimestamp(),
-                  });
+
+                // ── Always persist to Hive immediately ───────────────────
+                await ClientRepository.instance.upsertLocal(clientId, data);
+
+                if (isOnline) {
+                  // ── Online: write directly to Firestore ──────────────
+                  try {
+                    await docRef.set(data, SetOptions(merge: true));
+                    if (balance != 0) {
+                      await docRef.collection('balanceHistory').add({
+                        'enteredBalance': balance,
+                        'balanceBefore': 0.0,
+                        'type': 'opening',
+                        'timestamp': FieldValue.serverTimestamp(),
+                      });
+                      await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+                    }
+                  } catch (e) {
+                    // Online write failed — queue for later sync.
+                    await SyncQueueManager.instance.enqueue(
+                      operationType: 'createClient',
+                      payload: {'clientId': clientId, 'data': data, 'openingBalance': balance},
+                    );
+                  }
+                } else {
+                  // ── Offline: queue the creation for later sync ────────
+                  await SyncQueueManager.instance.enqueue(
+                    operationType: 'createClient',
+                    payload: {'clientId': clientId, 'data': data, 'openingBalance': balance},
+                  );
+                  messenger.showSnackBar(
+                    const SnackBar(
+                      content: Text(
+                          'تم حفظ العميل محلياً وسيتم مزامنته عند الاتصال بالإنترنت'),
+                      duration: Duration(seconds: 3),
+                    ),
+                  );
                 }
+
                 if (ctx.mounted) Navigator.pop(ctx);
               },
               child: const Text('حفظ', style: TextStyle(color: Colors.white)),
@@ -1179,14 +1233,22 @@ class _ClientOpeningBalancesPageState
 
   void _showAddAmountDialog(BuildContext context, String clientId,
       String clientName, double currentBalance) async {
-    final voucherSnap = await FirebaseFirestore.instance
-        .collection('client_vouchers')
-        .orderBy('voucherNumber', descending: true)
-        .limit(1)
-        .get();
-    final nextVoucher = voucherSnap.docs.isNotEmpty
-        ? (voucherSnap.docs.first['voucherNumber'] as int) + 1
-        : 1;
+    int nextVoucher = 1;
+    try {
+      final voucherSnap = await FirebaseFirestore.instance
+          .collection('client_vouchers')
+          .orderBy('voucherNumber', descending: true)
+          .limit(1)
+          .get()
+          .timeout(const Duration(seconds: 3));
+      if (voucherSnap.docs.isNotEmpty) {
+        nextVoucher = (voucherSnap.docs.first['voucherNumber'] as int) + 1;
+      }
+    } catch (_) {
+      nextVoucher = DateTime.now().millisecondsSinceEpoch % 10000;
+    }
+
+    if (!context.mounted) return;
 
     String direction = 'عليه';
     String paymentMethod = 'نقداً';
@@ -1447,11 +1509,84 @@ class _ClientOpeningBalancesPageState
 
                                     setDlg(() => isSaving = true);
 
-                                    try {
-                                      final isAddition = direction == 'عليه';
-                                      double delta =
-                                          isAddition ? amount : -amount;
+                                    final bool isOnline = ConnectivityService.instance.isOnline;
+                                    final isAddition = direction == 'عليه';
+                                    double delta = isAddition ? amount : -amount;
 
+                                    if (!isOnline) {
+                                      try {
+                                        final clientLocal = ClientRepository
+                                            .instance
+                                            .getById(clientId);
+                                        double latestBalance =
+                                            clientLocal?.balance ??
+                                                currentBalance;
+                                        double newBalance =
+                                            latestBalance + delta;
+
+                                        await ClientRepository.instance
+                                            .updateLocalBalance(
+                                                clientId, newBalance);
+
+                                        final vNumber =
+                                            int.tryParse(voucherCtrl.text) ??
+                                                nextVoucher;
+                                        String noteStr =
+                                            'سند $direction رقم $vNumber';
+                                        final dText = descCtrl.text.trim();
+                                        if (dText.isNotEmpty) {
+                                          noteStr += ' ($dText)';
+                                        }
+
+                                        final logEntry = <String, dynamic>{
+                                          'enteredBalance': amount,
+                                          'balanceBefore': latestBalance,
+                                          'type': isAddition
+                                              ? 'addition'
+                                              : 'deduction',
+                                          'notes': noteStr,
+                                          'timestamp':
+                                              selectedDate.toIso8601String(),
+                                        };
+
+                                        await SyncQueueManager.instance.enqueue(
+                                          operationType: 'adjustClientBalance',
+                                          payload: {
+                                            'clientId': clientId,
+                                            'amount': amount,
+                                            'isAddition': isAddition,
+                                            'logEntry': logEntry,
+                                            'newBalance': newBalance,
+                                          },
+                                        );
+
+                                        if (ctx.mounted) Navigator.pop(ctx);
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            const SnackBar(
+                                                content: Text(
+                                                    'تم إضافة المبلغ محلياً وسيتم مزامنته عند الاتصال بالإنترنت')),
+                                          );
+                                        }
+                                      } catch (e) {
+                                        if (context.mounted) {
+                                          ScaffoldMessenger.of(context)
+                                              .showSnackBar(
+                                            SnackBar(
+                                                content: Text(
+                                                    'حدث خطأ أثناء الإضافة: $e')),
+                                          );
+                                        }
+                                      } finally {
+                                        if (ctx.mounted) {
+                                          setDlg(() => isSaving = false);
+                                        }
+                                      }
+                                      return;
+                                    }
+
+                                    try {
                                       // Get current client balance
                                       DocumentSnapshot clientDoc =
                                           await FirebaseFirestore.instance
@@ -1461,7 +1596,8 @@ class _ClientOpeningBalancesPageState
 
                                       double latestBalance = 0.0;
                                       if (clientDoc.exists) {
-                                        final clientData = clientDoc.data() as Map<String, dynamic>?;
+                                        final clientData = clientDoc.data()
+                                            as Map<String, dynamic>?;
                                         latestBalance =
                                             (clientData?['balance'] ?? 0.0)
                                                 .toDouble();
@@ -1476,6 +1612,10 @@ class _ClientOpeningBalancesPageState
                                           .collection('clients')
                                           .doc(clientId)
                                           .update({'balance': newBalance});
+
+                                      await ClientRepository.instance
+                                          .updateLocalBalance(
+                                              clientId, newBalance);
 
                                       final vNumber =
                                           int.tryParse(voucherCtrl.text) ??
@@ -1697,7 +1837,13 @@ class _ClientOpeningBalancesPageState
                       final doc = clients[index];
                       final docData = doc.data() as Map<String, dynamic>?;
                       final name = (docData?['clientName'] ?? '').toString();
-                      final balance = (docData?['balance'] ?? 0.0).toDouble();
+                      double balance = (docData?['balance'] ?? 0.0).toDouble();
+                      if (balance == 0.0) {
+                        final local = ClientRepository.instance.getById(doc.id);
+                        if (local != null && local.balance != 0.0) {
+                          balance = local.balance;
+                        }
+                      }
                       final lahu = balance < 0 ? balance.abs() : 0.0;
                       final alayhi = balance > 0 ? balance : 0.0;
 
@@ -3648,9 +3794,21 @@ class _ClientListPageState extends State<_ClientListPage> {
                   itemBuilder: (context, index) {
                     final client = visibleClients[index];
                     final data = client.data() as Map<String, dynamic>;
-                    final name = data['clientName']?.toString() ?? client.id;
-                    final balance = (data['balance'] ?? 0.0).toDouble();
-                    final phone = data['phone']?.toString() ?? '';
+                    final name =
+                        (data['clientName'] ?? data['name'])?.toString() ??
+                            client.id;
+                    double balance =
+                        (data['balance'] ?? data['totalBalance'] as num?)
+                                ?.toDouble() ??
+                            0.0;
+                    if (balance == 0.0) {
+                      final local =
+                          ClientRepository.instance.getById(client.id);
+                      if (local != null && local.balance != 0.0) {
+                        balance = local.balance;
+                      }
+                    }
+                    final phone = (data['phone'] ?? data['clientPhone'])?.toString() ?? '';
 
                     return _PartyInfoCard(
                       name: name,

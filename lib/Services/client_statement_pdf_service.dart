@@ -444,7 +444,13 @@ class ClientStatementPdfService {
 
     for (final doc in invoices) {
       final data = Map<String, dynamic>.from(doc.data() as Map);
-      final date = (data['date'] as Timestamp).toDate();
+      final rawDate = data['date'];
+      final date = rawDate is Timestamp
+          ? rawDate.toDate()
+          : (rawDate is DateTime
+              ? rawDate
+              : (DateTime.tryParse(rawDate?.toString() ?? '') ??
+                  DateTime.now()));
       final products =
           List<Map<String, dynamic>>.from(data['products'] ?? []);
       final totalSum =
