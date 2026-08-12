@@ -124,6 +124,9 @@ class BatchSyncEngine {
       case 'createClient':
         await _syncCreateClient(payload);
         break;
+      case 'createSupplier':
+        await _syncCreateSupplier(payload);
+        break;
       default:
         throw UnsupportedError('Unknown operation type: $operationType');
     }
@@ -640,5 +643,64 @@ class BatchSyncEngine {
 
     // Update local cache with confirmed Firestore data.
     await ClientRepository.instance.upsertLocal(clientId, data);
+  }
+
+  // ── Create Supplier (offline sync) ────────────────────────────────────────
+
+  /// Syncs an offline-created supplier document to Firestore.
+  Future<void> _syncCreateSupplier(Map<String, dynamic> payload) async {
+    final String supplierId = payload['supplierId'] as String? ?? '';
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(payload['data'] as Map? ?? {});
+    final double openingBalance =
+        (payload['openingBalance'] as num?)?.toDouble() ?? 0.0;
+
+    if (supplierId.isEmpty) {
+      throw ArgumentError('createSupplier payload missing supplierId');
+    }
+
+    data.remove('id');
+
+    final docRef = _fs.collection('suppliers').doc(supplierId);
+
+    final existingSnap = await docRef.get();
+    if (existingSnap.exists) {
+      await SupplierRepository.instance
+          .upsertLocal(supplierId, existingSnap.data()!);
+      return;
+    }
+
+    final batch = _fs.batch();
+    batch.set(docRef, data, SetOptions(merge: true));
+
+    if (openingBalance != 0) {
+      final voucherRef = _fs.collection('supplier_vouchers').doc();
+      batch.set(voucherRef, {
+        'supplierId': supplierId,
+        'supplierName': data['name'],
+        'direction': 'له',
+        'amount': openingBalance,
+        'description': 'رصيد افتتاحي',
+        'date': FieldValue.serverTimestamp(),
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+
+      final histRef = docRef.collection('balanceHistory').doc();
+      batch.set(histRef, {
+        'enteredBalance': openingBalance,
+        'balanceBefore': 0.0,
+        'type': 'opening',
+        'direction': 'له',
+        'timestamp': FieldValue.serverTimestamp(),
+      });
+    }
+
+    await batch.commit();
+
+    if (openingBalance != 0) {
+      await SupplierInvoiceBalanceSyncService.syncForSupplier(supplierId);
+    }
+
+    await SupplierRepository.instance.upsertLocal(supplierId, data);
   }
 }

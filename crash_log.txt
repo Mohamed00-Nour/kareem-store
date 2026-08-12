@@ -1,6 +1,6 @@
 1. Save started
 6. Fetching buying invoice number
-7. Invoice number resolved: 1003
+7. Invoice number resolved: 1004
 8. Queueing buying invoice offline
 24. State updated. Launching dialog...
 25. Dialog shown

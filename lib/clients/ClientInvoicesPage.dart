@@ -3295,9 +3295,11 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                               } else if (rawTs is DateTime) {
                                 timestamp = rawTs;
                               } else if (rawTs is String) {
-                                timestamp = DateTime.tryParse(rawTs) ?? DateTime.now();
+                                timestamp =
+                                    DateTime.tryParse(rawTs) ?? DateTime.now();
                               } else if (rawTs is int) {
-                                timestamp = DateTime.fromMillisecondsSinceEpoch(rawTs);
+                                timestamp =
+                                    DateTime.fromMillisecondsSinceEpoch(rawTs);
                               }
                               final formattedDate =
                                   intl.DateFormat('yyyy-MM-dd hh:mm a')

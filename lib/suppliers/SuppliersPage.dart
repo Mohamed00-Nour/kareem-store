@@ -10,6 +10,9 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
+import '../repositories/supplier_repository.dart';
+import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
 import 'SupplierListPage.dart';
 import 'SupplierInvoicesPage.dart';
 
@@ -79,25 +82,80 @@ class SuppliersPage extends StatelessWidget {
                           return;
                         }
 
+                        final existingSupplier =
+                            SupplierRepository.instance.findByName(name);
+                        if (existingSupplier != null) {
+                          ScaffoldMessenger.of(context).showSnackBar(
+                            const SnackBar(
+                                content: Text('المورد موجود بالفعل')),
+                          );
+                          return;
+                        }
+
                         setDialogState(() => isSaving = true);
+
+                        final opening =
+                            double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
+                        final totalBalance =
+                            opening == 0 ? 0.0 : opening.abs();
+                        final bool isOnline =
+                            ConnectivityService.instance.isOnline;
+
+                        final docRef = FirebaseFirestore.instance
+                            .collection('suppliers')
+                            .doc();
+                        final String supplierId = docRef.id;
+
+                        final data = <String, dynamic>{
+                          'name': name,
+                          'totalBalance': totalBalance,
+                          'id': supplierId,
+                        };
+
+                        if (!isOnline) {
+                          try {
+                            await SupplierRepository.instance
+                                .upsertLocal(supplierId, data);
+
+                            await SyncQueueManager.instance.enqueue(
+                              operationType: 'createSupplier',
+                              payload: {
+                                'supplierId': supplierId,
+                                'data': data,
+                                'openingBalance': opening.abs(),
+                              },
+                            );
+
+                            if (ctx.mounted) Navigator.pop(ctx);
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content: Text(
+                                        'تم حفظ المورد محلياً وسيتم مزامنته عند الاتصال بالإنترنت')),
+                              );
+                            }
+                          } catch (e) {
+                            if (ctx.mounted) {
+                              setDialogState(() => isSaving = false);
+                            }
+                            if (context.mounted) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                SnackBar(
+                                    content: Text('حدث خطأ أثناء الحفظ: $e')),
+                              );
+                            }
+                          }
+                          return;
+                        }
+
                         try {
-                          final opening =
-                              double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
-                          // Opening balance = amount we owe the supplier → له (positive).
-                          final totalBalance =
-                              opening == 0 ? 0.0 : opening.abs();
-                          final ref = await FirebaseFirestore.instance
-                              .collection('suppliers')
-                              .add({
-                            'name': name,
-                            'totalBalance': totalBalance,
-                          });
-                          await ref.update({'id': ref.id});
+                          await docRef.set(data, SetOptions(merge: true));
+
                           if (opening != 0) {
                             await FirebaseFirestore.instance
                                 .collection('supplier_vouchers')
                                 .add({
-                              'supplierId': ref.id,
+                              'supplierId': supplierId,
                               'supplierName': name,
                               'direction': 'له',
                               'amount': opening.abs(),
@@ -105,14 +163,20 @@ class SuppliersPage extends StatelessWidget {
                               'date': Timestamp.now(),
                               'timestamp': FieldValue.serverTimestamp(),
                             });
-                            await ref.collection('balanceHistory').add({
+                            await docRef.collection('balanceHistory').add({
                               'enteredBalance': opening.abs(),
                               'balanceBefore': 0.0,
                               'type': 'opening',
                               'direction': 'له',
                               'timestamp': FieldValue.serverTimestamp(),
                             });
+                            await SupplierInvoiceBalanceSyncService
+                                .syncForSupplier(supplierId);
                           }
+
+                          await SupplierRepository.instance
+                              .upsertLocal(supplierId, data);
+
                           if (ctx.mounted) Navigator.pop(ctx);
                           if (context.mounted) {
                             ScaffoldMessenger.of(context).showSnackBar(
