@@ -10,7 +10,7 @@ class SupplierRepository {
   SupplierRepository._();
   static final SupplierRepository instance = SupplierRepository._();
 
-  final FirebaseFirestore _fs = FirebaseFirestore.instance;
+  FirebaseFirestore get _fs => FirebaseFirestore.instance;
 
   // ── Cache helpers ─────────────────────────────────────────────────────────
 

@@ -1,8 +1,15 @@
+import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:uuid/uuid.dart';
+import '../local_db/models/expense_local.dart';
+import '../repositories/expense_repository.dart';
+import '../sync/sync_queue_manager.dart';
+import '../sync/connectivity_service.dart';
 import '../models/Expenses.dart';
 
 class ExpenseService {
   static final _db = FirebaseFirestore.instance;
+  static const _uuid = Uuid();
 
   static const defaultCategories = [
     'مصاريف النقل',
@@ -17,18 +24,20 @@ class ExpenseService {
       _db.collection('expense_categories');
 
   static Future<void> ensureDefaultCategories() async {
-    final snap = await _categories.limit(1).get();
-    if (snap.docs.isNotEmpty) return;
-    final batch = _db.batch();
-    for (final name in defaultCategories) {
-      final ref = _categories.doc();
-      batch.set(ref, {
-        'name': name,
-        'isDefault': true,
-        'createdAt': FieldValue.serverTimestamp(),
-      });
-    }
-    await batch.commit();
+    try {
+      final snap = await _categories.limit(1).get();
+      if (snap.docs.isNotEmpty) return;
+      final batch = _db.batch();
+      for (final name in defaultCategories) {
+        final ref = _categories.doc();
+        batch.set(ref, {
+          'name': name,
+          'isDefault': true,
+          'createdAt': FieldValue.serverTimestamp(),
+        });
+      }
+      await batch.commit();
+    } catch (_) {}
   }
 
   static Stream<List<String>> categoriesStream() {
@@ -45,17 +54,21 @@ class ExpenseService {
   static Future<void> addCategory(String name) async {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
-    final existing = await _categories.where('name', isEqualTo: trimmed).get();
-    if (existing.docs.isNotEmpty) return;
-    await _categories.add({
-      'name': trimmed,
-      'isDefault': false,
-      'createdAt': FieldValue.serverTimestamp(),
-    });
+    try {
+      final existing = await _categories.where('name', isEqualTo: trimmed).get();
+      if (existing.docs.isNotEmpty) return;
+      await _categories.add({
+        'name': trimmed,
+        'isDefault': false,
+        'createdAt': FieldValue.serverTimestamp(),
+      });
+    } catch (_) {}
   }
 
   static Future<void> deleteCategory(String docId) async {
-    await _categories.doc(docId).delete();
+    try {
+      await _categories.doc(docId).delete();
+    } catch (_) {}
   }
 
   static Stream<QuerySnapshot<Map<String, dynamic>>> categoriesDocsStream() {
@@ -76,6 +89,12 @@ class ExpenseService {
     });
   }
 
+  /// Get all expenses from Hive local cache instantly (offline-first).
+  static List<Expenses> getLocalExpenses() {
+    final localList = ExpenseRepository.instance.getAll();
+    return localList.map((e) => Expenses.fromMap(e.toMap(), id: e.id)).toList();
+  }
+
   static Future<void> saveExpense({
     String? id,
     required String category,
@@ -84,37 +103,86 @@ class ExpenseService {
     String notes = '',
     Map<String, String> attributes = const {},
   }) async {
-    final ref = id != null ? _expenses.doc(id) : _expenses.doc();
+    final docId = id ?? _uuid.v4();
     final dateOnly = DateTime(date.year, date.month, date.day);
-    await ref.set({
-      'id': ref.id,
+
+    final expenseMap = <String, dynamic>{
+      'id': docId,
       'category': category.trim(),
       'name': category.trim(),
       'value': amount.toString(),
       'notes': notes.trim(),
       'attributes': attributes,
       'date': dateOnly.toIso8601String().split('T').first,
-      'dateTimestamp': Timestamp.fromDate(dateOnly),
-      'time': FieldValue.serverTimestamp(),
-    }, SetOptions(merge: true));
+      'dateTimestamp': dateOnly,
+    };
 
-    await addCategory(category.trim());
+    // 1. Immediately save to Hive local cache (Primary DB)
+    await ExpenseRepository.instance.upsertLocal(docId, expenseMap);
+
+    // 2. Enqueue for background sync
+    await SyncQueueManager.instance.enqueue(
+      operationType: 'saveExpense',
+      payload: {
+        'id': docId,
+        'data': {
+          ...expenseMap,
+          'dateTimestamp': dateOnly.toIso8601String(),
+        },
+      },
+    );
+
+    // 3. Direct write if online
+    try {
+      final ref = _expenses.doc(docId);
+      await ref.set({
+        'id': docId,
+        'category': category.trim(),
+        'name': category.trim(),
+        'value': amount.toString(),
+        'notes': notes.trim(),
+        'attributes': attributes,
+        'date': dateOnly.toIso8601String().split('T').first,
+        'dateTimestamp': Timestamp.fromDate(dateOnly),
+        'time': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      await addCategory(category.trim());
+    } catch (_) {}
+
+    ConnectivityService.instance.forceSync();
   }
 
   static Future<void> deleteExpense(String id) async {
-    await _expenses.doc(id).delete();
+    // 1. Remove from local Hive cache immediately
+    await ExpenseRepository.instance.deleteLocal(id);
+
+    // 2. Enqueue deletion
+    await SyncQueueManager.instance.enqueue(
+      operationType: 'deleteExpense',
+      payload: {'id': id},
+    );
+
+    // 3. Direct delete if online
+    try {
+      await _expenses.doc(id).delete();
+    } catch (_) {}
+
+    ConnectivityService.instance.forceSync();
   }
 
   /// Parses expense date from Firestore document (supports legacy records).
   static DateTime? expenseDateFromData(Map<String, dynamic> data) {
     final ts = data['dateTimestamp'];
     if (ts is Timestamp) return ts.toDate();
+    if (ts is DateTime) return ts;
 
     final time = data['time'];
     if (time is Timestamp) return time.toDate();
+    if (time is DateTime) return time;
 
     final date = data['date'];
     if (date is Timestamp) return date.toDate();
+    if (date is DateTime) return date;
     if (date is String && date.isNotEmpty) {
       final part = date.split(' ').first;
       return DateTime.tryParse(part);

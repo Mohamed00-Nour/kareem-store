@@ -118,7 +118,11 @@ class BatchSyncEngine {
       case 'createQuote':
         await _syncCreateQuote(payload);
         break;
+      case 'deleteQuote':
+        await _syncDeleteQuote(payload);
+        break;
       case 'createBuyingInvoice':
+      case 'editBuyingInvoice':
         await _syncCreateBuyingInvoice(payload);
         break;
       case 'createClient':
@@ -126,6 +130,18 @@ class BatchSyncEngine {
         break;
       case 'createSupplier':
         await _syncCreateSupplier(payload);
+        break;
+      case 'saveExpense':
+        await _syncSaveExpense(payload);
+        break;
+      case 'deleteExpense':
+        await _syncDeleteExpense(payload);
+        break;
+      case 'updateBox':
+        await _syncUpdateBox(payload);
+        break;
+      case 'updateStock':
+        await _syncUpdateStock(payload);
         break;
       default:
         throw UnsupportedError('Unknown operation type: $operationType');
@@ -135,9 +151,12 @@ class BatchSyncEngine {
   // ── Operation Handlers ────────────────────────────────────────────────────
 
   /// Syncs an offline-created selling invoice to Firestore as a single batch:
+  /// - Invoice document in root invoices collection
   /// - Invoice document in clients/{clientId}/invoices
   /// - Stock decrements for each product line (FieldValue.increment)
   /// - Client balance update
+  /// - Balance history log entries
+  /// - Cash box update if paidAmount > 0
   Future<void> _syncCreateInvoice(Map<String, dynamic> payload) async {
     final batch = _fs.batch();
     final String clientId = payload['clientId'];
@@ -147,21 +166,71 @@ class BatchSyncEngine {
     final List<dynamic> products = payload['products'] ?? [];
     final double totalSum = (payload['totalSum'] as num).toDouble();
     final double paidAmount = (payload['paidAmount'] as num).toDouble();
+    final int invoiceNumber = (invoiceData['invoiceNumber'] as num?)?.toInt() ?? 0;
+    final String clientName = invoiceData['clientName']?.toString() ?? '';
 
     // Convert ISO date string back to DateTime for Firestore
     if (invoiceData['date'] is String) {
       invoiceData['date'] = DateTime.parse(invoiceData['date'] as String);
     }
+    invoiceData['updatedAt'] = FieldValue.serverTimestamp();
 
-    // 1. Write the invoice document.
-    final invoiceRef = _fs
-        .collection('clients')
-        .doc(clientId)
-        .collection('invoices')
-        .doc(invoiceId);
-    batch.set(invoiceRef, invoiceData);
+    // 1. Root invoice doc
+    final rootRef = _fs.collection('invoices').doc(invoiceId);
+    batch.set(rootRef, invoiceData, SetOptions(merge: true));
 
-    // 2. Decrement stock for each product (atomic — safe for multi-device).
+    // 2. Client sub-collection doc
+    if (clientId.isNotEmpty) {
+      final clientInvoiceRef = _fs
+          .collection('clients')
+          .doc(clientId)
+          .collection('invoices')
+          .doc(invoiceId);
+      batch.set(clientInvoiceRef, invoiceData, SetOptions(merge: true));
+
+      // 3. Update client running balance.
+      final double newBalance = totalSum - paidAmount;
+      batch.update(
+        _fs.collection('clients').doc(clientId),
+        {
+          'balance': FieldValue.increment(newBalance),
+          'updatedAt': FieldValue.serverTimestamp(),
+        },
+      );
+
+      // 4. Balance history entries
+      final histRef1 = _fs
+          .collection('clients')
+          .doc(clientId)
+          .collection('balanceHistory')
+          .doc();
+      batch.set(histRef1, {
+        'enteredBalance': totalSum,
+        'balanceBefore': (invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0,
+        'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
+        'type': 'sale',
+        'invoiceId': invoiceId,
+        'invoiceNumber': invoiceNumber,
+      });
+
+      if (paidAmount > 0) {
+        final histRef2 = _fs
+            .collection('clients')
+            .doc(clientId)
+            .collection('balanceHistory')
+            .doc();
+        batch.set(histRef2, {
+          'enteredBalance': paidAmount,
+          'balanceBefore': ((invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0) + totalSum,
+          'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
+          'type': 'sale_payment',
+          'invoiceId': invoiceId,
+          'invoiceNumber': invoiceNumber,
+        });
+      }
+    }
+
+    // 5. Decrement stock for each product line.
     for (final product in products) {
       if (product is! Map) continue;
       final String productName = product['product']?.toString() ?? '';
@@ -174,30 +243,47 @@ class BatchSyncEngine {
           .limit(1)
           .get();
       if (prodQuery.docs.isNotEmpty) {
+        final pRef = prodQuery.docs.first.reference;
         batch.update(
-          prodQuery.docs.first.reference,
-          {'quantity': FieldValue.increment(-qty)},
+          pRef,
+          {
+            'quantity': FieldValue.increment(-qty),
+            'updatedAt': FieldValue.serverTimestamp(),
+          },
         );
-        // Update local cache too.
-        await ProductRepository.instance.upsertLocal(
-          prodQuery.docs.first.id,
-          {...prodQuery.docs.first.data(), 'quantity': 0}, // will be refreshed on next delta sync
-        );
+        batch.set(pRef.collection('changes').doc(), {
+          'date': invoiceData['date'] ?? FieldValue.serverTimestamp(),
+          'amount': qty,
+          'type': 'decrease',
+          'invoiceNumber': invoiceNumber,
+        });
       }
     }
 
-    // 3. Update client running balance.
-    final double newBalance = totalSum - paidAmount;
-    batch.update(
-      _fs.collection('clients').doc(clientId),
-      {'balance': FieldValue.increment(newBalance)},
-    );
+    // 6. Cash box update
+    if (paidAmount > 0) {
+      final boxRef = _fs.collection('box').doc('mainBox');
+      batch.set(
+        boxRef,
+        {'value': FieldValue.increment(paidAmount)},
+        SetOptions(merge: true),
+      );
+      batch.set(boxRef.collection('changes').doc(), {
+        'date': invoiceData['date'] ?? FieldValue.serverTimestamp(),
+        'value': paidAmount,
+        'type': 'addition',
+        'name': clientName,
+        'invoiceNumber': invoiceNumber,
+      });
+    }
 
     await batch.commit();
 
-    // Update local client cache.
-    await ClientRepository.instance.deltaSync();
+    if (clientId.isNotEmpty) {
+      await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+    }
   }
+
 
   Future<void> _syncEditInvoice(Map<String, dynamic> payload) async {
     final String clientId = payload['clientId'];
@@ -703,4 +789,92 @@ class BatchSyncEngine {
 
     await SupplierRepository.instance.upsertLocal(supplierId, data);
   }
+
+  // ── Delete Quote (offline sync) ───────────────────────────────────────────
+  Future<void> _syncDeleteQuote(Map<String, dynamic> payload) async {
+    final String quoteId = payload['quoteId'];
+    if (quoteId.isNotEmpty) {
+      await _fs.collection('price_quotes').doc(quoteId).delete();
+    }
+  }
+
+  // ── Save Expense (offline sync) ───────────────────────────────────────────
+  Future<void> _syncSaveExpense(Map<String, dynamic> payload) async {
+    final String id = payload['id'];
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(payload['data']);
+
+    if (data['dateTimestamp'] is String) {
+      data['dateTimestamp'] =
+          Timestamp.fromDate(DateTime.parse(data['dateTimestamp'] as String));
+    }
+    data['time'] = FieldValue.serverTimestamp();
+
+    await _fs.collection('expenses').doc(id).set(data, SetOptions(merge: true));
+  }
+
+  // ── Delete Expense (offline sync) ─────────────────────────────────────────
+  Future<void> _syncDeleteExpense(Map<String, dynamic> payload) async {
+    final String id = payload['id'];
+    if (id.isNotEmpty) {
+      await _fs.collection('expenses').doc(id).delete();
+    }
+  }
+
+  // ── Update Box (offline sync) ─────────────────────────────────────────────
+  Future<void> _syncUpdateBox(Map<String, dynamic> payload) async {
+    final double changeAmount =
+        (payload['changeAmount'] as num).toDouble();
+    final double value = (payload['value'] as num).toDouble();
+    final String type = payload['type']?.toString() ?? 'addition';
+    final String name = payload['name']?.toString() ?? '';
+    final DateTime date = payload['date'] != null
+        ? DateTime.parse(payload['date'] as String)
+        : DateTime.now();
+
+    final boxRef = _fs.collection('box').doc('mainBox');
+    final batch = _fs.batch();
+
+    batch.set(
+      boxRef,
+      {'value': FieldValue.increment(changeAmount)},
+      SetOptions(merge: true),
+    );
+
+    batch.set(boxRef.collection('changes').doc(), {
+      'date': Timestamp.fromDate(date),
+      'value': value,
+      'type': type,
+      if (name.isNotEmpty) 'name': name,
+    });
+
+    await batch.commit();
+  }
+
+  // ── Update Stock (offline sync) ───────────────────────────────────────────
+  Future<void> _syncUpdateStock(Map<String, dynamic> payload) async {
+    final String productId = payload['productId'];
+    final double delta = (payload['delta'] as num).toDouble();
+    final String changeType = payload['changeType']?.toString() ?? 'adjustment';
+    final DateTime date = payload['date'] != null
+        ? DateTime.parse(payload['date'] as String)
+        : DateTime.now();
+
+    final prodRef = _fs.collection('products').doc(productId);
+    final batch = _fs.batch();
+
+    batch.update(prodRef, {
+      'quantity': FieldValue.increment(delta),
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
+
+    batch.set(prodRef.collection('changes').doc(), {
+      'date': Timestamp.fromDate(date),
+      'amount': delta.abs(),
+      'type': changeType,
+    });
+
+    await batch.commit();
+  }
 }
+

@@ -1,4 +1,6 @@
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
+import '../local_db/hive_init.dart';
 
 /// Parses invoice / product numeric fields stored as [num] or [String] in Firestore.
 double invoiceNum(dynamic value) {
@@ -173,3 +175,93 @@ double invoiceLineTotalCost(
   return invoiceLineUnitCost(line, catalogUnitCost: catalogUnitCost) *
       qty;
 }
+
+/// Local sequential invoice number manager.
+///
+/// Eliminates slow blocking Firestore `orderBy('invoiceNumber', descending: true).limit(1)`
+/// queries on every invoice save.
+class LocalInvoiceCounter {
+  LocalInvoiceCounter._();
+
+  static String _metaKey(String type) {
+    switch (type.toLowerCase()) {
+      case 'return':
+        return HiveMetaKeys.nextReturnInvoiceNumber;
+      case 'buying':
+        return HiveMetaKeys.nextBuyingInvoiceNumber;
+      case 'sale':
+      case 'sales':
+      default:
+        return HiveMetaKeys.nextSalesInvoiceNumber;
+    }
+  }
+
+  /// Get the next sequential invoice number and increments the local counter.
+  /// Zero network latency.
+  static int nextNumber(String type) {
+    final key = _metaKey(type);
+    final current = (appMetaBox.get(key) as num?)?.toInt() ?? 0;
+    final next = current + 1;
+    appMetaBox.put(key, next);
+    return next;
+  }
+
+  /// Peeks the next number without incrementing.
+  static int peekNextNumber(String type) {
+    final key = _metaKey(type);
+    final current = (appMetaBox.get(key) as num?)?.toInt() ?? 0;
+    return current + 1;
+  }
+
+  /// Seeds the local counters from Firestore once on startup or when empty.
+  static Future<void> seedFromFirestore() async {
+    try {
+      final fs = FirebaseFirestore.instance;
+
+      // 1. Sales invoices
+      final salesQuery = await fs
+          .collection('invoices')
+          .orderBy('invoiceNumber', descending: true)
+          .limit(1)
+          .get();
+      if (salesQuery.docs.isNotEmpty) {
+        final remoteMax = (salesQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
+        final currentLocal = (appMetaBox.get(HiveMetaKeys.nextSalesInvoiceNumber) as num?)?.toInt() ?? 0;
+        if (remoteMax > currentLocal) {
+          await appMetaBox.put(HiveMetaKeys.nextSalesInvoiceNumber, remoteMax);
+        }
+      }
+
+      // 2. Return invoices
+      final returnQuery = await fs
+          .collection('returnInvoices')
+          .orderBy('invoiceNumber', descending: true)
+          .limit(1)
+          .get();
+      if (returnQuery.docs.isNotEmpty) {
+        final remoteMax = (returnQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
+        final currentLocal = (appMetaBox.get(HiveMetaKeys.nextReturnInvoiceNumber) as num?)?.toInt() ?? 0;
+        if (remoteMax > currentLocal) {
+          await appMetaBox.put(HiveMetaKeys.nextReturnInvoiceNumber, remoteMax);
+        }
+      }
+
+      // 3. Buying invoices
+      final buyingQuery = await fs
+          .collection('buying invoices')
+          .orderBy('invoiceNumber', descending: true)
+          .limit(1)
+          .get();
+      if (buyingQuery.docs.isNotEmpty) {
+        final remoteMax = (buyingQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
+        final currentLocal = (appMetaBox.get(HiveMetaKeys.nextBuyingInvoiceNumber) as num?)?.toInt() ?? 0;
+        if (remoteMax > currentLocal) {
+          await appMetaBox.put(HiveMetaKeys.nextBuyingInvoiceNumber, remoteMax);
+        }
+      }
+    } catch (_) {
+      // Offline on startup — use current local counter safely
+    }
+  }
+}
+

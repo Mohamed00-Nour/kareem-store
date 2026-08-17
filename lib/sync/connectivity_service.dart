@@ -4,20 +4,17 @@ import 'batch_sync_engine.dart';
 import 'sync_queue_manager.dart';
 
 /// Listens to network connectivity changes and triggers [BatchSyncEngine]
-/// when a **stable** internet connection is detected.
-///
-/// "Stable" means: connectivity_plus reports a non-none result
-/// AND the check passes 3 consecutive times (avoids false positives
-/// on weak/flapping Wi-Fi connections).
+/// when internet connection is detected.
 class ConnectivityService {
   ConnectivityService._();
   static final ConnectivityService instance = ConnectivityService._();
 
   StreamSubscription? _subscription;
+  Timer? _periodicTimer;
   bool _isOnline = false;
   bool _isChecking = false;
 
-  /// True when the last stability check passed.
+  /// True when the last check passed.
   bool get isOnline => _isOnline;
 
   /// Number of pending items waiting to be synced.
@@ -32,20 +29,30 @@ class ConnectivityService {
   // ── Lifecycle ─────────────────────────────────────────────────────────────
 
   /// Start listening for connectivity changes.
-  /// Call once from [main()] or from a top-level widget.
+  /// Call once from [main()] before [runApp()].
   void startListening() {
     _subscription?.cancel();
+    _periodicTimer?.cancel();
+
     _subscription = Connectivity()
         .onConnectivityChanged
         .listen(_onConnectivityChanged);
 
-    // Initial stability check
+    // Periodic check every 25 seconds to drain queue when online
+    _periodicTimer = Timer.periodic(const Duration(seconds: 25), (_) {
+      if (SyncQueueManager.instance.hasPending) {
+        _checkAndSync();
+      }
+    });
+
+    // Initial check
     _checkAndSync();
   }
 
   /// Stop listening (call on app dispose if needed).
   void dispose() {
     _subscription?.cancel();
+    _periodicTimer?.cancel();
     _isChecking = false;
     _onlineController.close();
   }
@@ -71,35 +78,25 @@ class ConnectivityService {
     return false;
   }
 
-  /// Validates connection stability with 3 re-checks before triggering sync.
+  /// Validates connection and triggers background queue processing.
   Future<void> _checkAndSync() async {
     if (_isChecking) return;
     _isChecking = true;
 
     try {
-      int stableCount = 0;
-      for (int i = 0; i < 3; i++) {
-        if (!_isChecking) return; // Aborted due to disconnect or dispose
-        final dynamic rawResult = await Connectivity().checkConnectivity();
-        final bool hasNetwork = _hasNetworkConnection(rawResult);
-        if (hasNetwork) {
-          stableCount++;
-        } else {
-          stableCount = 0;
-          break;
-        }
-        if (i < 2) await Future.delayed(const Duration(seconds: 1));
-      }
+      final dynamic rawResult = await Connectivity().checkConnectivity();
+      final bool hasNetwork = _hasNetworkConnection(rawResult);
 
-      if (stableCount >= 3) {
+      if (hasNetwork) {
         _setOnline(true);
-        // Only process queue if there are pending items.
         if (SyncQueueManager.instance.hasPending) {
           await BatchSyncEngine.instance.processQueue();
         }
       } else {
         _setOnline(false);
       }
+    } catch (_) {
+      _setOnline(false);
     } finally {
       _isChecking = false;
     }
@@ -112,7 +109,7 @@ class ConnectivityService {
     }
   }
 
-  /// Manually trigger a sync attempt (for the "Sync Now" button).
+  /// Manually trigger a sync attempt (e.g. after adding an invoice or "Sync Now" button).
   Future<void> forceSync() async {
     await _checkAndSync();
   }

@@ -15,6 +15,7 @@ import '../Screeens/DecreaseProductPage.dart';
 import '../Services/client_invoice_balance_sync_service.dart';
 import '../Services/client_statement_pdf_service.dart';
 import '../Services/invoice_number_utils.dart';
+import '../Services/invoice_stock_service.dart';
 import '../Services/sales_invoice_actions_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
@@ -125,22 +126,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   }
 
   Future<double> _productCostTotal(List<Map<String, dynamic>> products) async {
-    double cost = 0;
-    for (final p in products) {
-      final name = p['product']?.toString() ?? '';
-      if (name.isEmpty) continue;
-      final amount = double.tryParse(p['amount']?.toString() ?? '') ?? 0;
-      final q = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: name)
-          .limit(1)
-          .get();
-      if (q.docs.isEmpty) continue;
-      final unitCost = (q.docs.first['costPrice'] as num?)?.toDouble() ?? 0;
-      cost += amount * unitCost;
-    }
-    return cost;
+    return InvoiceStockService.computeCostTotalAsync(products);
   }
+
 
   Future<void> _syncRootSalesInvoice(
     String clientInvoiceDocId,

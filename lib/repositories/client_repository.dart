@@ -10,7 +10,7 @@ class ClientRepository {
   ClientRepository._();
   static final ClientRepository instance = ClientRepository._();
 
-  final FirebaseFirestore _fs = FirebaseFirestore.instance;
+  FirebaseFirestore get _fs => FirebaseFirestore.instance;
 
   // ── Cache helpers ─────────────────────────────────────────────────────────
 

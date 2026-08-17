@@ -9,13 +9,23 @@ enum SyncOperationType {
   deleteInvoice,
   createReturn,
   deleteReturn,
+  createBuyingInvoice,
+  editBuyingInvoice,
   adjustClientBalance,
   adjustSupplierBalance,
   createProduct,
   editProduct,
   deleteProduct,
   createQuote,
+  deleteQuote,
+  saveExpense,
+  deleteExpense,
+  updateBox,
+  createClient,
+  createSupplier,
+  updateStock,
 }
+
 
 @HiveType(typeId: 3)
 class SyncQueueItem extends HiveObject {

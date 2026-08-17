@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-
+import '../local_db/hive_init.dart';
+import '../repositories/product_repository.dart';
 import 'invoice_number_utils.dart';
 
 /// Resolved Firestore product used for cost + stock updates on invoices.
@@ -63,44 +64,63 @@ class InvoiceStockService {
   }) async {
     final catalog = Map<String, ResolvedInvoiceProduct>.from(seed);
     final missing = <String>{};
+
+    // 1. Resolve from local Hive productsBox first (instant, zero network)
     for (final line in lines) {
       final name = lineCatalogName(line);
-      if (name.isEmpty) continue;
-      if (!catalog.containsKey(name)) missing.add(name);
+      if (name.isEmpty || catalog.containsKey(name)) continue;
+      final localProd = ProductRepository.instance.findByName(name);
+      if (localProd != null) {
+        catalog[name] = ResolvedInvoiceProduct(
+          id: localProd.id,
+          name: localProd.name,
+          costPrice: localProd.costPrice,
+          quantity: localProd.quantity,
+        );
+      } else {
+        missing.add(name);
+      }
     }
+
     if (missing.isEmpty) return catalog;
 
-    final names = missing.toList();
-    final chunkFutures = <Future<QuerySnapshot<Map<String, dynamic>>>>[];
-    for (var i = 0; i < names.length; i += _whereInChunk) {
-      final end = (i + _whereInChunk > names.length)
-          ? names.length
-          : i + _whereInChunk;
-      final chunk = names.sublist(i, end);
-      chunkFutures.add(
-        FirebaseFirestore.instance
-            .collection('products')
-            .where('name', whereIn: chunk)
-            .get(),
-      );
-    }
-
-    final snapshots = await Future.wait(chunkFutures);
-    for (final snap in snapshots) {
-      for (final doc in snap.docs) {
-        final data = doc.data();
-        final name = data['name']?.toString() ?? '';
-        if (name.isEmpty || catalog.containsKey(name)) continue;
-        catalog[name] = ResolvedInvoiceProduct(
-          id: doc.id,
-          name: name,
-          costPrice: invoiceNum(data['costPrice']),
-          quantity: invoiceNum(data['quantity']),
+    // 2. Only query Firestore if missing from local cache
+    try {
+      final names = missing.toList();
+      final chunkFutures = <Future<QuerySnapshot<Map<String, dynamic>>>>[];
+      for (var i = 0; i < names.length; i += _whereInChunk) {
+        final end = (i + _whereInChunk > names.length)
+            ? names.length
+            : i + _whereInChunk;
+        final chunk = names.sublist(i, end);
+        chunkFutures.add(
+          FirebaseFirestore.instance
+              .collection('products')
+              .where('name', whereIn: chunk)
+              .get(),
         );
       }
+
+      final snapshots = await Future.wait(chunkFutures);
+      for (final snap in snapshots) {
+        for (final doc in snap.docs) {
+          final data = doc.data();
+          final name = data['name']?.toString() ?? '';
+          if (name.isEmpty || catalog.containsKey(name)) continue;
+          catalog[name] = ResolvedInvoiceProduct(
+            id: doc.id,
+            name: name,
+            costPrice: invoiceNum(data['costPrice']),
+            quantity: invoiceNum(data['quantity']),
+          );
+        }
+      }
+    } catch (_) {
+      // Offline fallback
     }
     return catalog;
   }
+
 
   static Future<Map<String, ResolvedInvoiceProduct>> resolveCatalogIfNeeded({
     required Iterable<Map<String, dynamic>> lines,
@@ -210,37 +230,55 @@ class InvoiceStockService {
       refByDocId[product.id] = product.ref;
     }
 
-    if (deltaByDocId.isEmpty) return;
-
-    var batch = FirebaseFirestore.instance.batch();
-    var ops = 0;
-
-    Future<void> commitIfNeeded({bool force = false}) async {
-      if (ops == 0) return;
-      if (!force && ops < _batchOpLimit) return;
-      await batch.commit();
-      batch = FirebaseFirestore.instance.batch();
-      ops = 0;
-    }
-
+    // 1. Immediately apply stock changes to local Hive productsBox
     for (final entry in deltaByDocId.entries) {
       final id = entry.key;
       final delta = entry.value;
-      final ref = refByDocId[id]!;
-      final changeType =
-          restore ? changeTypeWhenRestore : changeTypeWhenDecrease;
       final increment = restore ? delta : -delta;
-
-      batch.update(ref, {'quantity': FieldValue.increment(increment)});
-      batch.set(ref.collection('changes').doc(), {
-        'date': changeDateByDocId[id],
-        'amount': delta,
-        'type': changeType,
-      });
-      ops += 2;
-      if (ops >= _batchOpLimit) await commitIfNeeded(force: true);
+      final localProd = productsBox.get(id);
+      if (localProd != null) {
+        localProd.quantity += increment;
+        localProd.updatedAt = DateTime.now();
+        await localProd.save();
+      }
     }
 
-    await commitIfNeeded(force: true);
+    // 2. Try Firestore batch write (fails silently if offline, handled by sync engine)
+    try {
+      var batch = FirebaseFirestore.instance.batch();
+      var ops = 0;
+
+      Future<void> commitIfNeeded({bool force = false}) async {
+        if (ops == 0) return;
+        if (!force && ops < _batchOpLimit) return;
+        await batch.commit();
+        batch = FirebaseFirestore.instance.batch();
+        ops = 0;
+      }
+
+      for (final entry in deltaByDocId.entries) {
+        final id = entry.key;
+        final delta = entry.value;
+        final ref = refByDocId[id];
+        if (ref == null) continue;
+        final changeType =
+            restore ? changeTypeWhenRestore : changeTypeWhenDecrease;
+        final increment = restore ? delta : -delta;
+
+        batch.update(ref, {'quantity': FieldValue.increment(increment)});
+        batch.set(ref.collection('changes').doc(), {
+          'date': changeDateByDocId[id],
+          'amount': delta,
+          'type': changeType,
+        });
+        ops += 2;
+        if (ops >= _batchOpLimit) await commitIfNeeded(force: true);
+      }
+
+      await commitIfNeeded(force: true);
+    } catch (_) {
+      // Offline / network failure - local Hive is already updated
+    }
   }
 }
+

@@ -1,27 +1,23 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-
-import 'client_invoice_balance_sync_service.dart';
+import 'package:uuid/uuid.dart';
+import '../local_db/models/balance_history_local.dart';
+import '../repositories/client_repository.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/quote_repository.dart';
+import '../repositories/box_repository.dart';
+import '../repositories/balance_history_repository.dart';
+import '../sync/sync_queue_manager.dart';
+import '../sync/connectivity_service.dart';
 import 'invoice_number_utils.dart';
 import 'invoice_stock_service.dart';
 
-/// Converts a saved price-quote document into a real sales invoice.
-///
-/// On success:
-///   - Writes to `invoices` collection.
-///   - Updates stock quantities.
-///   - Updates client balance + subcollection + balanceHistory.
-///   - Updates `box/mainBox`.
-///   - **Deletes** the quote document from `price_quotes`.
-///
-/// Returns the saved invoice map (same shape as a normal invoice).
+/// Converts a saved price-quote document into a real sales invoice locally first,
+/// then pushes changes to Firestore in the background.
 class QuoteExecutionService {
   QuoteExecutionService._();
-
-  static final _db = FirebaseFirestore.instance;
+  static const _uuid = Uuid();
 
   /// Execute [quoteId] / [quoteData] as a real sales invoice.
-  ///
-  /// [previousClientBalance] should be fetched fresh just before calling.
   static Future<Map<String, dynamic>> executeQuote({
     required String quoteId,
     required Map<String, dynamic> quoteData,
@@ -55,38 +51,32 @@ class QuoteExecutionService {
       return DateTime.now();
     }();
 
-    // ── Resolve client id ──────────────────────────────────────────────────
-    String? clientId = quoteData['clientId']?.toString();
-    if (clientId == null || clientId.isEmpty) {
-      final q = await _db
-          .collection('clients')
-          .where('clientName', isEqualTo: clientName)
-          .limit(1)
-          .get();
-      if (q.docs.isNotEmpty) {
-        clientId = q.docs.first.id;
-      } else {
-        final ref = _db.collection('clients').doc();
-        clientId = ref.id;
-        await ref.set({
-          'clientName': clientName,
-          'balance': 0.0,
-          'id': clientId,
-        });
-      }
+    // 1. Resolve client id locally from Hive
+    var client = ClientRepository.instance.findByName(clientName);
+    String clientId;
+    if (client != null) {
+      clientId = client.id;
+    } else {
+      clientId = quoteData['clientId']?.toString() ?? _uuid.v4();
+      await ClientRepository.instance.upsertLocal(clientId, {
+        'clientName': clientName,
+        'balance': 0.0,
+        'id': clientId,
+      });
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'createClient',
+        payload: {
+          'clientId': clientId,
+          'data': {'clientName': clientName, 'balance': 0.0},
+          'openingBalance': 0.0,
+        },
+      );
     }
 
-    // ── Fetch next invoice number ──────────────────────────────────────────
-    final invQ = await _db
-        .collection('invoices')
-        .orderBy('invoiceNumber', descending: true)
-        .limit(1)
-        .get();
-    final newInvoiceNumber = invQ.docs.isEmpty
-        ? 1
-        : (invQ.docs.first['invoiceNumber'] as num).toInt() + 1;
+    // 2. Fetch next sequential invoice number locally
+    final newInvoiceNumber = LocalInvoiceCounter.nextNumber('sale');
 
-    // ── Resolve product catalog ────────────────────────────────────────────
+    // 3. Resolve catalog & costs locally
     final catalog = await InvoiceStockService.resolveCatalogIfNeeded(
       lines: lines,
       seed: const {},
@@ -96,11 +86,12 @@ class QuoteExecutionService {
     final profitMargin = totalSumFinal - totalCost;
     final balance = totalSumFinal - paidAmount;
     final updatedBalance = previousClientBalance + balance;
+    final invoiceDocId = _uuid.v4();
 
-    // ── Build invoice document ─────────────────────────────────────────────
-    final docRef = _db.collection('invoices').doc();
+    // 4. Build invoice document
     final invoiceData = <String, dynamic>{
-      'id': docRef.id,
+      'id': invoiceDocId,
+      'invoiceId': invoiceDocId,
       'invoiceNumber': newInvoiceNumber,
       'clientName': clientName,
       'clientId': clientId,
@@ -118,123 +109,78 @@ class QuoteExecutionService {
       'products': lines,
     };
 
-    final clientDocRef = _db.collection('clients').doc(clientId);
-    final boxDocRef = _db.collection('box').doc('mainBox');
+    // 5. Persist to Hive (Primary DB)
+    await InvoiceRepository.instance.upsertSaleLocal(invoiceDocId, invoiceData);
+    await ClientRepository.instance.updateLocalBalance(clientId, updatedBalance);
+    if (paidAmount > 0) {
+      await BoxRepository.instance.increment(paidAmount);
+    }
+    await InvoiceStockService.applyStockChanges(
+      lines: lines,
+      restore: false,
+      changeDate: date,
+      catalog: catalog,
+    );
 
-    // ── Parallel writes ────────────────────────────────────────────────────
-    await Future.wait([
-      docRef.set(invoiceData),
-      InvoiceStockService.applyStockChanges(
-        lines: lines,
-        restore: false,
-        changeDate: date,
-        catalog: catalog,
+    // Delete quote locally
+    await QuoteRepository.instance.deleteLocal(quoteId);
+
+    // Balance history entries locally
+    final hist1Id = _uuid.v4();
+    await BalanceHistoryRepository.instance.upsertLocal(
+      BalanceHistoryLocal(
+        id: hist1Id,
+        parentId: clientId,
+        parentType: 'client',
+        enteredBalance: totalSumFinal,
+        balanceBefore: previousClientBalance,
+        type: 'sale',
+        invoiceId: invoiceDocId,
+        invoiceNumber: newInvoiceNumber.toString(),
+        timestamp: date,
       ),
-      _commitClientAndBox(
-        clientDocRef: clientDocRef,
-        boxDocRef: boxDocRef,
-        clientName: clientName,
-        updatedBalance: updatedBalance,
-        invoiceId: docRef.id,
-        newInvoiceNumber: newInvoiceNumber,
-        totalSumFinal: totalSumFinal,
-        paidAmount: paidAmount,
-        balance: balance,
-        previousClientBalance: previousClientBalance,
-        paymentMethod: paymentMethod,
-        notes: notes,
-        products: lines,
-        invoiceDiscount: effectiveDiscountAmt,
-        date: date,
-      ),
-    ]);
+    );
 
-    // ── Sync client balance ────────────────────────────────────────────────
-    await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+    if (paidAmount > 0) {
+      final hist2Id = _uuid.v4();
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: hist2Id,
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: paidAmount,
+          balanceBefore: previousClientBalance + totalSumFinal,
+          type: 'sale_payment',
+          invoiceId: invoiceDocId,
+          invoiceNumber: newInvoiceNumber.toString(),
+          timestamp: date,
+        ),
+      );
+    }
 
-    // ── Delete the quote ───────────────────────────────────────────────────
-    await _db.collection('price_quotes').doc(quoteId).delete();
+    // 6. Enqueue operations for background Firestore sync
+    await SyncQueueManager.instance.enqueue(
+      operationType: 'createInvoice',
+      payload: {
+        'clientId': clientId,
+        'invoiceId': invoiceDocId,
+        'invoiceData': invoiceData,
+        'products': lines,
+        'totalSum': totalSumFinal,
+        'paidAmount': paidAmount,
+      },
+    );
+
+    await SyncQueueManager.instance.enqueue(
+      operationType: 'deleteQuote',
+      payload: {
+        'quoteId': quoteId,
+      },
+    );
+
+    // Trigger sync in background
+    ConnectivityService.instance.forceSync();
 
     return invoiceData;
   }
-
-  static Future<void> _commitClientAndBox({
-    required DocumentReference<Map<String, dynamic>> clientDocRef,
-    required DocumentReference<Map<String, dynamic>> boxDocRef,
-    required String clientName,
-    required double updatedBalance,
-    required String invoiceId,
-    required int newInvoiceNumber,
-    required double totalSumFinal,
-    required double paidAmount,
-    required double balance,
-    required double previousClientBalance,
-    required String paymentMethod,
-    required String notes,
-    required List<Map<String, dynamic>> products,
-    required double invoiceDiscount,
-    required DateTime date,
-  }) async {
-    final batch = _db.batch();
-
-    batch.set(
-      clientDocRef,
-      {'clientName': clientName, 'balance': updatedBalance},
-      SetOptions(merge: true),
-    );
-
-    batch.set(clientDocRef.collection('invoices').doc(), {
-      'invoiceId': invoiceId,
-      'invoiceNumber': newInvoiceNumber,
-      'date': date,
-      'totalSum': totalSumFinal,
-      'paidAmount': paidAmount,
-      'balance': balance,
-      'previousBalance': previousClientBalance,
-      'paymentMethod': paymentMethod,
-      'notes': notes,
-      'invoiceDiscount': invoiceDiscount,
-      'isSpecial': false,
-      'products': products,
-    });
-
-    // balanceHistory: sale entry (debt increase)
-    batch.set(clientDocRef.collection('balanceHistory').doc(), {
-      'enteredBalance': totalSumFinal,
-      'balanceBefore': previousClientBalance,
-      'timestamp': FieldValue.serverTimestamp(),
-      'type': 'sale',
-      'invoiceId': invoiceId,
-      'invoiceNumber': newInvoiceNumber,
-    });
-
-    // balanceHistory: payment entry (debt decrease)
-    if (paidAmount > 0) {
-      batch.set(clientDocRef.collection('balanceHistory').doc(), {
-        'enteredBalance': paidAmount,
-        'balanceBefore': previousClientBalance + totalSumFinal,
-        'timestamp': FieldValue.serverTimestamp(),
-        'type': 'sale_payment',
-        'invoiceId': invoiceId,
-        'invoiceNumber': newInvoiceNumber,
-      });
-    }
-
-    // box
-    batch.set(
-      boxDocRef,
-      {'value': FieldValue.increment(paidAmount)},
-      SetOptions(merge: true),
-    );
-    batch.set(boxDocRef.collection('changes').doc(), {
-      'date': FieldValue.serverTimestamp(),
-      'value': paidAmount,
-      'type': 'addition',
-      'name': clientName,
-      'invoiceNumber': newInvoiceNumber,
-    });
-
-    await batch.commit();
-  }
 }
-

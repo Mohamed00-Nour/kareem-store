@@ -1,10 +1,19 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
+import 'package:uuid/uuid.dart';
+import '../local_db/models/balance_history_local.dart';
+import '../repositories/client_repository.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/box_repository.dart';
+import '../repositories/balance_history_repository.dart';
+import '../sync/sync_queue_manager.dart';
+import '../sync/connectivity_service.dart';
 import 'invoice_number_utils.dart';
 import 'invoice_stock_service.dart';
 
-/// Persists a return invoice: restores stock, reverses profit/sales effect, updates client & box.
+/// Persists a return invoice: restores stock, updates client & box locally first,
+/// then pushes to Firestore in the background.
 class ReturnInvoiceSaveService {
+  static const _uuid = Uuid();
+
   static Future<Map<String, dynamic>> save({
     required String clientName,
     required DateTime? selectedDate,
@@ -25,51 +34,53 @@ class ReturnInvoiceSaveService {
         : invoiceDiscount;
     final totalSumFinal = totalSumBeforeDiscount - effectiveDiscountAmt;
 
-    final clientQuery = await FirebaseFirestore.instance
-        .collection('clients')
-        .where('clientName', isEqualTo: clientName)
-        .limit(1)
-        .get();
-    
-    DocumentReference<Map<String, dynamic>> clientDocRef;
+    // 1. Resolve client locally from Hive
+    var client = ClientRepository.instance.findByName(clientName);
+    String clientId;
     double existingBalance = 0.0;
-    if (clientQuery.docs.isNotEmpty) {
-      final doc = clientQuery.docs.first;
-      clientDocRef = doc.reference;
-      existingBalance = invoiceNum(doc.data()['balance']);
+
+    if (client != null) {
+      clientId = client.id;
+      existingBalance = client.balance;
     } else {
-      clientDocRef = FirebaseFirestore.instance.collection('clients').doc();
-      await clientDocRef.set({
+      clientId = _uuid.v4();
+      await ClientRepository.instance.upsertLocal(clientId, {
         'clientName': clientName,
         'balance': 0.0,
-        'id': clientDocRef.id,
+        'id': clientId,
       });
+      // Also enqueue creation of new client if created here
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'createClient',
+        payload: {
+          'clientId': clientId,
+          'data': {'clientName': clientName, 'balance': 0.0},
+          'openingBalance': 0.0,
+        },
+      );
     }
 
-    final prep = await Future.wait<dynamic>([
-      calculateTotalCost(products),
-      _fetchNextReturnInvoiceNumber(),
-      InvoiceStockService.resolveCatalogIfNeeded(
-        lines: products,
-        seed: productCatalog,
-      ),
-    ]);
-
-    final totalCost = prep[0] as double;
-    final newInvoiceNumber = prep[1] as int;
-    final catalog = prep[2] as Map<String, ResolvedInvoiceProduct>;
+    // 2. Resolve catalog & next invoice number locally (instant)
+    final catalog = await InvoiceStockService.resolveCatalogIfNeeded(
+      lines: products,
+      seed: productCatalog,
+    );
+    final totalCost = InvoiceStockService.computeCostTotal(products, catalog);
+    final newInvoiceNumber = LocalInvoiceCounter.nextNumber('return');
 
     final profitMargin = -(totalSumFinal - totalCost);
     final balance = totalSumFinal - paidAmount;
     final updatedBalance = existingBalance - balance;
+    final invoiceDocId = _uuid.v4();
+    final date = selectedDate ?? DateTime.now();
 
-    final docRef = FirebaseFirestore.instance.collection('returnInvoices').doc();
     final invoiceData = <String, dynamic>{
-      'id': docRef.id,
+      'id': invoiceDocId,
+      'invoiceId': invoiceDocId,
       'invoiceNumber': newInvoiceNumber,
       'clientName': clientName,
-      'clientId': clientDocRef.id,
-      'date': selectedDate,
+      'clientId': clientId,
+      'date': date,
       'totalSum': totalSumFinal,
       'profitMargin': profitMargin,
       'paidAmount': paidAmount,
@@ -82,133 +93,70 @@ class ReturnInvoiceSaveService {
       'isSpecial': false,
       'products': products,
     };
-    final boxDocRef = FirebaseFirestore.instance.collection('box').doc('mainBox');
 
-    await Future.wait([
-      docRef.set(invoiceData),
-      InvoiceStockService.applyStockChanges(
-        lines: products,
-        restore: true,
-        changeDate: selectedDate,
-        changeTypeWhenRestore: 'return',
-        catalog: catalog,
+    // 3. Immediately persist in Hive (Primary DB)
+    await InvoiceRepository.instance.upsertReturnLocal(invoiceDocId, invoiceData);
+    await ClientRepository.instance.updateLocalBalance(clientId, updatedBalance);
+    if (paidAmount > 0) {
+      await BoxRepository.instance.decrement(paidAmount);
+    }
+    await InvoiceStockService.applyStockChanges(
+      lines: products,
+      restore: true,
+      changeDate: date,
+      changeTypeWhenRestore: 'return',
+      catalog: catalog,
+    );
+
+    // Save balance history entries locally
+    final hist1Id = _uuid.v4();
+    await BalanceHistoryRepository.instance.upsertLocal(
+      BalanceHistoryLocal(
+        id: hist1Id,
+        parentId: clientId,
+        parentType: 'client',
+        enteredBalance: totalSumFinal,
+        balanceBefore: existingBalance,
+        type: 'return',
+        invoiceId: invoiceDocId,
+        invoiceNumber: newInvoiceNumber.toString(),
+        timestamp: date,
       ),
-      _commitReturnClientAndBox(
-        clientDocRef: clientDocRef,
-        boxDocRef: boxDocRef,
-        clientName: clientName,
-        updatedBalance: updatedBalance,
-        invoiceId: docRef.id,
-        newInvoiceNumber: newInvoiceNumber,
-        selectedDate: selectedDate,
-        totalSumFinal: totalSumFinal,
-        paidAmount: paidAmount,
-        balance: balance,
-        previousBalanceSnapshot: previousBalanceSnapshot,
-        paymentMethod: paymentMethod,
-        notes: notes,
-        products: products,
-        existingBalance: existingBalance,
-        invoiceDiscount: effectiveDiscountAmt,
-      ),
-    ]);
+    );
+
+    if (paidAmount > 0) {
+      final hist2Id = _uuid.v4();
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: hist2Id,
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: paidAmount,
+          balanceBefore: existingBalance - totalSumFinal,
+          type: 'return_payment',
+          invoiceId: invoiceDocId,
+          invoiceNumber: newInvoiceNumber.toString(),
+          timestamp: date,
+        ),
+      );
+    }
+
+    // 4. Enqueue background push to Firestore
+    await SyncQueueManager.instance.enqueue(
+      operationType: 'createReturn',
+      payload: {
+        'clientId': clientId,
+        'invoiceId': invoiceDocId,
+        'invoiceData': invoiceData,
+        'products': products,
+        'totalSum': totalSumFinal,
+        'paidAmount': paidAmount,
+      },
+    );
+
+    // Trigger sync in background (fire-and-forget, non-blocking)
+    ConnectivityService.instance.forceSync();
 
     return invoiceData;
-  }
-
-  static Future<int> _fetchNextReturnInvoiceNumber() async {
-    final invoiceQuery = await FirebaseFirestore.instance
-        .collection('returnInvoices')
-        .orderBy('invoiceNumber', descending: true)
-        .limit(1)
-        .get();
-    if (invoiceQuery.docs.isEmpty) return 1;
-    return (invoiceQuery.docs.first['invoiceNumber'] as num).toInt() + 1;
-  }
-
-  static Future<void> _commitReturnClientAndBox({
-    required DocumentReference<Map<String, dynamic>> clientDocRef,
-    required DocumentReference<Map<String, dynamic>> boxDocRef,
-    required String clientName,
-    required double updatedBalance,
-    required String invoiceId,
-    required int newInvoiceNumber,
-    required DateTime? selectedDate,
-    required double totalSumFinal,
-    required double paidAmount,
-    required double balance,
-    required double previousBalanceSnapshot,
-    required String paymentMethod,
-    required String notes,
-    required List<Map<String, dynamic>> products,
-    required double existingBalance,
-    required double invoiceDiscount,
-  }) async {
-    final batch = FirebaseFirestore.instance.batch();
-    batch.set(
-      clientDocRef,
-      {'clientName': clientName, 'balance': updatedBalance},
-      SetOptions(merge: true),
-    );
-    batch.set(clientDocRef.collection('returnInvoices').doc(), {
-      'invoiceId': invoiceId,
-      'invoiceNumber': newInvoiceNumber,
-      'date': selectedDate,
-      'totalSum': totalSumFinal,
-      'paidAmount': paidAmount,
-      'balance': balance,
-      'previousBalance': previousBalanceSnapshot,
-      'paymentMethod': paymentMethod,
-      'notes': notes,
-      'invoiceDiscount': invoiceDiscount,
-      'invoiceType': 'return',
-      'isSpecial': false,
-      'products': products,
-    });
-    // Entry 1: Return total (debt decrease)
-    batch.set(clientDocRef.collection('balanceHistory').doc(), {
-      'enteredBalance': totalSumFinal,
-      'balanceBefore': existingBalance,
-      'timestamp': FieldValue.serverTimestamp(),
-      'type': 'return',
-      'invoiceId': invoiceId,
-      'invoiceNumber': newInvoiceNumber,
-    });
-    // Entry 2: Refund paid back (debt increase) — only if > 0
-    if (paidAmount > 0) {
-      batch.set(clientDocRef.collection('balanceHistory').doc(), {
-        'enteredBalance': paidAmount,
-        'balanceBefore': existingBalance - totalSumFinal,
-        'timestamp': FieldValue.serverTimestamp(),
-        'type': 'return_payment',
-        'invoiceId': invoiceId,
-        'invoiceNumber': newInvoiceNumber,
-      });
-    }
-    batch.set(
-      boxDocRef,
-      {'value': FieldValue.increment(-paidAmount)},
-      SetOptions(merge: true),
-    );
-    batch.set(boxDocRef.collection('changes').doc(), {
-      'date': FieldValue.serverTimestamp(),
-      'value': paidAmount,
-      'type': 'return',
-      'name': clientName,
-      'invoiceNumber': newInvoiceNumber,
-    });
-    await batch.commit();
-  }
-
-  static Future<double> _fetchClientBalance(String clientName) async {
-    final clientQuery = await FirebaseFirestore.instance
-        .collection('clients')
-        .where('clientName', isEqualTo: clientName)
-        .limit(1)
-        .get();
-    if (clientQuery.docs.isNotEmpty) {
-      return invoiceNum(clientQuery.docs.first.data()['balance']);
-    }
-    return 0.0;
   }
 }

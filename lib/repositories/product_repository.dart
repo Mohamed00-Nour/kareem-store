@@ -15,7 +15,7 @@ class ProductRepository {
   ProductRepository._();
   static final ProductRepository instance = ProductRepository._();
 
-  final FirebaseFirestore _fs = FirebaseFirestore.instance;
+  FirebaseFirestore get _fs => FirebaseFirestore.instance;
 
   // ── Cache helpers ─────────────────────────────────────────────────────────
 
