@@ -17,9 +17,9 @@ class DepartmentLocalAdapter extends TypeAdapter<DepartmentLocal> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return DepartmentLocal(
-      id: fields[0] as String,
-      name: fields[1] as String,
-      updatedAt: fields[2] as DateTime,
+      id: fields[0]?.toString() ?? '',
+      name: fields[1]?.toString() ?? '',
+      updatedAt: fields[2] is DateTime ? fields[2] as DateTime : DateTime.now(),
     );
   }
 

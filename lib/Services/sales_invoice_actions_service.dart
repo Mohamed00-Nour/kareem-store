@@ -1,7 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-
 import 'invoice_number_utils.dart';
 import 'invoice_special_service.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/client_repository.dart';
+import '../repositories/product_repository.dart';
+import '../repositories/balance_history_repository.dart';
+import '../local_db/hive_init.dart';
+import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
 
 /// Delete / lookup sales invoices in [invoices] and client subcollections.
 class SalesInvoiceActionsService {
@@ -73,84 +79,64 @@ class SalesInvoiceActionsService {
     return payload;
   }
 
-  /// Deletes root invoice, matching client copy, restores stock, updates balance.
+  /// Deletes root invoice, matching client copy, restores stock, updates balance in Hive first.
+
   static Future<void> deleteSalesInvoice({
     required Map<String, dynamic> invoice,
     required String rootInvoiceId,
   }) async {
     final clientName = invoice['clientName']?.toString() ?? '';
-    String clientId = '';
-    if (clientName.isNotEmpty) {
-      if (invoice.containsKey('clientId') && invoice['clientId'] != null && invoice['clientId'].toString().isNotEmpty) {
-        clientId = invoice['clientId'].toString();
-      } else {
-        final query = await FirebaseFirestore.instance
-            .collection('clients')
-            .where('clientName', isEqualTo: clientName)
-            .limit(1)
-            .get();
-        clientId = query.docs.isNotEmpty ? query.docs.first.id : clientName;
-      }
+    String clientId = invoice['clientId']?.toString() ?? '';
+    if (clientId.isEmpty && clientName.isNotEmpty) {
+      final localClient = ClientRepository.instance.findByName(clientName);
+      clientId = localClient?.id ?? clientName;
     }
+
     final products = List<Map<String, dynamic>>.from(
       (invoice['products'] as List?) ?? [],
     );
 
+    // 1. Delete invoice from local Hive cache
+    await InvoiceRepository.instance.deleteSaleLocal(rootInvoiceId);
+
+    // 2. Restore products stock in Hive
     for (final product in products) {
       final name = product['product']?.toString() ?? '';
       if (name.isEmpty) continue;
       final amount = invoiceNum(product['amount']);
       if (amount <= 0) continue;
 
-      final q = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: name)
-          .get();
-      for (final doc in q.docs) {
-        final qty = (doc['quantity'] as num?)?.toDouble() ?? 0;
-        await FirebaseFirestore.instance
-            .collection('products')
-            .doc(doc.id)
-            .update({'quantity': qty + amount});
-        await FirebaseFirestore.instance
-            .collection('products')
-            .doc(doc.id)
-            .collection('changes')
-            .add({
-          'date': DateTime.now(),
-          'amount': amount,
-          'type': 'increase',
-        });
+      final localProd = ProductRepository.instance.findByName(name);
+      if (localProd != null) {
+        localProd.quantity += amount;
+        await productsBox.put(localProd.id, localProd);
       }
     }
 
-    await FirebaseFirestore.instance
-        .collection('invoices')
-        .doc(rootInvoiceId)
-        .delete();
+    // 3. Update client balance in Hive
+    if (clientId.isNotEmpty) {
+      final totalSum = invoiceNum(invoice['totalSum']);
+      final paidAmount = invoiceNum(invoice['paidAmount']);
+      final unpaid = totalSum - paidAmount;
+      final localClient = ClientRepository.instance.getById(clientId) ?? ClientRepository.instance.findByName(clientName);
+      if (localClient != null) {
+        final newBal = localClient.balance - unpaid;
+        await ClientRepository.instance.updateLocalBalance(localClient.id, newBal);
+      }
+      await BalanceHistoryRepository.instance.deleteForParent('client', clientId);
+    }
 
-    if (clientId.isEmpty) return;
-
-    final clientSub = await findClientSubInvoice(
-      clientId: clientId,
-      rootInvoiceId: rootInvoiceId,
+    // 4. Enqueue background deletion to Firebase
+    await SyncQueueManager.instance.enqueue(
+      operationType: 'deleteInvoice',
+      payload: {
+        'clientId': clientId,
+        'invoiceId': rootInvoiceId,
+      },
     );
-    if (clientSub != null) {
-      await FirebaseFirestore.instance
-          .collection('clients')
-          .doc(clientId)
-          .collection('invoices')
-          .doc(clientSub.id)
-          .delete();
 
-      final clientDoc =
-          FirebaseFirestore.instance.collection('clients').doc(clientId);
-      final snap = await clientDoc.get();
-      if (snap.exists) {
-        final totalSum = invoiceNum(invoice['totalSum']);
-        final current = invoiceNum(snap.data()?['balance']);
-        await clientDoc.update({'balance': current - totalSum});
-      }
-    }
+    // Trigger sync in background
+    ConnectivityService.instance.forceSync();
   }
 }
+

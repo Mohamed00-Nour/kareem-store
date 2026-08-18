@@ -79,6 +79,12 @@ double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
   if (invoice.containsKey('currentClientBalance') && invoice['currentClientBalance'] != null) {
     return invoiceNum(invoice['currentClientBalance']);
   }
+  if (invoice.containsKey('previousBalance') && invoice['previousBalance'] != null) {
+    final prev = invoiceNum(invoice['previousBalance']);
+    final unpaid = invoiceUnpaidAmount(invoice);
+    final isReturn = invoiceIsReturn(invoice);
+    return isReturn ? (prev - unpaid) : (prev + unpaid);
+  }
   return invoiceNum(invoice['balance']);
 }
 
@@ -86,6 +92,12 @@ double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
 double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
   if (invoice.containsKey('currentSupplierBalance') && invoice['currentSupplierBalance'] != null) {
     return invoiceNum(invoice['currentSupplierBalance']);
+  }
+  if (invoice.containsKey('previousBalance') && invoice['previousBalance'] != null) {
+    final prev = invoiceNum(invoice['previousBalance']);
+    final unpaid = invoiceUnpaidAmount(invoice);
+    final isReturn = invoiceIsReturn(invoice);
+    return isReturn ? (prev - unpaid) : (prev + unpaid);
   }
   return invoiceNum(invoice['balance']);
 }

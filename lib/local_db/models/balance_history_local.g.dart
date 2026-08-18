@@ -17,16 +17,16 @@ class BalanceHistoryLocalAdapter extends TypeAdapter<BalanceHistoryLocal> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return BalanceHistoryLocal(
-      id: fields[0] as String,
-      parentId: fields[1] as String,
-      parentType: fields[2] as String,
-      enteredBalance: fields[3] as double,
-      balanceBefore: fields[4] as double,
-      type: fields[5] as String,
-      invoiceId: fields[6] as String,
-      invoiceNumber: fields[7] as String,
-      timestamp: fields[8] as DateTime,
-      direction: fields[9] as String,
+      id: fields[0]?.toString() ?? '',
+      parentId: fields[1]?.toString() ?? '',
+      parentType: fields[2]?.toString() ?? '',
+      enteredBalance: (fields[3] as num?)?.toDouble() ?? 0.0,
+      balanceBefore: (fields[4] as num?)?.toDouble() ?? 0.0,
+      type: fields[5]?.toString() ?? '',
+      invoiceId: fields[6]?.toString() ?? '',
+      invoiceNumber: fields[7]?.toString() ?? '',
+      timestamp: fields[8] is DateTime ? fields[8] as DateTime : DateTime.now(),
+      direction: fields[9]?.toString() ?? '',
     );
   }
 

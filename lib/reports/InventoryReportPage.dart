@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../repositories/product_repository.dart';
 
 class InventoryReportPage extends StatefulWidget {
   const InventoryReportPage({super.key});
@@ -37,10 +38,10 @@ class _InventoryReportPageState extends State<InventoryReportPage>
   }
 
   Future<void> _fetchInventory() async {
+
     setState(() => _loading = true);
     try {
-      final snap =
-          await FirebaseFirestore.instance.collection('products').get();
+      final products = ProductRepository.instance.getAll();
 
       double totalCostValue = 0;
       double totalSellingValue = 0;
@@ -49,14 +50,13 @@ class _InventoryReportPageState extends State<InventoryReportPage>
       final List<_StockItem> low = [];
       final List<_StockItem> all = [];
 
-      for (final doc in snap.docs) {
-        final data = doc.data();
-        final name = data['name'] as String? ?? '';
-        final qty = (data['quantity'] ?? 0.0).toDouble();
-        final costPrice = (data['costPrice'] ?? 0.0).toDouble();
-        final sellingPrice = (data['sellingPrice1'] ?? 0.0).toDouble();
-        final alertAmount = (data['alertAmount'] ?? 0).toDouble();
-        final department = data['department'] as String? ?? '';
+      for (final p in products) {
+        final name = p.name;
+        final qty = p.quantity;
+        final costPrice = p.costPrice;
+        final sellingPrice = p.sellingPrice1;
+        final alertAmount = p.alertAmount;
+        final department = p.department ?? '';
 
         totalCostValue += qty * costPrice;
         totalSellingValue += qty * sellingPrice;
@@ -87,7 +87,7 @@ class _InventoryReportPageState extends State<InventoryReportPage>
       setState(() {
         _totalStockValue = totalCostValue;
         _totalSellingValue = totalSellingValue;
-        _totalProducts = snap.docs.length;
+        _totalProducts = products.length;
         _lowStockCount = lowStockCount;
         _outOfStockCount = outOfStockCount;
         _lowStockItems = low;
@@ -102,6 +102,7 @@ class _InventoryReportPageState extends State<InventoryReportPage>
       }
     }
   }
+
 
   @override
   Widget build(BuildContext context) {

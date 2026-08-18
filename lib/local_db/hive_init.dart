@@ -78,17 +78,33 @@ Future<void> initHive() async {
   await _openBoxSafely<DepartmentLocal>(HiveBoxNames.departments);
 }
 
-/// Opens a Hive box safely. If corrupted or schema changed, clears disk cache and re-opens.
+/// Opens a Hive box safely. If corrupted or schema changed, clears disk cache and re-opens cleanly.
 Future<Box<T>> _openBoxSafely<T>(String name) async {
+  if (Hive.isBoxOpen(name)) {
+    try {
+      return Hive.box<T>(name);
+    } catch (_) {
+      try {
+        await Hive.box(name).close();
+      } catch (_) {}
+    }
+  }
+
   try {
     return await Hive.openBox<T>(name);
   } catch (e) {
+    try {
+      if (Hive.isBoxOpen(name)) {
+        await Hive.box(name).close();
+      }
+    } catch (_) {}
     try {
       await Hive.deleteBoxFromDisk(name);
     } catch (_) {}
     return await Hive.openBox<T>(name);
   }
 }
+
 
 /// Convenience accessors — use these to get open boxes from anywhere.
 Box<ProductLocal> get productsBox {

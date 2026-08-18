@@ -100,8 +100,21 @@ class InvoiceLocal extends HiveObject {
     }
   }
 
+  static String _safeJsonEncode(dynamic data) {
+
+    try {
+      return jsonEncode(data, toEncodable: (item) {
+        if (item is DateTime) return item.toIso8601String();
+        if (item is Timestamp) return item.toDate().toIso8601String();
+        return item.toString();
+      });
+    } catch (_) {
+      return '[]';
+    }
+  }
+
   set products(List<Map<String, dynamic>> list) {
-    productsJson = jsonEncode(list);
+    productsJson = _safeJsonEncode(list);
   }
 
   factory InvoiceLocal.fromFirestore(String docId, Map<String, dynamic> data, {String defaultType = 'sale'}) {
@@ -119,10 +132,11 @@ class InvoiceLocal extends HiveObject {
 
     String pJson = '[]';
     if (data['products'] is List) {
-      pJson = jsonEncode(data['products']);
+      pJson = _safeJsonEncode(data['products']);
     } else if (data['productsJson'] is String) {
       pJson = data['productsJson'];
     }
+
 
     return InvoiceLocal(
       id: docId,

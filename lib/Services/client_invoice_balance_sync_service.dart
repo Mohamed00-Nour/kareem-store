@@ -175,7 +175,7 @@ class ClientInvoiceBalanceSyncService {
           await commitBatchIfNeeded();
         }
       } else {
-        final newDocRef = clientRef.collection('balanceHistory').doc();
+        final newDocRef = clientRef.collection('balanceHistory').doc('${invoiceId}_sale');
         batch.set(newDocRef, {
           'enteredBalance': totalSum,
           'balanceBefore': 0.0,
@@ -199,7 +199,7 @@ class ClientInvoiceBalanceSyncService {
             await commitBatchIfNeeded();
           }
         } else {
-          final newDocRef = clientRef.collection('balanceHistory').doc();
+          final newDocRef = clientRef.collection('balanceHistory').doc('${invoiceId}_pay');
           batch.set(newDocRef, {
             'enteredBalance': paidAmount,
             'balanceBefore': 0.0,

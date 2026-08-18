@@ -6,6 +6,8 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../Services/invoice_special_service.dart';
+import '../../repositories/invoice_repository.dart';
+import '../../local_db/models/invoice_local.dart';
 import 'InvoiceDetailPage.dart';
 
 class InvoiceListPage extends StatefulWidget {
@@ -37,8 +39,28 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     // Initialize with current month
     _selectedMonth = DateTime.now();
     _loadUserRole();
+    _loadFromLocalCache();
     _listenToInvoices();
     _searchController.addListener(_filterInvoices);
+  }
+
+  void _loadFromLocalCache() {
+    List<InvoiceLocal> locals;
+    if (widget.collection == 'returnInvoices') {
+      locals = InvoiceRepository.instance.getAllReturns();
+    } else if (widget.collection == 'buying invoices') {
+      locals = InvoiceRepository.instance.getAllBuying();
+    } else {
+      locals = InvoiceRepository.instance.getAllSales();
+    }
+    if (locals.isNotEmpty && mounted) {
+      setState(() {
+        _invoices.clear();
+        _invoices.addAll(locals.map((inv) => inv.toMap()));
+        _filterInvoices();
+        _isFetching = false;
+      });
+    }
   }
 
   @override
@@ -74,6 +96,13 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
         _invoices.addAll(querySnapshot.docs.map((doc) {
           final data = Map<String, dynamic>.from(doc.data() as Map);
           data['id'] = doc.id;
+          if (widget.collection == 'returnInvoices') {
+            InvoiceRepository.instance.upsertReturnLocal(doc.id, data);
+          } else if (widget.collection == 'buying invoices') {
+            InvoiceRepository.instance.upsertBuyingLocal(doc.id, data);
+          } else {
+            InvoiceRepository.instance.upsertSaleLocal(doc.id, data);
+          }
           return data;
         }));
         _filterInvoices(); // Apply filtering after fetching
@@ -89,6 +118,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     });
   }
 
+
   DateTime _parseInvoiceDate(dynamic raw) {
     if (raw is Timestamp) return raw.toDate();
     if (raw is DateTime) return raw;
@@ -100,7 +130,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     final query = _searchController.text.toLowerCase();
     setState(() {
       _filteredInvoices.clear();
-      _filteredInvoices.addAll(_invoices.where((invoice) {
+      final filtered = _invoices.where((invoice) {
         final clientName = (invoice['clientName'] ?? '').toString().toLowerCase();
         final invoiceNumber = (invoice['invoiceNumber'] ?? '').toString();
         final invoiceDate = _parseInvoiceDate(invoice['date']);
@@ -109,7 +139,22 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                 invoiceDate.month == _selectedMonth!.month);
         return (clientName.contains(query) || invoiceNumber.contains(query)) &&
             isInSelectedMonth;
-      }).toList());
+      }).toList();
+
+      filtered.sort((a, b) {
+        final numA = (a['invoiceNumber'] as num?)?.toInt() ?? 0;
+        final numB = (b['invoiceNumber'] as num?)?.toInt() ?? 0;
+        if (numA > 0 && numB > 0 && numA != numB) {
+          return numB.compareTo(numA);
+        }
+        final dateA = _parseInvoiceDate(a['date']);
+        final dateB = _parseInvoiceDate(b['date']);
+        final dateComp = dateB.compareTo(dateA);
+        if (dateComp != 0) return dateComp;
+        return numB.compareTo(numA);
+      });
+
+      _filteredInvoices.addAll(filtered);
     });
   }
 

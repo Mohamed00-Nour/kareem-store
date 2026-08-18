@@ -17,13 +17,13 @@ class ExpenseLocalAdapter extends TypeAdapter<ExpenseLocal> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return ExpenseLocal(
-      id: fields[0] as String,
-      category: fields[1] as String,
-      amount: fields[2] as double,
-      date: fields[3] as DateTime,
-      notes: fields[4] as String,
-      attributesJson: fields[5] as String,
-      updatedAt: fields[6] as DateTime,
+      id: fields[0]?.toString() ?? '',
+      category: fields[1]?.toString() ?? '',
+      amount: (fields[2] as num?)?.toDouble() ?? 0.0,
+      date: fields[3] is DateTime ? fields[3] as DateTime : DateTime.now(),
+      notes: fields[4]?.toString() ?? '',
+      attributesJson: fields[5]?.toString() ?? '{}',
+      updatedAt: fields[6] is DateTime ? fields[6] as DateTime : DateTime.now(),
     );
   }
 

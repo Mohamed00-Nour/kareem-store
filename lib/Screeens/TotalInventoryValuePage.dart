@@ -1,20 +1,21 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import '../repositories/product_repository.dart';
+import '../local_db/hive_init.dart';
 
 class TotalInventoryValuePage extends StatelessWidget {
   const TotalInventoryValuePage({super.key});
 
-  Future<Map<String, double>> _calculateInventoryTotals() async {
-    final querySnapshot = await FirebaseFirestore.instance.collection('products').get();
+  Map<String, double> _calculateInventoryTotals() {
+    final products = ProductRepository.instance.getAll();
     double totalValue = 0.0;
     double totalCost = 0.0;
 
-    for (var doc in querySnapshot.docs) {
-      final product = doc.data();
-      final quantity = (product['quantity'] ?? 0).toDouble();
-      final sellingPrice1 = (product['sellingPrice1'] ?? 0.0).toDouble();
-      final costPrice = (product['costPrice'] ?? 0.0).toDouble();
+    for (var product in products) {
+      final quantity = product.quantity;
+      final sellingPrice1 = product.sellingPrice1;
+      final costPrice = product.costPrice;
 
       totalValue += quantity * sellingPrice1;
       totalCost += quantity * costPrice;
@@ -33,23 +34,13 @@ class TotalInventoryValuePage extends StatelessWidget {
         title: Text('اجمالي قيمة المخزون', style: TextStyle(fontSize: 20.sp, color: Colors.white)),
         backgroundColor: Colors.black.withValues(alpha: 0.7),
       ),
-      body: FutureBuilder<Map<String, double>>(
-        future: _calculateInventoryTotals(),
-        builder: (context, snapshot) {
-          if (snapshot.connectionState == ConnectionState.waiting) {
-            return Center(
-              child: CircularProgressIndicator(
-                color: Colors.orange.withValues(alpha: 0.8),
-              ),
-            );
-          }
-          if (snapshot.hasError) {
-            return Center(child: Text('Error: ${snapshot.error}'));
-          }
-
-          final totals = snapshot.data ?? {'totalValue': 0.0, 'totalCost': 0.0};
+      body: ValueListenableBuilder(
+        valueListenable: productsBox.listenable(),
+        builder: (context, _, __) {
+          final totals = _calculateInventoryTotals();
           final totalValue = totals['totalValue'] ?? 0.0;
           final totalCost = totals['totalCost'] ?? 0.0;
+
 
           return Center(
             child: Column(

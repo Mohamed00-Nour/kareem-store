@@ -25,8 +25,13 @@ class InvoiceRepository {
     final cId = clientId.trim();
     final cName = (clientName ?? '').trim().toLowerCase();
     final list = invoicesBox.values.where((inv) {
-      if (cId.isNotEmpty && inv.clientId == cId) return true;
-      if (cName.isNotEmpty && inv.clientName.trim().toLowerCase() == cName) return true;
+      final invClientId = inv.clientId.trim();
+      if (invClientId.isNotEmpty) {
+        return cId.isNotEmpty && invClientId == cId;
+      }
+      if (cName.isNotEmpty && inv.clientName.trim().toLowerCase() == cName) {
+        return true;
+      }
       return false;
     }).toList();
     list.sort((a, b) => b.date.compareTo(a.date));
@@ -55,8 +60,13 @@ class InvoiceRepository {
     final cId = clientId.trim();
     final cName = (clientName ?? '').trim().toLowerCase();
     final list = returnInvoicesBox.values.where((inv) {
-      if (cId.isNotEmpty && inv.clientId == cId) return true;
-      if (cName.isNotEmpty && inv.clientName.trim().toLowerCase() == cName) return true;
+      final invClientId = inv.clientId.trim();
+      if (invClientId.isNotEmpty) {
+        return cId.isNotEmpty && invClientId == cId;
+      }
+      if (cName.isNotEmpty && inv.clientName.trim().toLowerCase() == cName) {
+        return true;
+      }
       return false;
     }).toList();
     list.sort((a, b) => b.date.compareTo(a.date));
@@ -85,8 +95,13 @@ class InvoiceRepository {
     final sId = supplierId.trim();
     final sName = (supplierName ?? '').trim().toLowerCase();
     final list = buyingInvoicesBox.values.where((inv) {
-      if (sId.isNotEmpty && inv.supplierId == sId) return true;
-      if (sName.isNotEmpty && inv.supplierName.trim().toLowerCase() == sName) return true;
+      final invSupplierId = inv.supplierId.trim();
+      if (invSupplierId.isNotEmpty) {
+        return sId.isNotEmpty && invSupplierId == sId;
+      }
+      if (sName.isNotEmpty && inv.supplierName.trim().toLowerCase() == sName) {
+        return true;
+      }
       return false;
     }).toList();
     list.sort((a, b) => b.date.compareTo(a.date));

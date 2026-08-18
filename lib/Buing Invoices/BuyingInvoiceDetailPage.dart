@@ -9,6 +9,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
+import '../repositories/supplier_repository.dart';
 import '../Screeens/AddProductPage.dart';
 import '../Widgets/invoice_display_widgets.dart';
 import '../Services/invoice_number_utils.dart';
@@ -34,39 +35,25 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
   }
 
   Future<void> _fetchSupplierBalance() async {
+
     final supplierName = widget.invoice['supplierName']?.toString() ?? '';
     final supplierId = widget.invoice['supplierId']?.toString() ?? '';
     double? totalBalance;
-    try {
-      if (supplierId.isNotEmpty) {
-        final snap = await FirebaseFirestore.instance
-            .collection('suppliers')
-            .doc(supplierId)
-            .get();
-        if (snap.exists) {
-          totalBalance = (snap.data()?['totalBalance'] as num?)?.toDouble();
-        }
-      }
-      if (totalBalance == null && supplierName.isNotEmpty) {
-        final query = await FirebaseFirestore.instance
-            .collection('suppliers')
-            .where('name', isEqualTo: supplierName)
-            .limit(1)
-            .get();
-        if (query.docs.isNotEmpty) {
-          totalBalance =
-              (query.docs.first.data()['totalBalance'] as num?)?.toDouble();
-        }
-      }
-    } catch (_) {}
+    if (supplierId.isNotEmpty) {
+      totalBalance = SupplierRepository.instance.getById(supplierId)?.balance;
+    }
+    if (totalBalance == null && supplierName.isNotEmpty) {
+      totalBalance = SupplierRepository.instance.findByName(supplierName)?.balance;
+    }
 
     if (mounted) {
       setState(() {
-        _currentSupplierBalance = totalBalance;
+        _currentSupplierBalance = totalBalance ?? 0.0;
         _isLoadingBalance = false;
       });
     }
   }
+
 
   Future<void> _captureAndShareScreenshot() async {
     try {

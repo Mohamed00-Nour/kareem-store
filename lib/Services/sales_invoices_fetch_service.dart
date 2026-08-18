@@ -1,4 +1,5 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import '../repositories/invoice_repository.dart';
 
 class SalesInvoicesFetchService {
   static Future<List<Map<String, dynamic>>> fetchByDateRange({
@@ -6,25 +7,42 @@ class SalesInvoicesFetchService {
     required DateTime end,
   }) async {
     final startDay = DateTime(start.year, start.month, start.day);
-    final endDay =
-        DateTime(end.year, end.month, end.day, 23, 59, 59);
+    final endDay = DateTime(end.year, end.month, end.day, 23, 59, 59, 999);
 
-    final snap = await FirebaseFirestore.instance
-        .collection('invoices')
-        .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startDay))
-        .where('date', isLessThanOrEqualTo: Timestamp.fromDate(endDay))
-        .get();
+    final localInvoices = InvoiceRepository.instance.getAllSales();
 
-    final invoices = snap.docs.map((doc) {
-      final data = Map<String, dynamic>.from(doc.data());
-      data['id'] = doc.id;
-      return data;
-    }).toList();
+    if (localInvoices.isNotEmpty) {
+      final filtered = localInvoices.where((inv) {
+        return inv.date.isAfter(startDay.subtract(const Duration(milliseconds: 1))) &&
+               inv.date.isBefore(endDay.add(const Duration(milliseconds: 1)));
+      }).map((inv) => inv.toMap()).toList();
 
-    invoices.sort(_compareByClientThenDate);
+      filtered.sort(_compareByClientThenDate);
+      return filtered;
+    }
 
-    return invoices;
+    // Fallback to Firestore if local cache is empty
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('invoices')
+          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startDay))
+          .where('date', isLessThanOrEqualTo: Timestamp.fromDate(endDay))
+          .get();
+
+      final invoices = snap.docs.map((doc) {
+        final data = Map<String, dynamic>.from(doc.data());
+        data['id'] = doc.id;
+        InvoiceRepository.instance.upsertSaleLocal(doc.id, data);
+        return data;
+      }).toList();
+
+      invoices.sort(_compareByClientThenDate);
+      return invoices;
+    } catch (_) {
+      return [];
+    }
   }
+
 
   /// Newest invoice first (by date, then invoice number).
   static void sortNewestFirst(List<Map<String, dynamic>> invoices) {

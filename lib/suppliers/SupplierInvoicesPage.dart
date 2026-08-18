@@ -12,6 +12,7 @@ import '../Screeens/AddProductPage.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/supplier_statement_pdf_service.dart';
+import '../repositories/supplier_repository.dart';
 import 'SupplierBalanceHistoryPage.dart';
 
 class SupplierInvoicesPage extends StatefulWidget {
@@ -90,6 +91,16 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
   }
 
   Future<void> _fetchSupplierName() async {
+    // 1. Read directly from local Hive (0ms)
+    final local = SupplierRepository.instance.getById(widget.supplierId);
+    if (local != null && mounted) {
+      setState(() {
+        _supplierName = local.name;
+        _currentSupplierBalance = local.balance;
+      });
+    }
+
+    // 2. Background refresh if online
     try {
       final doc = await FirebaseFirestore.instance
           .collection('suppliers')
@@ -102,9 +113,13 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
           _currentSupplierBalance =
               (data?['totalBalance'] ?? data?['balance'] ?? 0.0).toDouble();
         });
+        if (data != null) {
+          SupplierRepository.instance.upsertLocal(widget.supplierId, data);
+        }
       }
     } catch (_) {}
   }
+
 
   Query _invoicesQuery() => FirebaseFirestore.instance
       .collection('suppliers')

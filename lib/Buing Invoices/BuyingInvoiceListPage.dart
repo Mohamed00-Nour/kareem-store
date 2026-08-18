@@ -5,6 +5,8 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../repositories/invoice_repository.dart';
+import '../local_db/models/invoice_local.dart';
 import 'BuyingInvoiceDetailPage.dart';
 
 class BuyingInvoiceListPage extends StatefulWidget {
@@ -29,8 +31,21 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     // Initialize with current month
     _selectedMonth = DateTime.now();
     _loadUserRole();
+    _loadFromLocalCache();
     _listenToInvoices();
     _searchController.addListener(_filterInvoices);
+  }
+
+  void _loadFromLocalCache() {
+    final locals = InvoiceRepository.instance.getAllBuying();
+    if (locals.isNotEmpty && mounted) {
+      setState(() {
+        _invoices.clear();
+        _invoices.addAll(locals.map((inv) => inv.toMap()));
+        _filterInvoices();
+        _isFetching = false;
+      });
+    }
   }
 
   @override
@@ -64,6 +79,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
         _invoices.addAll(querySnapshot.docs.map((doc) {
           final data = Map<String, dynamic>.from(doc.data() as Map);
           data['id'] = doc.id; // include Firestore doc ID for editing
+          InvoiceRepository.instance.upsertBuyingLocal(doc.id, data);
           return data;
         }));
         _filterInvoices(); // Apply filtering after fetching
@@ -79,6 +95,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     });
   }
 
+
   DateTime _parseInvoiceDate(dynamic raw) {
     if (raw is Timestamp) return raw.toDate();
     if (raw is DateTime) return raw;
@@ -90,7 +107,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     final query = _searchController.text.toLowerCase();
     setState(() {
       _filteredInvoices.clear();
-      _filteredInvoices.addAll(_invoices.where((invoice) {
+      final filtered = _invoices.where((invoice) {
         final supplierName = (invoice['supplierName'] ?? '').toString().toLowerCase();
         final invoiceNumber = (invoice['invoiceNumber'] ?? '').toString();
         final invoiceDate = _parseInvoiceDate(invoice['date']);
@@ -99,7 +116,22 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
                 invoiceDate.month == _selectedMonth!.month);
         return (supplierName.contains(query) || invoiceNumber.contains(query)) &&
             isInSelectedMonth;
-      }).toList());
+      }).toList();
+
+      filtered.sort((a, b) {
+        final numA = (a['invoiceNumber'] as num?)?.toInt() ?? 0;
+        final numB = (b['invoiceNumber'] as num?)?.toInt() ?? 0;
+        if (numA > 0 && numB > 0 && numA != numB) {
+          return numB.compareTo(numA);
+        }
+        final dateA = _parseInvoiceDate(a['date']);
+        final dateB = _parseInvoiceDate(b['date']);
+        final dateComp = dateB.compareTo(dateA);
+        if (dateComp != 0) return dateComp;
+        return numB.compareTo(numA);
+      });
+
+      _filteredInvoices.addAll(filtered);
     });
   }
 

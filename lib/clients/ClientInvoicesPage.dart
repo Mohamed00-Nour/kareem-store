@@ -1,5 +1,6 @@
 library client_invoices_page;
 
+import 'dart:async';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -22,6 +23,9 @@ import '../Services/whatsapp_invoice_share_service.dart';
 import '../repositories/product_repository.dart';
 import '../sync/connectivity_service.dart';
 import '../repositories/client_repository.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/balance_history_repository.dart';
+import '../local_db/models/balance_history_local.dart';
 import '../sync/sync_queue_manager.dart';
 
 part 'invoice_edit_sheet.dart';
@@ -65,13 +69,10 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   bool _autoEditTriggered = false;
   List<_ProdInfo> _allProds = [];
 
-  List<QueryDocumentSnapshot> _invoices = [];
-  List<QueryDocumentSnapshot> _returnInvoices = [];
-  List<QueryDocumentSnapshot> _payments = [];
-  DocumentSnapshot? _lastInvoiceDoc;
+  List<_ItemDoc> _invoices = [];
+  List<_ItemDoc> _returnInvoices = [];
+  List<_ItemDoc> _payments = [];
   bool _isLoadingInvoices = true;
-  bool _isLoadingMoreInvoices = false;
-  bool _hasMoreInvoices = true;
   bool _showPayments = false; // toggle: show payment cards in the list
   final Set<String> _expandedInvoiceIds = {};
   final TextEditingController _searchController = TextEditingController();
@@ -185,138 +186,99 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-  Query _invoicesQuery() => FirebaseFirestore.instance
-      .collection('clients')
-      .doc(widget.clientId)
-      .collection('invoices')
-      .orderBy('date', descending: true);
 
-  Query _returnInvoicesQuery() => FirebaseFirestore.instance
-      .collection('clients')
-      .doc(widget.clientId)
-      .collection('returnInvoices')
-      .orderBy('date', descending: true);
-
-  Query _paymentsQuery() => FirebaseFirestore.instance
-      .collection('clients')
-      .doc(widget.clientId)
-      .collection('balanceHistory')
-      .orderBy('timestamp', descending: true);
-
-  void _onInvoiceScroll() {
-    if (!_invoiceScrollController.hasClients || _searchQuery.isNotEmpty) return;
-    final pos = _invoiceScrollController.position;
-    if (pos.pixels < pos.maxScrollExtent - 300) return;
-    _loadMoreInvoices();
-  }
 
   Future<void> _fetchInvoices({bool reset = false}) async {
-    if (reset) {
-      if (!mounted) return;
+    _fetchClientName();
+    if (reset && mounted) {
       setState(() {
         _isLoadingInvoices = true;
         _invoices = [];
         _returnInvoices = [];
         _payments = [];
-        _lastInvoiceDoc = null;
-        _hasMoreInvoices = true;
       });
-    } else {
-      if (_isLoadingMoreInvoices || !_hasMoreInvoices || _isLoadingInvoices) {
-        return;
-      }
-      setState(() => _isLoadingMoreInvoices = true);
     }
 
     try {
-      Query query = _invoicesQuery().limit(_invoicePageSize);
-      if (!reset && _lastInvoiceDoc != null) {
-        query = query.startAfterDocument(_lastInvoiceDoc!);
-      }
-
-      final bool isOnline = ConnectivityService.instance.isOnline;
-      final GetOptions options = GetOptions(
-        source: isOnline ? Source.serverAndCache : Source.cache,
+      // 1. Read from local Hive immediately (0ms wait)
+      final localSales = InvoiceRepository.instance.getSalesByClient(
+        widget.clientId,
+        clientName: _clientName,
+      );
+      final localReturns = InvoiceRepository.instance.getReturnsByClient(
+        widget.clientId,
+        clientName: _clientName,
+      );
+      final localPayments = BalanceHistoryRepository.instance.getForClient(
+        widget.clientId,
       );
 
-      final Future<QuerySnapshot> invoiceFuture = query.get(options);
-      final Future<QuerySnapshot?> returnFuture = reset
-          ? _returnInvoicesQuery().get(options)
-          : Future<QuerySnapshot?>.value(null);
-      final Future<QuerySnapshot?> paymentFuture = reset
-          ? _paymentsQuery().get(options)
-          : Future<QuerySnapshot?>.value(null);
+      final salesDocs = localSales.map((inv) => _ItemDoc(id: inv.id, data: inv.toMap())).toList();
+      final returnDocs = localReturns.map((inv) => _ItemDoc(id: inv.id, data: inv.toMap())).toList();
+      final paymentDocs = localPayments
+          .where((bh) => bh.type != 'sale' && bh.type != 'return')
+          .map((bh) => _ItemDoc(id: bh.id, data: bh.toMap()))
+          .toList();
 
-      QuerySnapshot snap;
-      try {
-        snap = await invoiceFuture;
-      } catch (_) {
-        snap = await query.get(const GetOptions(source: Source.cache));
+      if (mounted) {
+        setState(() {
+          _invoices = salesDocs;
+          _returnInvoices = returnDocs;
+          _payments = paymentDocs;
+          _isLoadingInvoices = false;
+        });
       }
-
-      QuerySnapshot? retSnap;
-      try {
-        retSnap = await returnFuture;
-      } catch (_) {
-        if (reset) {
-          try {
-            retSnap = await _returnInvoicesQuery()
-                .get(const GetOptions(source: Source.cache));
-          } catch (_) {
-            retSnap = null;
-          }
-        }
-      }
-
-      QuerySnapshot? paySnap;
-      try {
-        paySnap = await paymentFuture;
-      } catch (_) {
-        if (reset) {
-          try {
-            paySnap = await _paymentsQuery()
-                .get(const GetOptions(source: Source.cache));
-          } catch (_) {
-            paySnap = null;
-          }
-        }
-      }
-      if (!mounted) return;
-
-      setState(() {
-        if (reset) {
-          _invoices = snap.docs;
-          _returnInvoices = retSnap?.docs ?? [];
-          // Exclude 'sale' and 'return' types — those are shown as invoice cards
-          _payments = (paySnap?.docs ?? []).where((doc) {
-            final t =
-                (doc.data() as Map<String, dynamic>)['type']?.toString() ?? '';
-            return t != 'sale' && t != 'return';
-          }).toList();
-        } else {
-          _invoices.addAll(snap.docs);
-        }
-        if (snap.docs.isNotEmpty) {
-          _lastInvoiceDoc = snap.docs.last;
-        }
-        _hasMoreInvoices = snap.docs.length >= _invoicePageSize;
-        _isLoadingInvoices = false;
-        _isLoadingMoreInvoices = false;
-      });
 
       if (reset) {
         await _tryAutoEditInvoice();
       }
-    } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isLoadingInvoices = false;
-        _isLoadingMoreInvoices = false;
-      });
+
+      // 2. Background sync from Firestore if online (fire-and-forget)
+      if (ConnectivityService.instance.isOnline) {
+        _backgroundSyncInvoices();
+      }
+    } catch (e) {
+      if (mounted) {
+        setState(() {
+          _isLoadingInvoices = false;
+        });
+      }
     }
   }
 
-  Future<void> _loadMoreInvoices() => _fetchInvoices(reset: false);
+  Future<void> _backgroundSyncInvoices() async {
+    try {
+      await ClientRepository.instance.deltaSync();
+      await BalanceHistoryRepository.instance.fullSyncForClient(widget.clientId);
+      await InvoiceRepository.instance.deltaSyncSales();
+      await InvoiceRepository.instance.deltaSyncReturns();
+
+      _fetchClientName();
+
+      final localSales = InvoiceRepository.instance.getSalesByClient(
+        widget.clientId,
+        clientName: _clientName,
+      );
+      final localReturns = InvoiceRepository.instance.getReturnsByClient(
+        widget.clientId,
+        clientName: _clientName,
+      );
+      final localPayments = BalanceHistoryRepository.instance.getForClient(
+        widget.clientId,
+      );
+
+      if (mounted) {
+        setState(() {
+          _invoices = localSales.map((inv) => _ItemDoc(id: inv.id, data: inv.toMap())).toList();
+          _returnInvoices = localReturns.map((inv) => _ItemDoc(id: inv.id, data: inv.toMap())).toList();
+          _payments = localPayments
+              .where((bh) => bh.type != 'sale' && bh.type != 'return')
+              .map((bh) => _ItemDoc(id: bh.id, data: bh.toMap()))
+              .toList();
+        });
+      }
+    } catch (_) {}
+  }
 
   Future<void> _refreshInvoices() async {
     _fetchClientName();
@@ -327,24 +289,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     if (_autoEditTriggered || widget.autoEditRootInvoiceId == null) return;
 
     for (final doc in _invoices) {
-      final data = doc.data() as Map<String, dynamic>;
-      if (data['invoiceId']?.toString() == widget.autoEditRootInvoiceId) {
+      if (doc.data['invoiceId']?.toString() == widget.autoEditRootInvoiceId ||
+          doc.id == widget.autoEditRootInvoiceId) {
         _autoEditTriggered = true;
-        _handleEditInvoice(doc);
+        _handleEditInvoice(doc.id, doc.data);
         return;
       }
     }
-
-    final q = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(widget.clientId)
-        .collection('invoices')
-        .where('invoiceId', isEqualTo: widget.autoEditRootInvoiceId)
-        .limit(1)
-        .get();
-    if (!mounted || q.docs.isEmpty) return;
-    _autoEditTriggered = true;
-    _handleEditInvoice(q.docs.first);
   }
 
 // In your ClientInvoicesPage, update the balance saving method
@@ -383,29 +334,110 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       _isSaving = true; // Show loading overlay
     });
 
-    final bool isOnline = ConnectivityService.instance.isOnline;
+    try {
+      // 1. Get current balance from local Hive immediately
+      final clientLocal = ClientRepository.instance.getById(widget.clientId);
+      final double currentBalance =
+          clientLocal?.balance ?? _currentClientBalance ?? 0.0;
 
-    if (!isOnline) {
-      try {
-        final clientLocal = ClientRepository.instance.getById(widget.clientId);
-        final double currentBalance =
-            clientLocal?.balance ?? _currentClientBalance ?? 0.0;
+      final double newBalance = isAddition
+          ? currentBalance + enteredBalance
+          : currentBalance - enteredBalance;
 
-        final double newBalance = isAddition
-            ? currentBalance + enteredBalance
-            : currentBalance - enteredBalance;
+      final historyId = DateTime.now().millisecondsSinceEpoch.toString();
 
-        await ClientRepository.instance
-            .updateLocalBalance(widget.clientId, newBalance);
+      // 2. Save to local Hive database immediately (0ms wait)
+      await ClientRepository.instance
+          .updateLocalBalance(widget.clientId, newBalance);
 
-        final logEntry = <String, dynamic>{
-          'enteredBalance': enteredBalance,
-          'balanceBefore': currentBalance,
-          'type': isAddition ? 'addition' : 'deduction',
-          'notes': notesText,
-          'timestamp': DateTime.now().toIso8601String(),
-        };
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: historyId,
+          parentId: widget.clientId,
+          parentType: 'client',
+          enteredBalance: enteredBalance,
+          balanceBefore: currentBalance,
+          type: isAddition ? 'addition' : 'deduction',
+          timestamp: DateTime.now(),
+        ),
+      );
 
+      _balanceController.clear();
+      _addBalanceController.clear();
+      _notesController.clear();
+
+      if (mounted) {
+        setState(() {
+          _currentClientBalance = newBalance;
+        });
+        _refreshInvoices();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
+        );
+      }
+
+      // 3. Sync to Firestore in background / queue for offline sync
+      final logEntry = <String, dynamic>{
+        'enteredBalance': enteredBalance,
+        'balanceBefore': currentBalance,
+        'type': isAddition ? 'addition' : 'deduction',
+        'notes': notesText,
+        'timestamp': DateTime.now().toIso8601String(),
+      };
+
+      final bool isOnline = ConnectivityService.instance.isOnline;
+      if (isOnline) {
+        try {
+          await FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .update({'balance': newBalance});
+
+          await FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('balanceHistory')
+              .doc(historyId)
+              .set({
+            'enteredBalance': enteredBalance,
+            'balanceBefore': currentBalance,
+            'type': isAddition ? 'addition' : 'deduction',
+            'notes': notesText,
+            'timestamp': FieldValue.serverTimestamp(),
+          });
+
+          DocumentReference boxDocRef =
+              FirebaseFirestore.instance.collection('box').doc('mainBox');
+
+          await boxDocRef.set(
+            {
+              'value': FieldValue.increment(
+                  isAddition ? -enteredBalance : enteredBalance)
+            },
+            SetOptions(merge: true),
+          );
+
+          await boxDocRef.collection('changes').add({
+            'date': FieldValue.serverTimestamp(),
+            'value': enteredBalance,
+            'type': isAddition ? 'decrement' : 'addition',
+            'name': _clientName ?? widget.clientId,
+            'notes': notesText,
+            'invoiceNumber': null,
+          });
+        } catch (e) {
+          await SyncQueueManager.instance.enqueue(
+            operationType: 'adjustClientBalance',
+            payload: {
+              'clientId': widget.clientId,
+              'amount': enteredBalance,
+              'isAddition': isAddition,
+              'logEntry': logEntry,
+              'newBalance': newBalance,
+            },
+          );
+        }
+      } else {
         await SyncQueueManager.instance.enqueue(
           operationType: 'adjustClientBalance',
           payload: {
@@ -416,122 +448,17 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
             'newBalance': newBalance,
           },
         );
-
-        _balanceController.clear();
-        _addBalanceController.clear();
-        _notesController.clear();
-
-        if (mounted) {
-          setState(() {
-            _currentClientBalance = newBalance;
-          });
-          _refreshInvoices();
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text(
-                    'تم حفظ الرصيد محلياً وسيتم مزامنته عند الاتصال بالإنترنت')),
-          );
-        }
-      } catch (e) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(
-            SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
-          );
-        }
-      } finally {
-        if (mounted) {
-          setState(() {
-            _isSaving = false;
-          });
-        }
       }
-      return;
-    }
-
-    try {
-      // Get current client balance
-      DocumentSnapshot clientDoc = await FirebaseFirestore.instance
-          .collection('clients')
-          .doc(widget.clientId)
-          .get();
-
-      double currentBalance = 0.0;
-      String clientName = '';
-
-      if (clientDoc.exists) {
-        final clientData = clientDoc.data() as Map<String, dynamic>?;
-        currentBalance = (clientData?['balance'] ?? 0.0).toDouble();
-        clientName = clientData?['clientName'] ?? '';
-      }
-
-      double newBalance = isAddition
-          ? currentBalance + enteredBalance
-          : currentBalance - enteredBalance;
-
-      // Update client balance
-      await FirebaseFirestore.instance
-          .collection('clients')
-          .doc(widget.clientId)
-          .update({'balance': newBalance});
-
-      await ClientRepository.instance
-          .updateLocalBalance(widget.clientId, newBalance);
-
-      // Add to client's balance history
-      await FirebaseFirestore.instance
-          .collection('clients')
-          .doc(widget.clientId)
-          .collection('balanceHistory')
-          .add({
-        'enteredBalance': enteredBalance,
-        'balanceBefore': currentBalance,
-        'type': isAddition ? 'addition' : 'deduction',
-        'notes': notesText,
-        'timestamp':
-            DateTime.now(), // local timestamp so it's immediately queryable
-      });
-
-      // Update the box collection
-      DocumentReference boxDocRef =
-          FirebaseFirestore.instance.collection('box').doc('mainBox');
-
-      await boxDocRef.set(
-        {
-          'value': FieldValue.increment(
-              isAddition ? -enteredBalance : enteredBalance)
-        },
-        SetOptions(merge: true),
-      );
-
-      // Add change to the subcollection
-      await boxDocRef.collection('changes').add({
-        'date': FieldValue.serverTimestamp(),
-        'value': enteredBalance,
-        'type': isAddition ? 'decrement' : 'addition',
-        'name': clientName,
-        'notes': notesText,
-        'invoiceNumber': null, // No invoice number for balance entries
-      });
-
-      _balanceController.clear();
-      _addBalanceController.clear();
-      _notesController.clear();
-
-      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
-      _fetchClientName();
-      _refreshInvoices();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
-      );
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
+        );
+      }
     } finally {
       if (mounted) {
         setState(() {
-          _isSaving = false; // Hide loading overlay
+          _isSaving = false;
         });
       }
     }
@@ -1024,16 +951,16 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   }
 
   Future<Map<String, dynamic>> _invoicePayloadForEdit(
-      DocumentSnapshot invoice) async {
-    final invoiceData = invoice.data() as Map<String, dynamic>;
+      String invoiceId, Map<String, dynamic> invoiceData) async {
     return SalesInvoiceActionsService.buildEditPayload(
       invoiceData,
-      clientSubDocId: invoice.id,
+      clientSubDocId: invoiceId,
     );
   }
 
-  Future<void> _showEditInvoiceDialog(DocumentSnapshot invoice) async {
-    final payload = await _invoicePayloadForEdit(invoice);
+  Future<void> _showEditInvoiceDialog(
+      String invoiceId, Map<String, dynamic> invoiceData) async {
+    final payload = await _invoicePayloadForEdit(invoiceId, invoiceData);
 
     final saved = await Navigator.push<bool>(
       context,
@@ -1176,9 +1103,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-  void _handleEditInvoice(DocumentSnapshot invoice) {
+  void _handleEditInvoice(String invoiceId, Map<String, dynamic> invoiceData) {
     if (_userRole == 'admin') {
-      _showEditInvoiceDialog(invoice);
+      _showEditInvoiceDialog(invoiceId, invoiceData);
     } else {
       _showPermissionDeniedDialog();
     }
@@ -1186,8 +1113,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   // ── Return-invoice edit / delete ─────────────────────────────────
 
-  Future<void> _showEditReturnInvoiceDialog(DocumentSnapshot invoice) async {
-    final payload = await _invoicePayloadForEdit(invoice);
+  Future<void> _showEditReturnInvoiceDialog(
+      String invoiceId, Map<String, dynamic> invoiceData) async {
+    final payload = await _invoicePayloadForEdit(invoiceId, invoiceData);
     final saved = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
@@ -1206,7 +1134,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-  Future<void> _deleteReturnInvoice(DocumentSnapshot clientSubDoc) async {
+  Future<void> _deleteReturnInvoice(
+      String docId, Map<String, dynamic> data) async {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (ctx) => AlertDialog(
@@ -1229,7 +1158,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     if (confirmed != true || !mounted) return;
 
     try {
-      final data = clientSubDoc.data() as Map<String, dynamic>;
       final products =
           List<Map<String, dynamic>>.from(data['products'] as List? ?? []);
       final rootInvoiceId = data['invoiceId']?.toString() ?? '';
@@ -1242,56 +1170,76 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
             double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
         if (amount <= 0) continue;
 
-        final q = await FirebaseFirestore.instance
-            .collection('products')
-            .where('name', isEqualTo: name)
-            .get();
-        for (final pDoc in q.docs) {
-          final qty = (pDoc['quantity'] as num?)?.toDouble() ?? 0.0;
-          await FirebaseFirestore.instance
+        // Apply stock changes locally
+        final localProd = ProductRepository.instance.findByName(name);
+        if (localProd != null) {
+          localProd.quantity -= amount;
+          localProd.updatedAt = DateTime.now();
+          await localProd.save();
+        }
+
+        if (ConnectivityService.instance.isOnline) {
+          final q = await FirebaseFirestore.instance
               .collection('products')
-              .doc(pDoc.id)
-              .update({'quantity': qty - amount});
-          await FirebaseFirestore.instance
-              .collection('products')
-              .doc(pDoc.id)
-              .collection('changes')
-              .add({
-            'date': DateTime.now(),
-            'amount': amount,
-            'type': 'decrease',
-          });
+              .where('name', isEqualTo: name)
+              .get();
+          for (final pDoc in q.docs) {
+            final qty = (pDoc['quantity'] as num?)?.toDouble() ?? 0.0;
+            await FirebaseFirestore.instance
+                .collection('products')
+                .doc(pDoc.id)
+                .update({'quantity': qty - amount});
+            await FirebaseFirestore.instance
+                .collection('products')
+                .doc(pDoc.id)
+                .collection('changes')
+                .add({
+              'date': DateTime.now(),
+              'amount': amount,
+              'type': 'decrease',
+            });
+          }
         }
       }
 
-      // 2. Delete root returnInvoice document
+      // 2. Delete return invoice locally from Hive
+      await InvoiceRepository.instance.deleteReturnLocal(docId);
       if (rootInvoiceId.isNotEmpty) {
-        await FirebaseFirestore.instance
-            .collection('returnInvoices')
-            .doc(rootInvoiceId)
-            .delete();
+        await InvoiceRepository.instance.deleteReturnLocal(rootInvoiceId);
       }
 
-      // 3. Delete client sub-document
-      await clientSubDoc.reference.delete();
-
-      // 4. Remove related balanceHistory entries (type 'return' and 'return_payment')
-      if (rootInvoiceId.isNotEmpty) {
-        final historySnap = await FirebaseFirestore.instance
+      // 3. Delete from Firestore if online
+      if (ConnectivityService.instance.isOnline) {
+        if (rootInvoiceId.isNotEmpty) {
+          FirebaseFirestore.instance
+              .collection('returnInvoices')
+              .doc(rootInvoiceId)
+              .delete()
+              .catchError((_) {});
+        }
+        FirebaseFirestore.instance
             .collection('clients')
             .doc(widget.clientId)
-            .collection('balanceHistory')
-            .where('invoiceId', isEqualTo: rootInvoiceId)
-            .get();
-        final batch = FirebaseFirestore.instance.batch();
-        for (final h in historySnap.docs) {
-          batch.delete(h.reference);
-        }
-        await batch.commit();
-      }
+            .collection('returnInvoices')
+            .doc(docId)
+            .delete()
+            .catchError((_) {});
 
-      // 5. Re-sync client balance
-      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+        if (rootInvoiceId.isNotEmpty) {
+          final historySnap = await FirebaseFirestore.instance
+              .collection('clients')
+              .doc(widget.clientId)
+              .collection('balanceHistory')
+              .where('invoiceId', isEqualTo: rootInvoiceId)
+              .get();
+          final batch = FirebaseFirestore.instance.batch();
+          for (final h in historySnap.docs) {
+            batch.delete(h.reference);
+          }
+          await batch.commit();
+        }
+        await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+      }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1308,17 +1256,17 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-  void _handleEditReturnInvoice(DocumentSnapshot invoice) {
+  void _handleEditReturnInvoice(String invoiceId, Map<String, dynamic> invoiceData) {
     if (_userRole == 'admin') {
-      _showEditReturnInvoiceDialog(invoice);
+      _showEditReturnInvoiceDialog(invoiceId, invoiceData);
     } else {
       _showPermissionDeniedDialog();
     }
   }
 
-  void _handleDeleteReturnInvoice(DocumentSnapshot invoice) {
+  void _handleDeleteReturnInvoice(String invoiceId, Map<String, dynamic> invoiceData) {
     if (_userRole == 'admin') {
-      _deleteReturnInvoice(invoice);
+      _deleteReturnInvoice(invoiceId, invoiceData);
     } else {
       _showPermissionDeniedDialog();
     }
@@ -2033,51 +1981,51 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     _loadUserRole();
     _fetchAllProds();
     _fetchClientName();
-    _invoiceScrollController.addListener(_onInvoiceScroll);
     _fetchInvoices(reset: true);
     _syncClientInvoiceBalances();
   }
 
   Future<void> _fetchClientName() async {
+    // 1. Read directly from local Hive (0ms)
+    final local = ClientRepository.instance.getById(widget.clientId) ??
+        ClientRepository.instance.findByName(widget.clientId);
+    if (local != null && mounted) {
+      setState(() {
+        _clientName = local.name;
+        _currentClientBalance = local.balance;
+      });
+    }
+
+    // 2. Background refresh from Firestore if online
     try {
       final bool isOnline = ConnectivityService.instance.isOnline;
-      if (!isOnline) {
-        final local = ClientRepository.instance.getById(widget.clientId);
-        if (local != null && mounted) {
-          setState(() {
-            _clientName = local.name;
-            _currentClientBalance = local.balance;
-          });
-          return;
+      if (isOnline) {
+        final snap = await FirebaseFirestore.instance
+            .collection('clients')
+            .doc(widget.clientId)
+            .get();
+
+        if (snap.exists && mounted) {
+          final data = snap.data();
+          if (data != null) {
+            final rawName = (data['clientName'] ?? data['name'])?.toString().trim() ?? '';
+            final resolvedName = rawName.isNotEmpty ? rawName : widget.clientId;
+            final balance = (data['balance'] as num?)?.toDouble() ?? 0.0;
+
+            setState(() {
+              _clientName = resolvedName;
+              _currentClientBalance = balance;
+            });
+
+            final Map<String, dynamic> localData = Map<String, dynamic>.from(data);
+            localData['clientName'] = resolvedName;
+            await ClientRepository.instance.upsertLocal(widget.clientId, localData);
+          }
         }
       }
-
-      final snap = await FirebaseFirestore.instance
-          .collection('clients')
-          .doc(widget.clientId)
-          .get(GetOptions(
-              source: isOnline ? Source.serverAndCache : Source.cache));
-
-      if (snap.exists && mounted) {
-        final data = snap.data();
-        setState(() {
-          _clientName = (data?['clientName'] ?? data?['name'])?.toString();
-          _currentClientBalance = (data?['balance'] as num?)?.toDouble();
-        });
-        if (data != null && _clientName != null) {
-          ClientRepository.instance.upsertLocal(widget.clientId, data);
-        }
-      }
-    } catch (_) {
-      final local = ClientRepository.instance.getById(widget.clientId);
-      if (local != null && mounted) {
-        setState(() {
-          _clientName = local.name;
-          _currentClientBalance = local.balance;
-        });
-      }
-    }
+    } catch (_) {}
   }
+
 
   Future<void> _syncClientInvoiceBalances() async {
     try {
@@ -2093,7 +2041,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   @override
   void dispose() {
     _searchController.dispose();
-    _invoiceScrollController.removeListener(_onInvoiceScroll);
     _invoiceScrollController.dispose();
     _balanceController.dispose();
     _addBalanceController.dispose();
@@ -2120,10 +2067,10 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   /// Combines sales invoices, return invoices, and payment entries sorted newest first.
   List<_InvoiceEntry> get _allMergedInvoices {
     final List<_InvoiceEntry> merged = [
-      ..._invoices.map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.invoice)),
+      ..._invoices.map((d) => _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.invoice)),
       ..._returnInvoices
-          .map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.returnInvoice)),
-      ..._payments.map((d) => _InvoiceEntry(doc: d, kind: _EntryKind.payment)),
+          .map((d) => _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.returnInvoice)),
+      ..._payments.map((d) => _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.payment)),
     ];
     merged.sort((a, b) => _entryDate(b).compareTo(_entryDate(a)));
     return merged;
@@ -2164,15 +2111,21 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     // Dispatch payment entries to their own card builder
     if (entry.kind == _EntryKind.payment) return _buildPaymentCard(entry);
 
-    final invoice = entry.doc;
     final bool isReturn = entry.kind == _EntryKind.returnInvoice;
-    final invoiceData = Map<String, dynamic>.from(invoice.data() as Map);
+    final invoiceData = Map<String, dynamic>.from(entry.data);
     final dateField = invoiceData['date'];
-    if (dateField is! Timestamp) {
-      return const SizedBox.shrink();
+
+    DateTime invoiceDate;
+    if (dateField is Timestamp) {
+      invoiceDate = dateField.toDate().toLocal();
+    } else if (dateField is DateTime) {
+      invoiceDate = dateField.toLocal();
+    } else if (dateField is String) {
+      invoiceDate = DateTime.tryParse(dateField)?.toLocal() ?? DateTime.now();
+    } else {
+      invoiceDate = DateTime.now();
     }
 
-    final invoiceDate = dateField.toDate().toLocal();
     final formattedDate = invoiceDate.toString().split(' ')[0];
     final formattedTime = intl.DateFormat('hh:mm a').format(invoiceDate);
 
@@ -2181,7 +2134,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     final totalSum = invoiceNum(invoiceData['totalSum']);
     final discount = invoiceResolveDiscount(invoiceData);
 
-    final invoiceId = invoice.id;
+    final invoiceId = entry.id;
     final isExpanded = _expandedInvoiceIds.contains(invoiceId);
 
     return Card(
@@ -2239,7 +2192,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                                   ),
                                 Expanded(
                                   child: Text(
-                                    'رقم الفاتورة: #${invoice['invoiceNumber']} (${invoiceAmount(totalSum)} ج.م)',
+                                    'رقم الفاتورة: #${invoiceData['invoiceNumber']} (${invoiceAmount(totalSum)} ج.م)',
                                     style: TextStyle(
                                       fontSize: 14,
                                       fontWeight: FontWeight.bold,
@@ -2289,13 +2242,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                     if (!isReturn) ...[
                       IconButton(
                         icon: const Icon(Icons.edit, color: Colors.blue),
-                        onPressed: () => _handleEditInvoice(invoice),
+                        onPressed: () => _handleEditInvoice(invoiceId, invoiceData),
                       ),
                       IconButton(
                         icon: const Icon(Icons.delete, color: Colors.red),
                         onPressed: () => _handleDeleteInvoice(
-                          invoice.id,
-                          invoice['totalSum'],
+                          invoiceId,
+                          totalSum,
                         ),
                       ),
                     ] else ...[
@@ -2303,13 +2256,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                         icon: const Icon(Icons.edit,
                             color: Colors.deepOrangeAccent),
                         tooltip: 'تعديل المرتجع',
-                        onPressed: () => _handleEditReturnInvoice(invoice),
+                        onPressed: () => _handleEditReturnInvoice(invoiceId, invoiceData),
                       ),
                       IconButton(
                         icon:
                             const Icon(Icons.delete_forever, color: Colors.red),
                         tooltip: 'حذف المرتجع',
-                        onPressed: () => _handleDeleteReturnInvoice(invoice),
+                        onPressed: () => _handleDeleteReturnInvoice(invoiceId, invoiceData),
                       ),
                     ],
                   ],
@@ -2363,7 +2316,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                             ),
                           ),
                         Text(
-                          'المدفوع: ${invoiceAmount(invoice['paidAmount'])}',
+                          'المدفوع: ${invoiceAmount(invoiceData['paidAmount'])}',
                           style: const TextStyle(
                             fontSize: 16,
                             fontWeight: FontWeight.bold,
@@ -2371,7 +2324,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                           ),
                         ),
                         Text(
-                          'المتبقي من الفاتورة: ${invoiceAmount(totalSum - invoiceNum(invoice['paidAmount']))}',
+                          'المتبقي من الفاتورة: ${invoiceAmount(totalSum - invoiceNum(invoiceData['paidAmount']))}',
                           style: const TextStyle(
                             fontSize: 14,
                             fontWeight: FontWeight.bold,
@@ -2456,23 +2409,10 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           body: Column(
             children: [
               // ── Client Name & Balance Header Card ──
-              StreamBuilder<DocumentSnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('clients')
-                    .doc(widget.clientId)
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  String name = _clientName ?? 'جاري التحميل...';
-                  double balance = _currentClientBalance ?? 0.0;
-                  if (snapshot.hasData &&
-                      snapshot.data != null &&
-                      snapshot.data!.exists) {
-                    final data = snapshot.data!.data() as Map<String, dynamic>?;
-                    name = data?['clientName']?.toString() ??
-                        data?['name']?.toString() ??
-                        name;
-                    balance = (data?['balance'] as num?)?.toDouble() ?? balance;
-                  }
+              Builder(
+                builder: (context) {
+                  final String name = _clientName ?? 'جاري التحميل...';
+                  final double balance = _currentClientBalance ?? 0.0;
 
                   return Container(
                     margin: EdgeInsets.fromLTRB(12.w, 10.h, 12.w, 4.h),
@@ -2606,21 +2546,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                             child: ListView.builder(
                               controller: _invoiceScrollController,
                               physics: const AlwaysScrollableScrollPhysics(),
-                              itemCount: _filteredInvoices.length +
-                                  (_hasMoreInvoices || _isLoadingMoreInvoices
-                                      ? 1
-                                      : 0),
+                              itemCount: _filteredInvoices.length,
                               itemBuilder: (context, index) {
-                                if (index >= _filteredInvoices.length) {
-                                  return Padding(
-                                    padding: const EdgeInsets.all(16.0),
-                                    child: Center(
-                                      child: CircularProgressIndicator(
-                                        color: Colors.orange.withOpacity(0.7),
-                                      ),
-                                    ),
-                                  );
-                                }
                                 return _buildInvoiceCard(
                                     _filteredInvoices[index]);
                               },
@@ -2661,6 +2588,61 @@ class BalanceHistoryPage extends StatefulWidget {
 
 class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
   bool _isBusy = false;
+  List<_ItemDoc> _historyDocs = [];
+  bool _isLoading = true;
+  StreamSubscription<QuerySnapshot>? _historySubscription;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromLocalCache();
+    _listenToHistory();
+  }
+
+  @override
+  void dispose() {
+    _historySubscription?.cancel();
+    super.dispose();
+  }
+
+  void _loadFromLocalCache() {
+    final locals = BalanceHistoryRepository.instance.getForClient(widget.clientId);
+    final docs = locals.map((bh) => _ItemDoc(id: bh.id, data: bh.toMap())).toList();
+    final sorted = _sortDocs(docs);
+    if (mounted) {
+      setState(() {
+        _historyDocs = sorted;
+        _isLoading = false;
+      });
+    }
+  }
+
+  void _listenToHistory() {
+    _historySubscription?.cancel();
+    _historySubscription = FirebaseFirestore.instance
+        .collection('clients')
+        .doc(widget.clientId)
+        .collection('balanceHistory')
+        .orderBy('timestamp', descending: true)
+        .snapshots()
+        .listen((snapshot) async {
+      for (final doc in snapshot.docs) {
+        final data = doc.data() as Map<String, dynamic>? ?? {};
+        final entry = BalanceHistoryLocal.fromFirestore(
+          doc.id,
+          widget.clientId,
+          'client',
+          data,
+        );
+        await BalanceHistoryRepository.instance.upsertLocal(entry);
+      }
+      _loadFromLocalCache();
+    }, onError: (_) {
+      if (mounted) {
+        setState(() => _isLoading = false);
+      }
+    });
+  }
 
   static int _typePriority(String type) {
     switch (type) {
@@ -2692,12 +2674,12 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     return null;
   }
 
-  static List<QueryDocumentSnapshot> _sortDocs(
-      List<QueryDocumentSnapshot> docs) {
-    final sorted = List<QueryDocumentSnapshot>.from(docs);
+  static List<_ItemDoc> _sortDocs(
+      List<_ItemDoc> docs) {
+    final sorted = List<_ItemDoc>.from(docs);
     sorted.sort((a, b) {
-      final dataA = a.data() as Map<String, dynamic>;
-      final dataB = b.data() as Map<String, dynamic>;
+      final dataA = a.data;
+      final dataB = b.data;
       final typeA = dataA['type']?.toString() ?? '';
       final typeB = dataB['type']?.toString() ?? '';
 
@@ -2771,8 +2753,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     return isIncrease ? Colors.green.shade700 : Colors.red.shade700;
   }
 
-  Future<void> _editEntry(QueryDocumentSnapshot doc) async {
-    final data = doc.data() as Map<String, dynamic>;
+  Future<void> _editEntry(_InvoiceEntry entry) async {
+    final data = entry.data;
     final type = data['type']?.toString() ?? 'deduction';
     final invoiceId = data['invoiceId']?.toString() ?? '';
     final currentAmount = (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
@@ -2846,10 +2828,16 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     setState(() => _isBusy = true);
     try {
       final diff = newAmount - currentAmount;
+      final historyRef = FirebaseFirestore.instance
+          .collection('clients')
+          .doc(widget.clientId)
+          .collection('balanceHistory')
+          .doc(entry.id);
+
       final batch = FirebaseFirestore.instance.batch();
 
       // Update history doc
-      batch.update(doc.reference, {
+      batch.update(historyRef, {
         'enteredBalance': newAmount,
         'notes': newNotes,
       });
@@ -2966,8 +2954,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     }
   }
 
-  Future<void> _deleteEntry(QueryDocumentSnapshot doc) async {
-    final data = doc.data() as Map<String, dynamic>;
+  Future<void> _deleteEntry(_InvoiceEntry entry) async {
+    final data = entry.data;
     final type = data['type']?.toString() ?? 'deduction';
     final invoiceId = data['invoiceId']?.toString() ?? '';
     final enteredBalance = (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
@@ -2999,10 +2987,16 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
 
     setState(() => _isBusy = true);
     try {
+      final historyRef = FirebaseFirestore.instance
+          .collection('clients')
+          .doc(widget.clientId)
+          .collection('balanceHistory')
+          .doc(entry.id);
+
       final batch = FirebaseFirestore.instance.batch();
 
       // Delete history doc
-      batch.delete(doc.reference);
+      batch.delete(historyRef);
 
       double boxDelta = 0.0;
       String boxChangeName = '';
@@ -3178,29 +3172,15 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
             backgroundColor: Colors.black.withOpacity(0.7),
             foregroundColor: Colors.white,
           ),
-          body: StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance
-                .collection('clients')
-                .doc(widget.clientId)
-                .collection('balanceHistory')
-                .orderBy('timestamp', descending: true)
-                .snapshots(),
-            builder: (context, snapshot) {
-              if (!snapshot.hasData) {
-                return Center(
-                    child: CircularProgressIndicator(
-                        color: Colors.orange.shade700));
-              }
-
-              final sorted = _sortDocs(snapshot.data!.docs);
-
-              if (sorted.isEmpty) {
-                return const Center(
-                    child:
-                        Text('لا يوجد سجلات', style: TextStyle(fontSize: 16)));
-              }
-
-              return Directionality(
+          body: _isLoading
+              ? Center(
+                  child: CircularProgressIndicator(
+                      color: Colors.orange.shade700))
+              : _historyDocs.isEmpty
+                  ? const Center(
+                      child:
+                          Text('لا يوجد سجلات', style: TextStyle(fontSize: 16)))
+                  : Directionality(
                 textDirection: TextDirection.rtl,
                 child: Padding(
                   padding: const EdgeInsets.all(8.0),
@@ -3258,8 +3238,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                                     Text('إجراءات', textAlign: TextAlign.right),
                               ),
                             ],
-                            rows: sorted.map((doc) {
-                              final data = doc.data() as Map<String, dynamic>;
+                            rows: _historyDocs.map((doc) {
+                              final data = doc.data;
                               final type =
                                   data['type']?.toString() ?? 'deduction';
                               final entered = (data['enteredBalance'] as num?)
@@ -3361,7 +3341,13 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                                           tooltip: 'تعديل',
                                           onPressed: _isBusy
                                               ? null
-                                              : () => _editEntry(doc),
+                                              : () => _editEntry(
+                                                    _InvoiceEntry(
+                                                      id: doc.id,
+                                                      data: data,
+                                                      kind: _EntryKind.payment,
+                                                    ),
+                                                  ),
                                         ),
                                         const SizedBox(width: 8),
                                         IconButton(
@@ -3373,7 +3359,13 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                                           tooltip: 'حذف',
                                           onPressed: _isBusy
                                               ? null
-                                              : () => _deleteEntry(doc),
+                                              : () => _deleteEntry(
+                                                    _InvoiceEntry(
+                                                      id: doc.id,
+                                                      data: data,
+                                                      kind: _EntryKind.payment,
+                                                    ),
+                                                  ),
                                         ),
                                       ],
                                     ),
@@ -3387,9 +3379,7 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                     ),
                   ),
                 ),
-              );
-            },
-          ),
+              ),
         ),
         if (_isBusy)
           Container(
@@ -3403,20 +3393,30 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
   }
 }
 
+class _ItemDoc {
+  final String id;
+  final Map<String, dynamic> data;
+
+  _ItemDoc({required this.id, required this.data});
+}
+
 // ──────────────────────────────────────────────────────────────
 // Unified list entry (invoice / return invoice / payment card)
 // ──────────────────────────────────────────────────────────────
 enum _EntryKind { invoice, returnInvoice, payment }
 
 class _InvoiceEntry {
-  final QueryDocumentSnapshot doc;
+  final String id;
+  final Map<String, dynamic> data;
   final _EntryKind kind;
 
-  _InvoiceEntry({required this.doc, required this.kind});
+  _InvoiceEntry({
+    required this.id,
+    required this.data,
+    required this.kind,
+  });
 
   bool get isReturn => kind == _EntryKind.returnInvoice;
-
-  Map<String, dynamic> get data => doc.data() as Map<String, dynamic>;
 }
 
 // ──────────────────────────────────────────────────────────────

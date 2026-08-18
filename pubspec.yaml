@@ -36,7 +36,7 @@ dependencies:
   connectivity_plus: ^6.1.4
   print_bluetooth_thermal: ^1.2.1
   url_launcher: ^6.3.2
-
+  flutter_bloc: ^8.1.0
 dev_dependencies:
   flutter_test:
     sdk: flutter

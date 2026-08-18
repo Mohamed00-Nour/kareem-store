@@ -2,7 +2,6 @@ import 'dart:ui' as ui;
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
-import 'package:path_provider/path_provider.dart';
 import '../Services/party_rename_service.dart';
 import '../Widgets/app_responsive.dart';
 import 'DeletedSuppliersPage.dart';
@@ -134,9 +133,9 @@ class _SupplierListPageState extends State<SupplierListPage> {
   }
 
   Future<void> _initializeHive() async {
-    final dir = await getApplicationDocumentsDirectory();
-    Hive.init(dir.path);
-    final box = await Hive.openBox<String>('deletedSuppliers');
+    final box = Hive.isBoxOpen('deletedSuppliers')
+        ? Hive.box<String>('deletedSuppliers')
+        : await Hive.openBox<String>('deletedSuppliers');
     if (mounted) {
       setState(() {
         _deletedSuppliersBox = box;

@@ -34,6 +34,21 @@ class ProductLocal extends HiveObject {
   @HiveField(9)
   DateTime updatedAt;
 
+  @HiveField(10)
+  double alertAmount;
+
+  @HiveField(11)
+  String department;
+
+  @HiveField(12)
+  int randomNumber;
+
+  @HiveField(13)
+  bool onDemand;
+
+  @HiveField(14)
+  bool retail;
+
   ProductLocal({
     required this.id,
     required this.name,
@@ -44,6 +59,11 @@ class ProductLocal extends HiveObject {
     this.description = '',
     this.costPrice = 0.0,
     this.barcode = '',
+    this.alertAmount = 0.0,
+    this.department = '',
+    this.randomNumber = 0,
+    this.onDemand = false,
+    this.retail = false,
     required this.updatedAt,
   });
 
@@ -58,7 +78,31 @@ class ProductLocal extends HiveObject {
       description: data['description']?.toString() ?? '',
       costPrice: (data['costPrice'] as num?)?.toDouble() ?? 0.0,
       barcode: data['barcode']?.toString() ?? '',
+      alertAmount: (data['alertAmount'] as num?)?.toDouble() ?? 0.0,
+      department: data['department']?.toString() ?? '',
+      randomNumber: (data['randomNumber'] as num?)?.toInt() ?? 0,
+      onDemand: data['onDemand'] == true,
+      retail: data['retail'] == true,
       updatedAt: DateTime.now(),
     );
+  }
+
+  Map<String, dynamic> toMap() {
+    return {
+      'id': id,
+      'name': name,
+      'sellingPrice1': sellingPrice1,
+      'sellingPrice2': sellingPrice2,
+      'sellingPrice3': sellingPrice3,
+      'quantity': quantity,
+      'description': description,
+      'costPrice': costPrice,
+      'barcode': barcode,
+      'alertAmount': alertAmount,
+      'department': department,
+      'randomNumber': randomNumber,
+      'onDemand': onDemand,
+      'retail': retail,
+    };
   }
 }

@@ -46,6 +46,11 @@ class _ExpensesPageState extends State<ExpensesPage> {
   void initState() {
     super.initState();
     ExpenseService.ensureDefaultCategories();
+    final localList = ExpenseService.getLocalExpenses();
+    if (localList.isNotEmpty) {
+      _allExpenses = localList;
+      _expensesLoading = false;
+    }
     _expensesSub = ExpenseService.expensesStream().listen(
       (list) {
         if (!mounted) return;
@@ -64,6 +69,7 @@ class _ExpensesPageState extends State<ExpensesPage> {
       },
     );
   }
+
 
   @override
   void dispose() {

@@ -3,6 +3,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'package:hive_flutter/hive_flutter.dart';
+import '../local_db/hive_init.dart';
+import '../repositories/product_repository.dart';
 import '../EditProductPage.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/products_list_pdf_service.dart';
@@ -1252,7 +1255,7 @@ class _ProductListPageState extends State<ProductListPage> {
     );
   }
 
-  Widget _buildBorderedProductsTable(List<QueryDocumentSnapshot> docs) {
+  Widget _buildBorderedProductsTable(List<Map<String, dynamic>> products) {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 4.h),
       child: Container(
@@ -1262,14 +1265,13 @@ class _ProductListPageState extends State<ProductListPage> {
             _tableHeaderRow(),
             Expanded(
               child: ListView.builder(
-                itemCount: docs.length,
+                itemCount: products.length,
                 itemBuilder: (context, index) {
-                  final doc = docs[index];
-                  final product = doc.data() as Map<String, dynamic>;
+                  final product = products[index];
                   return _tableDataRow(
                     serial: index + 1,
                     product: product,
-                    productId: doc.id,
+                    productId: product['id']?.toString() ?? '',
                   );
                 },
               ),
@@ -1346,35 +1348,51 @@ class _ProductListPageState extends State<ProductListPage> {
   }
 
   Widget _buildProductsList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance.collection('products').snapshots(),
-      builder: (context, snapshot) {
-                if (_productActionInProgress || _exportingPdf) {
-                  return Center(
-                    child: CircularProgressIndicator(
-                      color: Colors.orange.withOpacity(0.8),
-                    ),
-                  );
-                }
-                if (snapshot.connectionState == ConnectionState.waiting) {
+    return ValueListenableBuilder(
+      valueListenable: productsBox.listenable(),
+      builder: (context, _, __) {
+        if (_productActionInProgress || _exportingPdf) {
           return Center(
             child: CircularProgressIndicator(
               color: Colors.orange.withOpacity(0.8),
             ),
           );
         }
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
+
+        final localProds = ProductRepository.instance.getAll();
+        if (localProds.isEmpty) {
+          return StreamBuilder<QuerySnapshot>(
+            stream: FirebaseFirestore.instance.collection('products').snapshots(),
+            builder: (context, snapshot) {
+              if (snapshot.connectionState == ConnectionState.waiting) {
+                return Center(
+                  child: CircularProgressIndicator(
+                    color: Colors.orange.withOpacity(0.8),
+                  ),
+                );
+              }
+              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+                return const Center(child: Text('لا توجد منتجات'));
+              }
+              final displayedProducts = snapshot.data!.docs.map((doc) {
+                final product = Map<String, dynamic>.from(doc.data() as Map);
+                product['id'] = doc.id;
+                ProductRepository.instance.upsertLocal(doc.id, product);
+                return product;
+              }).where((product) => _matchesSearch(product) && _matchesFilter(product)).toList();
+
+              if (displayedProducts.isEmpty) {
+                return const Center(child: Text('لا توجد منتجات مطابقة'));
+              }
+              return _buildBorderedProductsTable(displayedProducts);
+            },
+          );
         }
 
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text('لا توجد منتجات'));
-        }
-
-        final displayedProducts = snapshot.data!.docs.where((doc) {
-          final product = doc.data() as Map<String, dynamic>;
-          return _matchesSearch(product) && _matchesFilter(product);
-        }).toList();
+        final displayedProducts = localProds
+            .map((p) => p.toMap())
+            .where((p) => _matchesSearch(p) && _matchesFilter(p))
+            .toList();
 
         if (displayedProducts.isEmpty) {
           return const Center(child: Text('لا توجد منتجات مطابقة'));
@@ -1384,6 +1402,7 @@ class _ProductListPageState extends State<ProductListPage> {
       },
     );
   }
+
 
   Widget _buildDamagedList() {
     return StreamBuilder<QuerySnapshot>(

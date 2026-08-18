@@ -17,23 +17,28 @@ class ProductLocalAdapter extends TypeAdapter<ProductLocal> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return ProductLocal(
-      id: fields[0] as String,
-      name: fields[1] as String,
-      sellingPrice1: fields[2] as double,
-      sellingPrice2: fields[3] as double,
-      sellingPrice3: fields[4] as double,
-      quantity: fields[5] as double,
-      description: fields[6] as String,
-      costPrice: fields[7] as double,
-      barcode: fields[8] as String,
-      updatedAt: fields[9] as DateTime,
+      id: fields[0]?.toString() ?? '',
+      name: fields[1]?.toString() ?? '',
+      sellingPrice1: (fields[2] as num?)?.toDouble() ?? 0.0,
+      sellingPrice2: (fields[3] as num?)?.toDouble() ?? 0.0,
+      sellingPrice3: (fields[4] as num?)?.toDouble() ?? 0.0,
+      quantity: (fields[5] as num?)?.toDouble() ?? 0.0,
+      description: fields[6]?.toString() ?? '',
+      costPrice: (fields[7] as num?)?.toDouble() ?? 0.0,
+      barcode: fields[8]?.toString() ?? '',
+      updatedAt: fields[9] is DateTime ? fields[9] as DateTime : DateTime.now(),
+      alertAmount: (fields[10] as num?)?.toDouble() ?? 0.0,
+      department: fields[11]?.toString() ?? '',
+      randomNumber: (fields[12] as num?)?.toInt() ?? 0,
+      onDemand: fields[13] == true,
+      retail: fields[14] == true,
     );
   }
 
   @override
   void write(BinaryWriter writer, ProductLocal obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(15)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -53,7 +58,17 @@ class ProductLocalAdapter extends TypeAdapter<ProductLocal> {
       ..writeByte(8)
       ..write(obj.barcode)
       ..writeByte(9)
-      ..write(obj.updatedAt);
+      ..write(obj.updatedAt)
+      ..writeByte(10)
+      ..write(obj.alertAmount)
+      ..writeByte(11)
+      ..write(obj.department)
+      ..writeByte(12)
+      ..write(obj.randomNumber)
+      ..writeByte(13)
+      ..write(obj.onDemand)
+      ..writeByte(14)
+      ..write(obj.retail);
   }
 
   @override

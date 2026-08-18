@@ -1,6 +1,16 @@
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
+import 'DecreaseProductComponents/product_model.dart';
+import 'DecreaseProductComponents/decrease_product_widgets.dart';
+import 'DecreaseProductComponents/invoice_product_sheet.dart';
+import 'DecreaseProductComponents/invoice_checkout_sheet.dart';
+import 'DecreaseProductComponents/client_selection_dialog.dart';
+import 'DecreaseProductComponents/calculator_dialog.dart';
+import 'DecreaseProductComponents/bloc/invoice_cubit.dart';
+import 'DecreaseProductComponents/bloc/invoice_state.dart';
+import 'package:flutter_bloc/flutter_bloc.dart';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'Invoices/All_invoices.dart';
@@ -23,6 +33,10 @@ import '../sync/connectivity_service.dart';
 import '../sync/sync_queue_manager.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/product_repository.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/box_repository.dart';
+import '../repositories/balance_history_repository.dart';
+import '../local_db/models/balance_history_local.dart';
 import '../local_db/hive_init.dart';
 
 class DecreaseProductPage extends StatefulWidget {
@@ -831,32 +845,17 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   }
 
   Future<void> _fetchProducts() async {
-    try {
-      if (!ConnectivityService.instance.isOnline) {
-        // Offline: load from local Hive cache
-        _loadProductsFromLocalCache();
-        return;
-      }
-      QuerySnapshot querySnapshot =
-          await FirebaseFirestore.instance.collection('products').get();
-      if (!mounted) return;
-      setState(() {
-        _products
-          ..clear()
-          ..addAll(querySnapshot.docs.map((doc) {
-            final data = Map<String, dynamic>.from(doc.data() as Map);
-            data['id'] = doc.id;
-            return Product.fromMap(data);
-          }));
-        _isFetching = false;
-      });
-      print('the number of the products ' + _products.length.toString());
-    } catch (e) {
-      print('Error fetching products: $e');
-      // Fallback to local cache on network error
-      _loadProductsFromLocalCache();
+    // 1. Immediately load from Hive primary database (0ms wait)
+    _loadProductsFromLocalCache();
+
+    // 2. Background delta-sync if online (never blocks UI or shows spinner)
+    if (ConnectivityService.instance.isOnline) {
+      ProductRepository.instance.deltaSync().then((_) {
+        if (mounted) _loadProductsFromLocalCache();
+      }).catchError((_) {});
     }
   }
+
 
   /// Loads products from Hive local cache (used when offline or on error).
   void _loadProductsFromLocalCache() {
@@ -931,81 +930,30 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   }
 
   Future<void> _fetchClients() async {
-    try {
-      if (!ConnectivityService.instance.isOnline) {
-        // Offline: load from local Hive cache
-        _loadClientsFromLocalCache();
-        return;
-      }
-      final querySnapshot =
-          await FirebaseFirestore.instance.collection('clients').get();
-      final names = <String>[];
-      for (final doc in querySnapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>?;
-        if (data == null) continue;
-        final name = (data['clientName'] ?? data['name'])?.toString();
-        if (name != null && name.trim().isNotEmpty) {
-          names.add(name.trim());
-        }
-        await ClientRepository.instance.upsertLocal(doc.id, data);
-      }
-      if (mounted) {
-        setState(() {
-          _clients = names;
-        });
-      }
-    } catch (e) {
-      print('Error fetching clients: $e');
-      // Fallback to local cache on network error
-      _loadClientsFromLocalCache();
+    // 1. Immediately load from Hive primary database (0ms wait)
+    _loadClientsFromLocalCache();
+
+    // 2. Background delta-sync if online
+    if (ConnectivityService.instance.isOnline) {
+      ClientRepository.instance.deltaSync().then((_) {
+        if (mounted) _loadClientsFromLocalCache();
+      }).catchError((_) {});
     }
   }
 
-  /// Loads client names from Hive local cache (used when offline or on error).
-  Future<void> _loadClientsFromLocalCache() async {
+
+  /// Loads client names from Hive local cache.
+  void _loadClientsFromLocalCache() {
     if (!mounted) return;
     final locals = ClientRepository.instance.getAll();
     final names = locals
         .map((c) => c.name.trim())
         .where((n) => n.isNotEmpty)
         .toList();
-
-    if (names.isNotEmpty) {
-      if (mounted) {
-        setState(() {
-          _clients = names;
-        });
-      }
-      return;
-    }
-
-    // Fallback: If Hive has empty names or no clients stored, read from Firestore offline SDK cache
-    try {
-      final cacheSnap = await FirebaseFirestore.instance
-          .collection('clients')
-          .get(const GetOptions(source: Source.cache));
-
-      final fallbackNames = <String>[];
-      for (final doc in cacheSnap.docs) {
-        final data = doc.data();
-        final name = (data['clientName'] ?? data['name'])?.toString();
-        if (name != null && name.trim().isNotEmpty) {
-          fallbackNames.add(name.trim());
-        }
-        await ClientRepository.instance.upsertLocal(doc.id, data);
-      }
-
-      if (mounted && fallbackNames.isNotEmpty) {
-        setState(() {
-          _clients = fallbackNames;
-        });
-      }
-    } catch (_) {
-      if (mounted && locals.isNotEmpty) {
-        setState(() {
-          _clients = locals.map((c) => c.id).toList();
-        });
-      }
+    if (mounted) {
+      setState(() {
+        _clients = names;
+      });
     }
   }
 
@@ -1082,29 +1030,27 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     try {
       String? resolvedClientId;
       if (effectiveClient.isNotEmpty) {
-        if (ConnectivityService.instance.isOnline) {
-          final clientQuery = await FirebaseFirestore.instance
-              .collection('clients')
-              .where('clientName', isEqualTo: effectiveClient)
-              .limit(1)
-              .get();
-          if (clientQuery.docs.isNotEmpty) {
-            resolvedClientId = clientQuery.docs.first.id;
-          } else {
-            final newRef = FirebaseFirestore.instance.collection('clients').doc();
-            resolvedClientId = newRef.id;
-            await newRef.set({
-              'clientName': effectiveClient,
-              'balance': 0.0,
-              'id': resolvedClientId,
-            });
-          }
+        // ALWAYS use Hive local cache to resolve client ID instantly
+        final localClient = ClientRepository.instance.findByName(effectiveClient);
+        if (localClient != null) {
+          resolvedClientId = localClient.id;
         } else {
-          // Offline: resolve client ID from local Hive cache
-          final localClient = ClientRepository.instance.findByName(effectiveClient);
-          resolvedClientId = localClient?.id;
-          // If the client doesn't exist locally, generate a temporary ID
-          resolvedClientId ??= FirebaseFirestore.instance.collection('clients').doc().id;
+          // New client: Generate ID and save locally first
+          resolvedClientId = FirebaseFirestore.instance.collection('clients').doc().id;
+          final clientData = {
+            'clientName': effectiveClient,
+            'balance': 0.0,
+            'id': resolvedClientId,
+          };
+          
+          await ClientRepository.instance.upsertLocal(resolvedClientId, clientData);
+          
+          // Background sync to Firestore without blocking the UI
+          FirebaseFirestore.instance
+              .collection('clients')
+              .doc(resolvedClientId)
+              .set(clientData, SetOptions(merge: true))
+              .catchError((_) {});
         }
       }
 
@@ -1140,76 +1086,52 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'products': List<Map<String, dynamic>>.from(_addedProducts),
         };
 
-        if (ConnectivityService.instance.isOnline) {
-          final quoteRef =
-              FirebaseFirestore.instance.collection('price_quotes').doc(docId);
-          quoteData['date'] = _selectedDate; // Firestore can handle DateTime
-          quoteData['createdAt'] =
-              _originalInvoice?['createdAt'] ?? FieldValue.serverTimestamp();
-          await quoteRef.set(quoteData, SetOptions(merge: true));
-        } else {
-          // Offline: quotes don't modify stock/balance, just enqueue the doc write
-          await SyncQueueManager.instance.enqueue(
-            operationType: 'createQuote',
-            payload: {
-              'quoteId': docId,
-              'quoteData': quoteData,
+        // Always enqueue for reliable sync (works both online and offline)
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'createQuote',
+          payload: {
+            'quoteId': docId,
+            'quoteData': {
+              ...quoteData,
+              'date': _selectedDate?.toIso8601String(),
+              'createdAt': _originalInvoice?['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
             },
-          );
-        }
+          },
+        );
+        // Background sync to Firestore without blocking the UI
+        ConnectivityService.instance.forceSync();
 
         _lastInvoice = Map<String, dynamic>.from(quoteData);
       } else if (_isEditing &&
           _originalInvoice != null &&
           _editingRootInvoiceId != null) {
         final totalSumBeforeDiscount = _calculateTotalSum();
-        if (ConnectivityService.instance.isOnline) {
-          await SalesInvoiceUpdateService.updateSalesInvoice(
-            rootInvoiceId: _editingRootInvoiceId!,
-            clientSubInvoiceDocId: _editingClientSubDocId,
-            originalInvoice: _originalInvoice!,
-            newProducts: List<Map<String, dynamic>>.from(_addedProducts),
-            clientName: effectiveClient,
-            selectedDate: _selectedDate,
-            paidAmount: effectivePaid,
-            paymentMethod: paymentMethod,
-            notes: notes,
-            invoiceDiscount: invoiceDiscount,
-            discountIsPercent: discountIsPercent,
-            totalSumBeforeDiscount: totalSumBeforeDiscount,
-            sourceCollection: _editingSourceCollection,
-          );
-        } else {
-          // Offline: enqueue edit for later sync
-          await SyncQueueManager.instance.enqueue(
-            operationType: 'editInvoice',
-            payload: {
-              'clientId': resolvedClientId ?? '',
-              'invoiceId': _editingRootInvoiceId!,
-              'updateData': {
-                'clientName': effectiveClient,
-                'date': _selectedDate?.toIso8601String(),
-                'paidAmount': effectivePaid,
-                'paymentMethod': paymentMethod,
-                'notes': notes,
-                'invoiceDiscount': discountIsPercent
-                    ? totalSumBeforeDiscount * invoiceDiscount / 100
-                    : invoiceDiscount,
-                'products': List<Map<String, dynamic>>.from(_addedProducts),
-                'totalSum': totalSumBeforeDiscount -
-                    (discountIsPercent
-                        ? totalSumBeforeDiscount * invoiceDiscount / 100
-                        : invoiceDiscount),
-              },
-            },
-          );
-        }
+        // Run in background — updateSalesInvoice writes Hive first then enqueues.
+        // UI is unblocked immediately regardless of connectivity.
+        SalesInvoiceUpdateService.updateSalesInvoice(
+          rootInvoiceId: _editingRootInvoiceId!,
+          clientSubInvoiceDocId: _editingClientSubDocId,
+          originalInvoice: _originalInvoice!,
+          newProducts: List<Map<String, dynamic>>.from(_addedProducts),
+          clientName: effectiveClient,
+          selectedDate: _selectedDate,
+          paidAmount: effectivePaid,
+          paymentMethod: paymentMethod,
+          notes: notes,
+          invoiceDiscount: invoiceDiscount,
+          discountIsPercent: discountIsPercent,
+          totalSumBeforeDiscount: totalSumBeforeDiscount,
+          sourceCollection: _editingSourceCollection,
+        ).catchError((_) {});
 
         final effectiveDiscountAmt = discountIsPercent
             ? totalSumBeforeDiscount * invoiceDiscount / 100
             : invoiceDiscount;
         final totalSumFinal = totalSumBeforeDiscount - effectiveDiscountAmt;
-        final totalCost = await _calculateTotalCost();
+        final totalCost = InvoiceStockService.computeCostTotal(
+          List<Map<String, dynamic>>.from(_addedProducts),
+          _productCatalog,
+        );
         final balance = totalSumFinal - effectivePaid;
 
         _lastInvoice = {
@@ -1227,63 +1149,20 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'products': List<Map<String, dynamic>>.from(_addedProducts),
         };
       } else if (widget.isReturnInvoice) {
-        if (ConnectivityService.instance.isOnline) {
-          _lastInvoice = await ReturnInvoiceSaveService.save(
-            clientName: effectiveClient,
-            selectedDate: _selectedDate,
-            products: List<Map<String, dynamic>>.from(_addedProducts),
-            paidAmount: effectivePaid,
-            paymentMethod: paymentMethod,
-            notes: notes,
-            invoiceDiscount: invoiceDiscount,
-            discountIsPercent: discountIsPercent,
-            previousBalanceSnapshot: _clientBalance,
-            totalSumBeforeDiscount: _calculateTotalSum(),
-            calculateTotalCost: (_) => _calculateTotalCost(),
-            productCatalog: _productCatalog,
-          );
-        } else {
-          // Offline: enqueue return invoice for later sync
-          final totalSum = _calculateTotalSum();
-          final effectiveDiscountAmt = discountIsPercent
-              ? totalSum * invoiceDiscount / 100
-              : invoiceDiscount;
-          final totalSumFinal = totalSum - effectiveDiscountAmt;
-          final balance = totalSumFinal - effectivePaid;
-          final docId = FirebaseFirestore.instance.collection('returnInvoices').doc().id;
-          final nextNum = (appMetaBox.get('lastReturnInvoiceNumber', defaultValue: 1000) as int) + 1;
-          await appMetaBox.put('lastReturnInvoiceNumber', nextNum);
-
-          final invoiceData = <String, dynamic>{
-            'id': docId,
-            'invoiceNumber': nextNum,
-            'clientName': effectiveClient,
-            'clientId': resolvedClientId ?? '',
-            'date': _selectedDate?.toIso8601String(),
-            'totalSum': totalSumFinal,
-            'paidAmount': effectivePaid,
-            'balance': balance,
-            'previousBalance': _clientBalance,
-            'paymentMethod': paymentMethod,
-            'notes': notes,
-            'invoiceDiscount': effectiveDiscountAmt,
-            'invoiceType': 'return',
-            'isSpecial': false,
-            'products': List<Map<String, dynamic>>.from(_addedProducts),
-          };
-          await SyncQueueManager.instance.enqueue(
-            operationType: 'createReturn',
-            payload: {
-              'clientId': resolvedClientId ?? docId,
-              'invoiceId': docId,
-              'invoiceData': invoiceData,
-              'products': List<Map<String, dynamic>>.from(_addedProducts),
-              'totalSum': totalSumFinal,
-              'paidAmount': effectivePaid,
-            },
-          );
-          _lastInvoice = Map<String, dynamic>.from(invoiceData);
-        }
+        _lastInvoice = await ReturnInvoiceSaveService.save(
+          clientName: effectiveClient,
+          selectedDate: _selectedDate,
+          products: List<Map<String, dynamic>>.from(_addedProducts),
+          paidAmount: effectivePaid,
+          paymentMethod: paymentMethod,
+          notes: notes,
+          invoiceDiscount: invoiceDiscount,
+          discountIsPercent: discountIsPercent,
+          previousBalanceSnapshot: _clientBalance,
+          totalSumBeforeDiscount: _calculateTotalSum(),
+          calculateTotalCost: (_) => _calculateTotalCost(),
+          productCatalog: _productCatalog,
+        );
       } else {
         final totalSum = _calculateTotalSum();
         final effectiveDiscountAmt = discountIsPercent
@@ -1294,18 +1173,12 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         final catalogSeed = _productCatalog;
         final lines = List<Map<String, dynamic>>.from(_addedProducts);
 
-        final prep = await Future.wait<dynamic>([
-          _fetchNextInvoiceNumber(),
-          InvoiceStockService.resolveCatalogIfNeeded(
-            lines: lines,
-            seed: catalogSeed,
-          ),
-          _fetchClientBalance(effectiveClient),
-        ]);
-
-        final newInvoiceNumber = prep[0] as int;
-        final catalog = prep[1] as Map<String, ResolvedInvoiceProduct>;
-        final existingBalance = prep[2] as double;
+        final newInvoiceNumber = await _fetchNextInvoiceNumber();
+        final catalog = await InvoiceStockService.resolveCatalogIfNeeded(
+          lines: lines,
+          seed: catalogSeed,
+        );
+        final existingBalance = _getClientBalanceSync(effectiveClient);
 
         final totalCost = InvoiceStockService.computeCostTotal(lines, catalog);
         final profitMargin = totalSumFinal - totalCost;
@@ -1335,58 +1208,79 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
         _lastInvoice = Map<String, dynamic>.from(invoiceData);
 
-        final clientDocRef = FirebaseFirestore.instance
-            .collection('clients')
-            .doc(resolvedClientId);
-        final boxDocRef =
-            FirebaseFirestore.instance.collection('box').doc('mainBox');
+        // 1. Write to local Hive primary database immediately (<10ms)
+        await InvoiceRepository.instance.upsertSaleLocal(docRef.id, invoiceData);
 
-        final isOnline = ConnectivityService.instance.isOnline;
-        if (isOnline) {
-          await Future.wait([
-            docRef.set(invoiceData),
-            InvoiceStockService.applyStockChanges(
-              lines: lines,
-              restore: false,
-              changeDate: _selectedDate,
-              catalog: catalog,
-            ),
-            _commitClientAndBoxWrites(
-              clientDocRef: clientDocRef,
-              boxDocRef: boxDocRef,
-              effectiveClient: effectiveClient,
-              updatedBalance: updatedBalance,
+        // 2. Update stock locally
+        await InvoiceStockService.applyStockChanges(
+          lines: lines,
+          restore: false,
+          changeDate: _selectedDate,
+          catalog: catalog,
+        );
+
+        // 2. Save sales invoice locally in Hive so it appears instantly offline
+        // (already saved above)
+
+        // 3. Update client balance & balance history locally in Hive
+        if (resolvedClientId != null && resolvedClientId.isNotEmpty) {
+          await ClientRepository.instance.updateLocalBalance(resolvedClientId, updatedBalance);
+          
+          // Entry 1: Sales invoice total (debt increase)
+          await BalanceHistoryRepository.instance.upsertLocal(
+            BalanceHistoryLocal(
+              id: '${docRef.id}_sale',
+              parentId: resolvedClientId,
+              parentType: 'client',
+              enteredBalance: totalSumFinal,
+              balanceBefore: existingBalance,
+              type: 'sale',
               invoiceId: docRef.id,
-              newInvoiceNumber: newInvoiceNumber,
-              totalSumFinal: totalSumFinal,
-              effectivePaid: effectivePaid,
-              balance: balance,
-              paymentMethod: paymentMethod,
-              notes: notes,
-              products: lines,
-              existingBalance: existingBalance,
-              invoiceDiscount: effectiveDiscountAmt,
+              invoiceNumber: newInvoiceNumber.toString(),
+              timestamp: _selectedDate ?? DateTime.now(),
             ),
-          ]);
-        } else {
-          // Offline queue: Enqueue operation so BatchSyncEngine syncs it automatically when online
-          await SyncQueueManager.instance.enqueue(
-            operationType: 'createInvoice',
-            payload: {
-              'clientId': resolvedClientId ?? docRef.id,
-              'invoiceId': docRef.id,
-              'invoiceData': invoiceData,
-              'products': lines,
-              'totalSum': totalSumFinal,
-              'paidAmount': effectivePaid,
-            },
           );
+
+          // Entry 2: Payment received (debt decrease) if > 0
+          if (effectivePaid > 0) {
+            await BalanceHistoryRepository.instance.upsertLocal(
+              BalanceHistoryLocal(
+                id: '${docRef.id}_pay',
+                parentId: resolvedClientId,
+                parentType: 'client',
+                enteredBalance: effectivePaid,
+                balanceBefore: existingBalance + totalSumFinal,
+                type: 'sale_payment',
+                invoiceId: docRef.id,
+                invoiceNumber: newInvoiceNumber.toString(),
+                timestamp: _selectedDate ?? DateTime.now(),
+              ),
+            );
+          }
         }
+
+        // 4. Update cash box locally
+        if (effectivePaid > 0) {
+          await BoxRepository.instance.increment(effectivePaid);
+        }
+
+        // 5. Enqueue background sync to Firebase
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'createInvoice',
+          payload: {
+            'clientId': resolvedClientId ?? docRef.id,
+            'invoiceId': docRef.id,
+            'invoiceData': invoiceData,
+            'products': lines,
+            'totalSum': totalSumFinal,
+            'paidAmount': effectivePaid,
+          },
+        );
+
+        // Trigger background sync without awaiting
+        ConnectivityService.instance.forceSync();
       }
 
-      if (resolvedClientId != null && resolvedClientId.isNotEmpty && ConnectivityService.instance.isOnline) {
-        await ClientInvoiceBalanceSyncService.syncForClient(resolvedClientId);
-      }
 
       if (!mounted) return;
       setState(() {
@@ -1577,64 +1471,29 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final name = clientName.trim();
     if (name.isEmpty) return false;
     if (_clientNameInList(name)) return true;
-    if (!ConnectivityService.instance.isOnline) {
-      final local = ClientRepository.instance.findByName(name);
-      return local != null;
-    }
-    final query = await FirebaseFirestore.instance
-        .collection('clients')
-        .where('clientName', isEqualTo: name)
-        .limit(1)
-        .get();
-    return query.docs.isNotEmpty;
+    
+    // ALWAYS deal with Hive directly for instant offline/online check
+    final local = ClientRepository.instance.findByName(name);
+    return local != null;
   }
 
-  Future<double> _fetchClientBalance(String clientName) async {
+  /// Reads client balance synchronously from Hive local cache — instant, zero network.
+  double _getClientBalanceSync(String clientName) {
     final name = clientName.trim();
     if (name.isEmpty) return 0.0;
-    if (!ConnectivityService.instance.isOnline) {
-      final local = ClientRepository.instance.findByName(name);
-      return local?.balance ?? 0.0;
-    }
-    final query = await FirebaseFirestore.instance
-        .collection('clients')
-        .where('clientName', isEqualTo: name)
-        .limit(1)
-        .get();
-    if (query.docs.isNotEmpty) {
-      return invoiceNum(query.docs.first.data()['balance']);
-    }
-    return 0.0;
+    return ClientRepository.instance.findByName(name)?.balance ?? 0.0;
+  }
+
+  /// Async wrapper kept for compatibility with checkout sheet interface.
+  Future<double> _fetchClientBalance(String clientName) async {
+    return _getClientBalanceSync(clientName);
   }
 
   Future<int> _fetchNextInvoiceNumber() async {
-    if (!ConnectivityService.instance.isOnline) {
-      final lastNum =
-          (appMetaBox.get('lastInvoiceNumber', defaultValue: 1000) as int);
-      final nextNum = lastNum + 1;
-      await appMetaBox.put('lastInvoiceNumber', nextNum);
-      return nextNum;
-    }
-    try {
-      final invoiceQuery = await FirebaseFirestore.instance
-          .collection(_mainCollection)
-          .orderBy('invoiceNumber', descending: true)
-          .limit(1)
-          .get()
-          .timeout(const Duration(seconds: 4));
-      if (invoiceQuery.docs.isEmpty) return 1;
-      final numVal =
-          (invoiceQuery.docs.first['invoiceNumber'] as num).toInt() + 1;
-      await appMetaBox.put('lastInvoiceNumber', numVal);
-      return numVal;
-    } catch (_) {
-      final lastNum =
-          (appMetaBox.get('lastInvoiceNumber', defaultValue: 1000) as int);
-      final nextNum = lastNum + 1;
-      await appMetaBox.put('lastInvoiceNumber', nextNum);
-      return nextNum;
-    }
+    final type = widget.isReturnInvoice ? 'return' : 'sale';
+    return LocalInvoiceCounter.nextNumber(type);
   }
+
 
   Future<void> _commitClientAndBoxWrites({
     required DocumentReference<Map<String, dynamic>> clientDocRef,
@@ -1673,7 +1532,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       'products': products,
     });
     // Entry 1: Invoice total (debt increase)
-    batch.set(clientDocRef.collection('balanceHistory').doc(), {
+    batch.set(clientDocRef.collection('balanceHistory').doc('${invoiceId}_sale'), {
       'enteredBalance': totalSumFinal,
       'balanceBefore': existingBalance,
       'timestamp': FieldValue.serverTimestamp(),
@@ -1683,7 +1542,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     });
     // Entry 2: Payment received (debt decrease) — only if > 0
     if (effectivePaid > 0) {
-      batch.set(clientDocRef.collection('balanceHistory').doc(), {
+      batch.set(clientDocRef.collection('balanceHistory').doc('${invoiceId}_pay'), {
         'enteredBalance': effectivePaid,
         'balanceBefore': existingBalance + totalSumFinal,
         'timestamp': FieldValue.serverTimestamp(),
@@ -2669,579 +2528,47 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   // ─────────────────────────────────────────────
   // Checkout sheet  (حاسب)
   // ─────────────────────────────────────────────
-  void _showCheckoutSheet() {
+  void _showCheckoutSheet() async {
     if (_addedProducts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('يرجى إضافة منتجات إلى الفاتورة')));
       return;
     }
 
-    String paymentMethod = _isEditing ? _editingPaymentMethod : 'نقداً';
-    double invoiceDiscount = _isEditing ? _editingInvoiceDiscountAmount : 0.0;
-    bool discountIsPercent = !_isEditing;
-    String checkoutClient = _clientNameController.text;
-    String notes = _isEditing ? _editingNotes : '';
-    double? checkoutClientBalance = checkoutClient.trim().isNotEmpty &&
-            checkoutClient.trim() == _clientNameController.text.trim()
-        ? _clientBalance
-        : null;
-    bool loadingCheckoutClientBalance = false;
-    bool checkoutClientNotFound = false;
-
-    final TextEditingController paidCtrl = TextEditingController(
-      text: _isEditing
-          ? invoiceNum(_originalInvoice?['paidAmount']).toStringAsFixed(2)
-          : '0.0',
-    );
-    final TextEditingController discountCtrl = TextEditingController(
-      text: _isEditing && _editingInvoiceDiscountAmount > 0
-          ? _editingInvoiceDiscountAmount.toStringAsFixed(2)
-          : '',
-    );
-    final TextEditingController notesCtrl = TextEditingController(text: notes);
-    String lastManualPaid = _isEditing
-        ? invoiceNum(_originalInvoice?['paidAmount']).toStringAsFixed(2)
-        : '0.0';
-
-    showModalBottomSheet(
+    final result = await showInvoiceCheckoutSheet(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20.r))),
-      builder: (ctx) {
-        return StatefulBuilder(builder: (ctx, setSheet) {
-          Future<void> loadCheckoutClientBalance(String clientName) async {
-            if (clientName.trim().isEmpty) {
-              setSheet(() {
-                checkoutClientBalance = null;
-                loadingCheckoutClientBalance = false;
-                checkoutClientNotFound = false;
-              });
-              return;
-            }
-            setSheet(() {
-              loadingCheckoutClientBalance = true;
-              checkoutClientBalance = null;
-              checkoutClientNotFound = false;
-            });
-            final name = clientName.trim();
-            final exists = await _clientExists(name);
-            final bal = exists ? await _fetchClientBalance(name) : 0.0;
-            setSheet(() {
-              checkoutClientNotFound = !exists;
-              checkoutClientBalance = exists ? bal : null;
-              loadingCheckoutClientBalance = false;
-            });
-          }
-
-          if (checkoutClient.trim().isNotEmpty &&
-              checkoutClientBalance == null &&
-              !loadingCheckoutClientBalance) {
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              loadCheckoutClientBalance(checkoutClient);
-            });
-          }
-
-          double totalSum = _calculateTotalSum();
-          double effectiveDiscountAmt = discountIsPercent
-              ? totalSum * invoiceDiscount / 100
-              : invoiceDiscount;
-          double totalAfterDiscount = totalSum - effectiveDiscountAmt;
-          double paid = double.tryParse(paidCtrl.text) ?? 0.0;
-          double remaining = paid - totalAfterDiscount;
-          final bool isCash = paymentMethod == 'نقداً';
-          final bool paidLessThanTotal =
-              isCash && paid + 0.001 < totalAfterDiscount;
-
-          void syncPaidForPaymentMethod() {
-            if (paymentMethod == 'نقداً') {
-              paidCtrl.text = '0';
-            } else {
-              paidCtrl.text = lastManualPaid;
-            }
-          }
-
-          return Directionality(
-            textDirection: TextDirection.rtl,
-            child: Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom,
-                left: 16.w,
-                right: 16.w,
-                top: 16.h,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    // ── طريقة الدفع ──
-                    Row(
-                      children: [
-                        Text('طريقة الدفع',
-                            style: TextStyle(
-                                fontSize: 13.sp, fontWeight: FontWeight.bold)),
-                        const Spacer(),
-                        ...['نقداً', 'آجل', 'بطاقه', 'ش'].map((m) => Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Radio<String>(
-                                  value: m,
-                                  groupValue: paymentMethod,
-                                  activeColor: Colors.green,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  onChanged: (v) => setSheet(() {
-                                    paymentMethod = v!;
-                                    syncPaidForPaymentMethod();
-                                  }),
-                                ),
-                                Text(m, style: TextStyle(fontSize: 11.sp)),
-                              ],
-                            )),
-                      ],
-                    ),
-                    SizedBox(height: 10.h),
-
-                    // ── الإجمالي ──
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('الإجمالي',
-                            style: TextStyle(
-                                fontSize: 13.sp, fontWeight: FontWeight.bold)),
-                        Expanded(
-                          child: Container(
-                            margin: EdgeInsets.only(right: 12.w),
-                            padding: EdgeInsets.symmetric(
-                                vertical: 10.h, horizontal: 12.w),
-                            decoration: BoxDecoration(
-                              border: Border.all(color: Colors.grey.shade300),
-                              borderRadius: BorderRadius.circular(8.r),
-                            ),
-                            child: Text(
-                              totalAfterDiscount.toStringAsFixed(2),
-                              textAlign: TextAlign.center,
-                              style: TextStyle(
-                                  fontSize: 18.sp,
-                                  fontWeight: FontWeight.bold,
-                                  color: Colors.red),
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 8.h),
-
-                    // ── المدفوع ──
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        Text('المدفوع',
-                            style: TextStyle(
-                                fontSize: 13.sp, fontWeight: FontWeight.bold)),
-                        Expanded(
-                          child: Row(children: [
-                            SizedBox(width: 12.w),
-                            Expanded(
-                              child: TextField(
-                                controller: paidCtrl,
-                                textAlign: TextAlign.center,
-                                keyboardType:
-                                    const TextInputType.numberWithOptions(
-                                        decimal: true),
-                                style: TextStyle(fontSize: 16.sp),
-                                decoration: InputDecoration(
-                                  border: OutlineInputBorder(
-                                      borderRadius: BorderRadius.circular(8.r)),
-                                  contentPadding: EdgeInsets.symmetric(
-                                      vertical: 10.h, horizontal: 8.w),
-                                  suffixIcon: isCash && paid == 0
-                                      ? Icon(Icons.warning_amber_rounded,
-                                          color: Colors.red, size: 20.sp)
-                                      : null,
-                                ),
-                                onTap: () => _selectAllField(paidCtrl),
-                                onChanged: (v) {
-                                  lastManualPaid = v;
-                                  setSheet(() {});
-                                },
-                              ),
-                            ),
-                          ]),
-                        ),
-                      ],
-                    ),
-                    if (paidLessThanTotal)
-                      Padding(
-                        padding: EdgeInsets.only(top: 6.h),
-                        child: Text(
-                          'المبلغ المدفوع أصغر من الإجمالي',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 12.sp,
-                            color: Colors.red.shade700,
-                            fontWeight: FontWeight.w600,
-                          ),
-                        ),
-                      ),
-                    SizedBox(height: 8.h),
-
-                    // ── الخصم + الباقي ──
-                    Row(children: [
-                      // Remaining
-                      Expanded(
-                        child: Container(
-                          padding: EdgeInsets.symmetric(
-                              vertical: 10.h, horizontal: 10.w),
-                          decoration: BoxDecoration(
-                            color: remaining >= 0
-                                ? Colors.green.shade50
-                                : Colors.red.shade50,
-                            border: Border.all(
-                                color: remaining >= 0
-                                    ? Colors.green.shade300
-                                    : Colors.red.shade300),
-                            borderRadius: BorderRadius.circular(8.r),
-                          ),
-                          child: Text(
-                            remaining.toStringAsFixed(1),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 16.sp,
-                                fontWeight: FontWeight.bold,
-                                color: remaining >= 0
-                                    ? Colors.green.shade700
-                                    : Colors.red.shade700),
-                          ),
-                        ),
-                      ),
-                      SizedBox(width: 6.w),
-                      Text('الباقي', style: TextStyle(fontSize: 12.sp)),
-                      SizedBox(width: 6.w),
-                      // % toggle
-                      GestureDetector(
-                        onTap: () => setSheet(() {
-                          discountIsPercent = !discountIsPercent;
-                        }),
-                        child: Container(
-                          padding: EdgeInsets.symmetric(
-                              horizontal: 10.w, vertical: 9.h),
-                          decoration: BoxDecoration(
-                            color: discountIsPercent
-                                ? Colors.orange.shade100
-                                : Colors.grey.shade200,
-                            borderRadius: BorderRadius.circular(8.r),
-                          ),
-                          child: Text('%',
-                              style: TextStyle(
-                                  fontSize: 14.sp,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                      SizedBox(width: 6.w),
-                      SizedBox(
-                        width: 80.w,
-                        child: TextField(
-                          controller: discountCtrl,
-                          textAlign: TextAlign.center,
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          decoration: InputDecoration(
-                            hintText: '0',
-                            border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8.r)),
-                            contentPadding: EdgeInsets.symmetric(
-                                vertical: 8.h, horizontal: 6.w),
-                          ),
-                          onTap: () => _selectAllField(discountCtrl),
-                          onChanged: (v) => setSheet(() {
-                            invoiceDiscount = double.tryParse(v) ?? 0.0;
-                          }),
-                        ),
-                      ),
-                      SizedBox(width: 8.w),
-                      Text('الخصم',
-                          style: TextStyle(
-                              fontSize: 13.sp, fontWeight: FontWeight.bold)),
-                    ]),
-                    SizedBox(height: 14.h),
-
-                    // ── حفظ الفاتورة لحساب عميل ──
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Text('حفظ الفاتورة لحساب عميل',
-                          style: TextStyle(
-                              fontSize: 13.sp, fontWeight: FontWeight.bold)),
-                    ),
-                    SizedBox(height: 8.h),
-                    Row(children: [
-                      Icon(Icons.barcode_reader,
-                          size: 38.sp, color: Colors.black87),
-                      SizedBox(width: 8.w),
-                      Expanded(
-                        child: Autocomplete<String>(
-                          initialValue: TextEditingValue(text: checkoutClient),
-                          optionsBuilder: (val) {
-                            if (val.text.isEmpty)
-                              return const Iterable<String>.empty();
-                            return _clients.where((c) => c
-                                .toLowerCase()
-                                .contains(val.text.toLowerCase()));
-                          },
-                          fieldViewBuilder: (ctx2, ctrl2, focus, onSubmit) {
-                            return TextField(
-                              controller: ctrl2,
-                              focusNode: focus,
-                              textAlign: TextAlign.right,
-                              onTap: () => _selectAllField(ctrl2),
-                              onChanged: (v) {
-                                checkoutClient = v;
-                                setSheet(() {
-                                  checkoutClientBalance = null;
-                                  loadingCheckoutClientBalance = false;
-                                  checkoutClientNotFound = false;
-                                });
-                                if (v.trim().isNotEmpty) {
-                                  loadCheckoutClientBalance(v);
-                                }
-                              },
-                              decoration: InputDecoration(
-                                hintText: 'ابحث عن عميل أو اكتب اسم',
-                                hintStyle: TextStyle(fontSize: 12.sp),
-                                border: OutlineInputBorder(
-                                    borderRadius: BorderRadius.circular(8.r)),
-                                contentPadding: EdgeInsets.symmetric(
-                                    vertical: 10.h, horizontal: 12.w),
-                                suffixIcon: checkoutClient.isEmpty
-                                    ? Icon(Icons.warning_amber_rounded,
-                                        color: Colors.red, size: 20.sp)
-                                    : null,
-                              ),
-                            );
-                          },
-                          onSelected: (c) {
-                            checkoutClient = c;
-                            setSheet(() => checkoutClientNotFound = false);
-                            loadCheckoutClientBalance(c);
-                            _fetchAndSetClientBalance(c);
-                          },
-                        ),
-                      ),
-                    ]),
-                    if (checkoutClientNotFound) ...[
-                      SizedBox(height: 8.h),
-                      Container(
-                        width: double.infinity,
-                        padding: EdgeInsets.symmetric(
-                            horizontal: 12.w, vertical: 10.h),
-                        decoration: BoxDecoration(
-                          color: Colors.red.shade50,
-                          borderRadius: BorderRadius.circular(10.r),
-                          border: Border.all(color: Colors.red.shade300),
-                        ),
-                        child: Text(
-                          'هذا العميل غير موجود',
-                          textAlign: TextAlign.center,
-                          style: TextStyle(
-                            fontSize: 14.sp,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.red.shade700,
-                          ),
-                        ),
-                      ),
-                    ],
-                    if (checkoutClient.trim().isNotEmpty &&
-                        !checkoutClientNotFound) ...[
-                      SizedBox(height: 10.h),
-                      Builder(
-                        builder: (_) {
-                          final balanceBefore = checkoutClientBalance ?? 0.0;
-                          final invoiceUnpaid = totalAfterDiscount - paid;
-                          final balanceAfter = widget.isReturnInvoice
-                              ? balanceBefore - invoiceUnpaid
-                              : balanceBefore + invoiceUnpaid;
-                          final afterLabel = widget.isReturnInvoice
-                              ? 'الرصيد بعد المرتجع (المتبقي عليكم)'
-                              : 'الرصيد بعد الفاتورة (المتبقي عليكم)';
-                          TextStyle balanceStyle(double amount) => TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.bold,
-                                color: amount > 0
-                                    ? Colors.red.shade700
-                                    : Colors.black87,
-                              );
-                          return Container(
-                            width: double.infinity,
-                            padding: EdgeInsets.symmetric(
-                                horizontal: 12.w, vertical: 10.h),
-                            decoration: BoxDecoration(
-                              color: Colors.orange.withOpacity(0.12),
-                              borderRadius: BorderRadius.circular(10.r),
-                              border: Border.all(
-                                  color: Colors.orange.withOpacity(0.4)),
-                            ),
-                            child: loadingCheckoutClientBalance
-                                ? Row(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      SizedBox(
-                                        width: 18.w,
-                                        height: 18.w,
-                                        child: const CircularProgressIndicator(
-                                          strokeWidth: 2,
-                                        ),
-                                      ),
-                                      SizedBox(width: 8.w),
-                                      Text(
-                                        'جاري تحميل الرصيد...',
-                                        style: TextStyle(fontSize: 13.sp),
-                                      ),
-                                    ],
-                                  )
-                                : Column(
-                                    crossAxisAlignment:
-                                        CrossAxisAlignment.stretch,
-                                    children: [
-                                      Text(
-                                        'الرصيد قبل الفاتورة: ${invoiceAmount(balanceBefore)} ج.م',
-                                        textAlign: TextAlign.center,
-                                        style: balanceStyle(balanceBefore),
-                                      ),
-                                      SizedBox(height: 6.h),
-                                      Text(
-                                        '$afterLabel: ${invoiceAmount(balanceAfter)} ج.م',
-                                        textAlign: TextAlign.center,
-                                        style: balanceStyle(balanceAfter)
-                                            .copyWith(fontSize: 14.sp),
-                                      ),
-                                    ],
-                                  ),
-                          );
-                        },
-                      ),
-                    ],
-                    SizedBox(height: 10.h),
-
-                    // ── ملاحظات ──
-                    TextField(
-                      controller: notesCtrl,
-                      textAlign: TextAlign.right,
-                      onTap: () => _selectAllField(notesCtrl),
-                      onChanged: (v) => notes = v,
-                      maxLines: 2,
-                      decoration: InputDecoration(
-                        hintText: 'بيانات إضافية للفاتورة',
-                        hintStyle:
-                            TextStyle(fontSize: 12.sp, color: Colors.grey),
-                        border: OutlineInputBorder(
-                            borderRadius: BorderRadius.circular(8.r)),
-                        contentPadding: EdgeInsets.symmetric(
-                            vertical: 10.h, horizontal: 12.w),
-                      ),
-                    ),
-                    SizedBox(height: 14.h),
-
-                    // ── Buttons ──
-                    Row(children: [
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: Text('تراجع',
-                              style: TextStyle(
-                                  color: Colors.orange,
-                                  fontSize: 15.sp,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                      SizedBox(width: 8.w),
-                      Expanded(
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange.withOpacity(0.85),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8.r)),
-                            padding: EdgeInsets.symmetric(vertical: 12.h),
-                          ),
-                          onPressed: _isSaving
-                              ? null
-                              : () async {
-                                  if (checkoutClient.trim().isEmpty) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                            content:
-                                                Text('يجب ادخال اسم العميل')));
-                                    return;
-                                  }
-                                  if (!await _clientExists(
-                                      checkoutClient.trim())) {
-                                    setSheet(
-                                        () => checkoutClientNotFound = true);
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text('هذا العميل غير موجود'),
-                                      ),
-                                    );
-                                    return;
-                                  }
-                                  final paidAmount =
-                                      double.tryParse(paidCtrl.text) ?? 0.0;
-                                  if (paymentMethod == 'نقداً' &&
-                                      paidAmount + 0.001 < totalAfterDiscount) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                            'المبلغ المدفوع أصغر من الإجمالي'),
-                                      ),
-                                    );
-                                    return;
-                                  }
-                                  Navigator.pop(ctx);
-                                  final bal = await _fetchClientBalance(
-                                    checkoutClient.trim(),
-                                  );
-                                  if (!mounted) return;
-                                  setState(() {
-                                    _clientBalance = bal;
-                                  });
-                                  _clientNameController.text =
-                                      checkoutClient.trim();
-                                  _saveData(
-                                    clientName: checkoutClient.trim(),
-                                    paidAmount: paidAmount,
-                                    paymentMethod: paymentMethod,
-                                    notes: notes,
-                                    invoiceDiscount: invoiceDiscount,
-                                    discountIsPercent: discountIsPercent,
-                                  );
-                                },
-                          child: _isSaving
-                              ? SizedBox(
-                                  width: 20.w,
-                                  height: 20.w,
-                                  child: const CircularProgressIndicator(
-                                    strokeWidth: 2,
-                                    color: Colors.white,
-                                  ),
-                                )
-                              : Text(
-                                  widget.isQuote ? 'حفظ عرض السعر' : 'متابعة',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15.sp,
-                                      fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                    ]),
-                    SizedBox(height: 20.h),
-                  ],
-                ),
-              ),
-            ),
-          );
-        });
-      },
+      isEditing: _isEditing,
+      paymentMethod: _isEditing ? _editingPaymentMethod : 'نقداً',
+      invoiceDiscount: _isEditing ? _editingInvoiceDiscountAmount : 0.0,
+      clientName: _clientNameController.text,
+      clientBalance: _clientBalance,
+      notes: _isEditing ? _editingNotes : '',
+      originalPaidAmount: _isEditing ? invoiceNum(_originalInvoice?['paidAmount']) : 0.0,
+      totalSum: _calculateTotalSum(),
+      clients: _clients,
+      isReturnInvoice: widget.isReturnInvoice,
+      isQuote: widget.isQuote,
+      isSaving: _isSaving,
+      clientExists: _clientExists,
+      fetchClientBalance: _fetchClientBalance,
     );
+
+    if (result != null && mounted) {
+      // Sync read from Hive — instant, no await needed
+      final bal = _getClientBalanceSync(result.clientName);
+      setState(() {
+        _clientBalance = bal;
+        _clientNameController.text = result.clientName;
+      });
+      _saveData(
+        clientName: result.clientName,
+        paidAmount: result.paidAmount,
+        paymentMethod: result.paymentMethod,
+        notes: result.notes,
+        invoiceDiscount: result.invoiceDiscount,
+        discountIsPercent: result.discountIsPercent,
+      );
+    }
   }
 
   // ─────────────────────────────────────────────
@@ -3249,175 +2576,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   // ─────────────────────────────────────────────
 
   void _showCalculatorDialog() {
-    String _expr = '';
-    String _display = '0';
-
-    showDialog(
-      context: context,
-      builder: (ctx) {
-        return StatefulBuilder(builder: (ctx, setCalc) {
-          void _press(String val) {
-            setCalc(() {
-              if (val == 'C') {
-                _expr = '';
-                _display = '0';
-              } else if (val == '=') {
-                try {
-                  // Simple evaluator via Dart double arithmetic
-                  final result = _evalExpr(_expr);
-                  _display = result
-                      .toStringAsFixed(2)
-                      .replaceAll(RegExp(r'\.?0+$'), '');
-                  _expr = _display;
-                } catch (_) {
-                  _display = 'خطأ';
-                  _expr = '';
-                }
-              } else if (val == '⌫') {
-                if (_expr.isNotEmpty) {
-                  _expr = _expr.substring(0, _expr.length - 1);
-                  _display = _expr.isEmpty ? '0' : _expr;
-                }
-              } else {
-                _expr += val;
-                _display = _expr;
-              }
-            });
-          }
-
-          Widget _btn(String label,
-              {Color bg = const Color(0xfff0f0f0), Color fg = Colors.black87}) {
-            return Expanded(
-              child: GestureDetector(
-                onTap: () => _press(label),
-                child: Container(
-                  margin: EdgeInsets.all(3.w),
-                  padding: EdgeInsets.symmetric(vertical: 14.h),
-                  decoration: BoxDecoration(
-                    color: bg,
-                    borderRadius: BorderRadius.circular(8.r),
-                  ),
-                  child: Center(
-                    child: Text(label,
-                        style: TextStyle(
-                            fontSize: 18.sp,
-                            fontWeight: FontWeight.bold,
-                            color: fg)),
-                  ),
-                ),
-              ),
-            );
-          }
-
-          return Directionality(
-            textDirection: TextDirection.ltr,
-            child: AlertDialog(
-              title: Text('الحاسبة',
-                  textAlign: TextAlign.right,
-                  style:
-                      TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold)),
-              contentPadding:
-                  EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
-              content: SizedBox(
-                width: 280.w,
-                child: Column(mainAxisSize: MainAxisSize.min, children: [
-                  Container(
-                    width: double.infinity,
-                    padding:
-                        EdgeInsets.symmetric(horizontal: 12.w, vertical: 16.h),
-                    decoration: BoxDecoration(
-                      color: Colors.grey.shade100,
-                      borderRadius: BorderRadius.circular(8.r),
-                      border: Border.all(color: Colors.grey.shade300),
-                    ),
-                    child: Text(_display,
-                        textAlign: TextAlign.right,
-                        style: TextStyle(
-                            fontSize: 26.sp, fontWeight: FontWeight.bold)),
-                  ),
-                  SizedBox(height: 10.h),
-                  Row(children: [
-                    _btn('7'),
-                    _btn('8'),
-                    _btn('9'),
-                    _btn('÷',
-                        bg: Colors.orange.shade100, fg: Colors.orange.shade800),
-                  ]),
-                  Row(children: [
-                    _btn('4'),
-                    _btn('5'),
-                    _btn('6'),
-                    _btn('×',
-                        bg: Colors.orange.shade100, fg: Colors.orange.shade800),
-                  ]),
-                  Row(children: [
-                    _btn('1'),
-                    _btn('2'),
-                    _btn('3'),
-                    _btn('-',
-                        bg: Colors.orange.shade100, fg: Colors.orange.shade800),
-                  ]),
-                  Row(children: [
-                    _btn('0'),
-                    _btn('.'),
-                    _btn('⌫', bg: Colors.red.shade50, fg: Colors.red),
-                    _btn('+',
-                        bg: Colors.orange.shade100, fg: Colors.orange.shade800),
-                  ]),
-                  Row(children: [
-                    _btn('C', bg: Colors.grey.shade300, fg: Colors.black87),
-                    _btn('=',
-                        bg: Colors.orange.withOpacity(0.85), fg: Colors.white),
-                  ]),
-                ]),
-              ),
-            ),
-          );
-        });
-      },
-    );
+    showCalculatorDialog(context);
   }
 
-  double _evalExpr(String expr) {
-    // Replace display symbols
-    expr = expr.replaceAll('×', '*').replaceAll('÷', '/');
-    // Split into tokens
-    final List<String> tokens = [];
-    String num = '';
-    for (int i = 0; i < expr.length; i++) {
-      final c = expr[i];
-      if ('+-*/'.contains(c)) {
-        if (num.isNotEmpty) {
-          tokens.add(num);
-          num = '';
-        }
-        tokens.add(c);
-      } else {
-        num += c;
-      }
-    }
-    if (num.isNotEmpty) tokens.add(num);
 
-    // Evaluate * and / first
-    List<String> t = List.from(tokens);
-    for (int i = 1; i < t.length - 1; i += 2) {
-      if (t[i] == '*' || t[i] == '/') {
-        double a = double.parse(t[i - 1]);
-        double b = double.parse(t[i + 1]);
-        double r = t[i] == '*' ? a * b : a / b;
-        t.replaceRange(i - 1, i + 2, [r.toString()]);
-        i -= 2;
-      }
-    }
-    // Then + and -
-    double result = double.parse(t[0]);
-    for (int i = 1; i < t.length - 1; i += 2) {
-      double b = double.parse(t[i + 1]);
-      if (t[i] == '+') result += b;
-      if (t[i] == '-') result -= b;
-    }
-    return result;
-  }
 
   void _queryClientBalanceDialog() {
     String? _selectedClient;
@@ -4420,144 +3582,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 // Helper widgets
 // ─────────────────────────────────────────────────────────────
 
-class _SheetValueBox extends StatelessWidget {
-  final String value;
-  final Color? valueColor;
-  const _SheetValueBox({required this.value, this.valueColor});
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: EdgeInsets.symmetric(vertical: 10.h, horizontal: 12.w),
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.grey.shade300),
-        borderRadius: BorderRadius.circular(8.r),
-      ),
-      child: Text(value,
-          textAlign: TextAlign.center,
-          style: TextStyle(
-              fontSize: 16.sp,
-              fontWeight: FontWeight.bold,
-              color: valueColor ?? Colors.black87)),
-    );
-  }
-}
-
-class _PriceTierBtn extends StatelessWidget {
-  final String label;
-  final bool selected;
-  final VoidCallback onTap;
-  const _PriceTierBtn(
-      {required this.label, required this.selected, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        width: 34.w,
-        height: 34.w,
-        decoration: BoxDecoration(
-          color:
-              selected ? Colors.orange.withOpacity(0.85) : Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(6.r),
-        ),
-        child: Center(
-          child: Text(label,
-              style: TextStyle(
-                  fontSize: 14.sp,
-                  fontWeight: FontWeight.bold,
-                  color: selected ? Colors.white : Colors.black87)),
-        ),
-      ),
-    );
-  }
-}
-
-class _CircleBtn extends StatelessWidget {
-  final IconData icon;
-  final VoidCallback onTap;
-  const _CircleBtn({required this.icon, required this.onTap});
-
-  @override
-  Widget build(BuildContext context) {
-    return GestureDetector(
-      onTap: onTap,
-      child: Container(
-        padding: EdgeInsets.all(6.w),
-        decoration: BoxDecoration(
-          color: Colors.grey.shade200,
-          borderRadius: BorderRadius.circular(6.r),
-        ),
-        child: Icon(icon, size: 18.sp),
-      ),
-    );
-  }
-}
-
-class Product {
-  String id;
-  int randomNumber;
-  String name;
-  String? description;
-  double sellingPrice1;
-  double sellingPrice2;
-  double sellingPrice3;
-  double costPrice;
-  double quantity;
-  int alertAmount;
-  bool retail;
-  String? image;
-
-  Product({
-    required this.id,
-    required this.randomNumber,
-    required this.name,
-    this.description,
-    required this.sellingPrice1,
-    required this.sellingPrice2,
-    required this.sellingPrice3,
-    required this.costPrice,
-    required this.quantity,
-    required this.alertAmount,
-    this.retail = false,
-    this.image,
-  });
-
-  Map<String, dynamic> toMap() {
-    return {
-      'id': id,
-      'randomNumber': randomNumber,
-      'name': name,
-      'description': description,
-      'sellingPrice1': sellingPrice1,
-      'sellingPrice2': sellingPrice2,
-      'sellingPrice3': sellingPrice3,
-      'costPrice': costPrice,
-      'quantity': quantity,
-      'alertAmount': alertAmount,
-      'retail': retail,
-      'image': image,
-    };
-  }
-
-  factory Product.fromMap(Map<String, dynamic> map) {
-    return Product(
-      id: map['id'] ?? '',
-      randomNumber: (map['randomNumber'] ?? 0).toInt(),
-      name: map['name'] ?? '',
-      description: map['description'],
-      sellingPrice1: (map['sellingPrice1'] ?? 0.0).toDouble(),
-      sellingPrice2: (map['sellingPrice2'] ?? 0.0).toDouble(),
-      sellingPrice3: (map['sellingPrice3'] ?? 0.0).toDouble(),
-      costPrice: (map['costPrice'] ?? 0.0).toDouble(),
-      quantity: (map['quantity'] as num?)?.toDouble() ?? 0.0,
-      alertAmount: (map['alertAmount'] ?? 0).toInt(),
-      retail: map['retail'] == true,
-      image: map['image'],
-    );
-  }
-}
 
 class _DrawerItem {
   final IconData icon;
@@ -4572,4 +3597,91 @@ class _DrawerItem {
     this.isActive = false,
     this.isDestructive = false,
   });
+}
+
+class _PriceTierBtn extends StatelessWidget {
+  final String label;
+  final bool selected;
+  final VoidCallback onTap;
+  const _PriceTierBtn({
+    Key? key,
+    required this.label,
+    required this.selected,
+    required this.onTap,
+  }) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 32.w,
+        height: 32.w,
+        decoration: BoxDecoration(
+          color:
+              selected ? Colors.orange.withOpacity(0.85) : Colors.grey.shade200,
+          borderRadius: BorderRadius.circular(6.r),
+        ),
+        child: Center(
+          child: Text(
+            label,
+            style: TextStyle(
+              fontSize: 13.sp,
+              fontWeight: FontWeight.bold,
+              color: selected ? Colors.white : Colors.black87,
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _CircleBtn extends StatelessWidget {
+  final IconData icon;
+  final VoidCallback onTap;
+  const _CircleBtn({Key? key, required this.icon, required this.onTap})
+      : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return GestureDetector(
+      onTap: onTap,
+      child: Container(
+        width: 36.w,
+        height: 36.w,
+        decoration: BoxDecoration(
+          color: Colors.orange.withOpacity(0.85),
+          shape: BoxShape.circle,
+        ),
+        child: Icon(icon, color: Colors.white, size: 18.sp),
+      ),
+    );
+  }
+}
+
+class _SheetValueBox extends StatelessWidget {
+  final String value;
+  const _SheetValueBox({Key? key, required this.value}) : super(key: key);
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 12.h),
+      alignment: Alignment.center,
+      decoration: BoxDecoration(
+        color: Colors.grey.shade100,
+        borderRadius: BorderRadius.circular(8.r),
+        border: Border.all(color: Colors.grey.shade300),
+      ),
+      child: Text(
+        value,
+        style: TextStyle(
+          fontSize: 15.sp,
+          fontWeight: FontWeight.bold,
+          color: Colors.black87,
+        ),
+      ),
+    );
+  }
 }

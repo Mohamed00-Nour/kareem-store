@@ -3,6 +3,7 @@ import 'package:flutter/material.dart';
 import 'package:url_launcher/url_launcher.dart';
 
 import '../Widgets/egypt_phone_field.dart';
+import '../repositories/client_repository.dart';
 import 'invoice_number_utils.dart';
 import 'invoice_print_service.dart';
 import 'sales_invoice_image_service.dart';
@@ -55,21 +56,32 @@ class WhatsappInvoiceShareService {
     final name = clientName.trim();
     if (name.isEmpty) return null;
 
-    final firestore = FirebaseFirestore.instance;
-
-    final byDocId = await firestore.collection('clients').doc(name).get();
-    if (byDocId.exists) {
-      final phone = _readPhone(byDocId.data());
-      if (phone != null) return phone;
+    // 1. Try local Hive first (instant, 0ms)
+    final localClient = ClientRepository.instance.findByName(name);
+    if (localClient != null && localClient.phone.isNotEmpty) {
+      return localClient.phone;
     }
 
-    final query = await firestore
-        .collection('clients')
-        .where('clientName', isEqualTo: name)
-        .limit(1)
-        .get();
-    if (query.docs.isNotEmpty) {
-      return _readPhone(query.docs.first.data());
+    // 2. Fallback to Firestore
+    try {
+      final firestore = FirebaseFirestore.instance;
+
+      final byDocId = await firestore.collection('clients').doc(name).get();
+      if (byDocId.exists) {
+        final phone = _readPhone(byDocId.data());
+        if (phone != null) return phone;
+      }
+
+      final query = await firestore
+          .collection('clients')
+          .where('clientName', isEqualTo: name)
+          .limit(1)
+          .get();
+      if (query.docs.isNotEmpty) {
+        return _readPhone(query.docs.first.data());
+      }
+    } catch (_) {
+      // Offline — no phone available
     }
 
     return null;

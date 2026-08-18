@@ -17,12 +17,12 @@ class SupplierLocalAdapter extends TypeAdapter<SupplierLocal> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return SupplierLocal(
-      id: fields[0] as String,
-      name: fields[1] as String,
-      balance: fields[2] as double,
-      phone: fields[3] as String,
-      address: fields[4] as String,
-      updatedAt: fields[5] as DateTime,
+      id: fields[0]?.toString() ?? '',
+      name: fields[1]?.toString() ?? '',
+      balance: (fields[2] as num?)?.toDouble() ?? 0.0,
+      phone: fields[3]?.toString() ?? '',
+      address: fields[4]?.toString() ?? '',
+      updatedAt: fields[5] is DateTime ? fields[5] as DateTime : DateTime.now(),
     );
   }
 

@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../repositories/product_repository.dart';
 
 class InventoryValueByDepartmentPage extends StatefulWidget {
   @override
@@ -11,21 +12,16 @@ class _InventoryValueByDepartmentPageState extends State<InventoryValueByDepartm
   final Map<String, bool> _selectedDepartments = {};
   double _totalValue = 0.0;
 
-  Future<void> _calculateTotalValue() async {
+  void _calculateTotalValue() {
+
     double totalValue = 0.0;
+    final allProducts = ProductRepository.instance.getAll();
 
     for (var department in _selectedDepartments.entries) {
       if (department.value) {
-        final querySnapshot = await FirebaseFirestore.instance
-            .collection('products')
-            .where('department', isEqualTo: department.key)
-            .get();
-
-        for (var doc in querySnapshot.docs) {
-          final product = doc.data() as Map<String, dynamic>;
-          final quantity = product['quantity'] ?? 0;
-          final sellingPrice1 = product['sellingPrice1'] ?? 0.0;
-          totalValue += quantity * sellingPrice1;
+        final deptProducts = allProducts.where((p) => p.department == department.key);
+        for (var product in deptProducts) {
+          totalValue += product.quantity * product.sellingPrice1;
         }
       }
     }
@@ -34,6 +30,7 @@ class _InventoryValueByDepartmentPageState extends State<InventoryValueByDepartm
       _totalValue = totalValue;
     });
   }
+
 
   @override
   Widget build(BuildContext context) {

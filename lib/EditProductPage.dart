@@ -144,32 +144,31 @@ class _EditProductPageState extends State<EditProductPage> {
         'retail': _retail,
       };
 
-      if (ConnectivityService.instance.isOnline) {
-        await FirebaseFirestore.instance
-            .collection('products')
-            .doc(widget.productId)
-            .update(updateData);
-      } else {
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'editProduct',
-          payload: {
-            'productId': widget.productId,
-            'data': updateData,
-          },
-        );
-      }
-
-      // Update local Hive cache immediately
+      // 1. Update local Hive cache immediately (0ms)
       await ProductRepository.instance.upsertLocal(widget.productId, {
         ...widget.productData,
         ...updateData,
         'id': widget.productId,
       });
 
+      // 2. Enqueue background update to Firebase
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'editProduct',
+        payload: {
+          'productId': widget.productId,
+          'data': updateData,
+        },
+      );
+
+      // Trigger background sync
+      ConnectivityService.instance.forceSync();
+
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم حفظ البيانات بنجاح')),
       );
+      Navigator.of(context).pop();
+
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

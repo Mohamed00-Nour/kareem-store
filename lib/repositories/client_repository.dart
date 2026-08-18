@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/client_local.dart';
+import '../sync/sync_queue_manager.dart';
 
 /// Repository for Client data.
 ///
@@ -51,11 +53,32 @@ class ClientRepository {
   Future<void> fullSync() async {
     final snap = await _fs.collection('clients').get();
     final box = clientsBox;
-    await box.clear();
+
+    // Track local balances for clients that have pending queued updates
+    final pendingOps = SyncQueueManager.instance.getPending();
+    final pendingClientIds = <String>{};
+    for (final op in pendingOps) {
+      try {
+        final payload = jsonDecode(op.payloadJson) as Map<String, dynamic>;
+        final cId = payload['clientId']?.toString();
+        if (cId != null && cId.isNotEmpty) {
+          pendingClientIds.add(cId);
+        }
+      } catch (_) {}
+    }
+
     final Map<String, ClientLocal> entries = {};
     for (final doc in snap.docs) {
-      entries[doc.id] = ClientLocal.fromFirestore(doc.id, doc.data());
+      final serverClient = ClientLocal.fromFirestore(doc.id, doc.data());
+      if (pendingClientIds.contains(doc.id)) {
+        final localExisting = box.get(doc.id);
+        if (localExisting != null) {
+          serverClient.balance = localExisting.balance;
+        }
+      }
+      entries[doc.id] = serverClient;
     }
+    await box.clear();
     await box.putAll(entries);
     appMetaBox.put(
       HiveMetaKeys.lastClientSyncAt,

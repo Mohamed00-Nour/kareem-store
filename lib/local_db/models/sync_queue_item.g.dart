@@ -17,13 +17,13 @@ class SyncQueueItemAdapter extends TypeAdapter<SyncQueueItem> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return SyncQueueItem(
-      operationId: fields[0] as String,
-      operationType: fields[1] as String,
-      payloadJson: fields[2] as String,
-      createdAt: fields[3] as DateTime,
-      retryCount: fields[4] as int,
-      status: fields[5] as String,
-      lastError: fields[6] as String?,
+      operationId: fields[0]?.toString() ?? '',
+      operationType: fields[1]?.toString() ?? '',
+      payloadJson: fields[2]?.toString() ?? '{}',
+      createdAt: fields[3] is DateTime ? fields[3] as DateTime : DateTime.now(),
+      retryCount: (fields[4] as num?)?.toInt() ?? 0,
+      status: fields[5]?.toString() ?? 'pending',
+      lastError: fields[6]?.toString(),
     );
   }
 

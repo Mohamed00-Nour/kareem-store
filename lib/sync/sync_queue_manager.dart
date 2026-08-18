@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive/hive.dart';
 import 'package:uuid/uuid.dart';
 import '../local_db/hive_init.dart';
@@ -44,8 +45,12 @@ class SyncQueueManager {
     if (nonEncodable is DateTime) {
       return nonEncodable.toIso8601String();
     }
+    if (nonEncodable is Timestamp) {
+      return nonEncodable.toDate().toIso8601String();
+    }
     return nonEncodable.toString();
   }
+
 
   // ── Read ──────────────────────────────────────────────────────────────────
 

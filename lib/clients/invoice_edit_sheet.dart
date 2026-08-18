@@ -1,7 +1,7 @@
 part of client_invoices_page;
 
 class _InvoiceEditSheet extends StatefulWidget {
-  final DocumentSnapshot invoice;
+  final String invoiceId;
   final Map<String, dynamic> invoiceData;
   final List<Map<String, dynamic>> originalProducts;
   final List<_ProdInfo> allProds;
@@ -12,7 +12,7 @@ class _InvoiceEditSheet extends StatefulWidget {
   ) onSyncRoot;
 
   const _InvoiceEditSheet({
-    required this.invoice,
+    required this.invoiceId,
     required this.invoiceData,
     required this.originalProducts,
     required this.allProds,
@@ -172,14 +172,14 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
           .collection('clients')
           .doc(widget.clientId)
           .collection('invoices')
-          .doc(widget.invoice.id)
+          .doc(widget.invoiceId)
           .update({
         'products': updatedProducts,
         'totalSum': newTotalSum,
         'paidAmount': newPaid,
         'balance': newInvoiceBalance,
       });
-      await widget.onSyncRoot(widget.invoice.id, {
+      await widget.onSyncRoot(widget.invoiceId, {
         'products': updatedProducts,
         'totalSum': newTotalSum,
         'paidAmount': newPaid,

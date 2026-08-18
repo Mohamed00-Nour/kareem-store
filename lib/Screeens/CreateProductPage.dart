@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../sync/connectivity_service.dart';
 import '../sync/sync_queue_manager.dart';
 import '../repositories/product_repository.dart';
+import '../local_db/hive_init.dart';
 
 class CreateProductPage extends StatefulWidget {
   const CreateProductPage({super.key});
@@ -67,19 +68,8 @@ class _CreateProductPageState extends State<CreateProductPage> {
     setState(() => _isSaving = true);
     try {
       int nextRandom = 1;
-      if (ConnectivityService.instance.isOnline) {
-        try {
-          final snap = await FirebaseFirestore.instance
-              .collection('products')
-              .orderBy('randomNumber', descending: true)
-              .limit(1)
-              .get()
-              .timeout(const Duration(seconds: 4));
-          if (snap.docs.isNotEmpty) {
-            nextRandom = ((snap.docs.first['randomNumber'] ?? 0) as num).toInt() + 1;
-          }
-        } catch (_) {}
-      }
+      final maxRandom = productsBox.values.fold<int>(0, (max, p) => p.randomNumber > max ? p.randomNumber : max);
+      nextRandom = maxRandom + 1;
       if (_randomNumberController.text.isNotEmpty) {
         nextRandom = int.tryParse(_randomNumberController.text) ?? nextRandom;
       }
@@ -97,32 +87,30 @@ class _CreateProductPageState extends State<CreateProductPage> {
         'department': _selectedDepartment,
       };
 
-      String productId;
-      if (ConnectivityService.instance.isOnline) {
-        final ref = await FirebaseFirestore.instance.collection('products').add(data);
-        productId = ref.id;
-        data['id'] = productId;
-        await ref.update({'id': productId});
-      } else {
-        productId = FirebaseFirestore.instance.collection('products').doc().id;
-        data['id'] = productId;
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'createProduct',
-          payload: {
-            'productId': productId,
-            'data': data,
-          },
-        );
-      }
+      final productId = FirebaseFirestore.instance.collection('products').doc().id;
+      data['id'] = productId;
 
-      // Upsert into local Hive cache immediately
+      // 1. Upsert into local Hive cache immediately (0ms)
       await ProductRepository.instance.upsertLocal(productId, data);
+
+      // 2. Enqueue background creation to Firebase
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'createProduct',
+        payload: {
+          'productId': productId,
+          'data': data,
+        },
+      );
+
+      // Trigger background sync
+      ConnectivityService.instance.forceSync();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
             const SnackBar(content: Text('تم إضافة المنتج بنجاح')));
         Navigator.of(context).pop();
       }
+
     } catch (e) {
       ScaffoldMessenger.of(context)
           .showSnackBar(SnackBar(content: Text('خطأ: $e')));

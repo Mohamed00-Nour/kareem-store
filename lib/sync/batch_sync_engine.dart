@@ -203,7 +203,7 @@ class BatchSyncEngine {
           .collection('clients')
           .doc(clientId)
           .collection('balanceHistory')
-          .doc();
+          .doc('${invoiceId}_sale');
       batch.set(histRef1, {
         'enteredBalance': totalSum,
         'balanceBefore': (invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0,
@@ -218,7 +218,7 @@ class BatchSyncEngine {
             .collection('clients')
             .doc(clientId)
             .collection('balanceHistory')
-            .doc();
+            .doc('${invoiceId}_pay');
         batch.set(histRef2, {
           'enteredBalance': paidAmount,
           'balanceBefore': ((invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0) + totalSum,

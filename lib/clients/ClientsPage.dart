@@ -176,6 +176,8 @@ import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../sync/connectivity_service.dart';
 import '../repositories/client_repository.dart';
+import '../repositories/balance_history_repository.dart';
+import '../local_db/models/balance_history_local.dart';
 import '../sync/sync_queue_manager.dart';
 
 // ─── Main Menu Page ──────────────────────────────────────────────────────────
@@ -187,161 +189,199 @@ class ClientsPage extends StatelessWidget {
     final nameCtrl = TextEditingController();
     final balanceCtrl = TextEditingController();
     final phoneCtrl = TextEditingController();
+    bool isSaving = false;
+
     showDialog(
       context: context,
+      barrierDismissible: false,
       builder: (ctx) => Directionality(
         textDirection: ui.TextDirection.rtl,
-        child: AlertDialog(
-          title: const Text('إضافة عميل جديد'),
-          content: SingleChildScrollView(
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                TextField(
-                  controller: nameCtrl,
-                  decoration: const InputDecoration(labelText: 'اسم العميل'),
-                  textAlign: TextAlign.right,
-                ),
-                const SizedBox(height: 8),
-                TextField(
-                  controller: balanceCtrl,
-                  decoration:
-                      const InputDecoration(labelText: 'الرصيد الافتتاحي'),
-                  keyboardType:
-                      const TextInputType.numberWithOptions(decimal: true),
-                  textAlign: TextAlign.right,
-                ),
-                const SizedBox(height: 8),
-                EgyptPhoneField(
-                  controller: phoneCtrl,
-                  labelText: 'رقم الهاتف (واتساب) - اختياري',
-                ),
-              ],
+        child: StatefulBuilder(
+          builder: (dialogCtx, setDialogState) => AlertDialog(
+            title: const Text('إضافة عميل جديد'),
+            content: SingleChildScrollView(
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  TextField(
+                    controller: nameCtrl,
+                    enabled: !isSaving,
+                    decoration: const InputDecoration(labelText: 'اسم العميل'),
+                    textAlign: TextAlign.right,
+                  ),
+                  const SizedBox(height: 8),
+                  TextField(
+                    controller: balanceCtrl,
+                    enabled: !isSaving,
+                    decoration:
+                        const InputDecoration(labelText: 'الرصيد الافتتاحي'),
+                    keyboardType:
+                        const TextInputType.numberWithOptions(decimal: true),
+                    textAlign: TextAlign.right,
+                  ),
+                  const SizedBox(height: 8),
+                  EgyptPhoneField(
+                    controller: phoneCtrl,
+                    labelText: 'رقم الهاتف (واتساب) - اختياري',
+                  ),
+                  if (isSaving) ...[
+                    const SizedBox(height: 16),
+                    const Center(
+                      child: CircularProgressIndicator(),
+                    ),
+                  ],
+                ],
+              ),
             ),
+            actions: [
+              TextButton(
+                onPressed: isSaving ? null : () => Navigator.pop(ctx),
+                child: const Text('إلغاء'),
+              ),
+              ElevatedButton(
+                style: ElevatedButton.styleFrom(
+                    backgroundColor: Colors.black.withOpacity(0.7)),
+                onPressed: isSaving
+                    ? null
+                    : () async {
+                        final name = nameCtrl.text.trim();
+                        // Capture messenger before any await to avoid BuildContext-across-async-gap lint.
+                        final messenger = ScaffoldMessenger.of(ctx);
+                        if (name.isEmpty) {
+                          messenger.showSnackBar(
+                            const SnackBar(
+                                content: Text('يرجى إدخال اسم العميل')),
+                          );
+                          return;
+                        }
+
+                        // ── Duplicate-name check against local Hive ───────────────
+                        final existing =
+                            ClientRepository.instance.findByName(name);
+                        if (existing != null) {
+                          messenger.showSnackBar(
+                            const SnackBar(
+                                content: Text('يوجد عميل بهذا الاسم بالفعل')),
+                          );
+                          return;
+                        }
+
+                        // ── Phone validation ──────────────────────────────────────
+                        final phoneLocal = phoneCtrl.text.trim();
+                        if (phoneLocal.isNotEmpty &&
+                            !EgyptPhoneField.isValidLocalPart(
+                                phoneCtrl.text)) {
+                          messenger.showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                  'رقم الهاتف غير صحيح. اتركه فارغاً أو أدخل رقماً صالحاً'),
+                            ),
+                          );
+                          return;
+                        }
+
+                        setDialogState(() => isSaving = true);
+
+                        try {
+                          final balance =
+                              double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
+                          final docRef = FirebaseFirestore.instance
+                              .collection('clients')
+                              .doc();
+                          final clientId = docRef.id;
+
+                          final data = <String, dynamic>{
+                            'clientName': name,
+                            'balance': balance,
+                            'id': clientId,
+                          };
+                          if (phoneLocal.isNotEmpty) {
+                            data['phone'] = EgyptPhoneField.toWhatsappDigits(
+                                phoneCtrl.text);
+                          }
+
+                          // ── 1. Save to local Hive database immediately (0ms) ─────
+                          await ClientRepository.instance
+                              .upsertLocal(clientId, data);
+
+                          if (balance != 0) {
+                            await BalanceHistoryRepository.instance.upsertLocal(
+                              BalanceHistoryLocal(
+                                id: '${clientId}_opening',
+                                parentId: clientId,
+                                parentType: 'client',
+                                enteredBalance: balance,
+                                balanceBefore: 0.0,
+                                type: 'opening',
+                                timestamp: DateTime.now(),
+                              ),
+                            );
+                          }
+
+                          // ── 2. Close dialog immediately — Hive is our primary DB ─
+                          if (ctx.mounted) Navigator.pop(ctx);
+
+                          // ── 3. Sync to Firestore in background (non-blocking) ─────
+                          final bool isOnline =
+                              ConnectivityService.instance.isOnline;
+                          if (isOnline) {
+                            // Fire-and-forget: don't await, don't block
+                            Future(() async {
+                              try {
+                                await docRef.set(data, SetOptions(merge: true));
+                                if (balance != 0) {
+                                  await docRef
+                                      .collection('balanceHistory')
+                                      .doc('${clientId}_opening')
+                                      .set({
+                                    'enteredBalance': balance,
+                                    'balanceBefore': 0.0,
+                                    'type': 'opening',
+                                    'timestamp': FieldValue.serverTimestamp(),
+                                  });
+                                }
+                              } catch (_) {
+                                // If Firestore fails, enqueue for retry
+                                await SyncQueueManager.instance.enqueue(
+                                  operationType: 'createClient',
+                                  payload: {
+                                    'clientId': clientId,
+                                    'data': data,
+                                    'openingBalance': balance
+                                  },
+                                );
+                              }
+                            });
+                          } else {
+                            await SyncQueueManager.instance.enqueue(
+                              operationType: 'createClient',
+                              payload: {
+                                'clientId': clientId,
+                                'data': data,
+                                'openingBalance': balance
+                              },
+                            );
+                          }
+                        } catch (e) {
+                          setDialogState(() => isSaving = false);
+                          messenger.showSnackBar(
+                            SnackBar(content: Text('خطأ أثناء الحفظ: $e')),
+                          );
+                        }
+                      },
+                child: isSaving
+                    ? const SizedBox(
+                        width: 20,
+                        height: 20,
+                        child: CircularProgressIndicator(
+                          color: Colors.white,
+                          strokeWidth: 2,
+                        ),
+                      )
+                    : const Text('حفظ', style: TextStyle(color: Colors.white)),
+              ),
+            ],
           ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(ctx),
-              child: const Text('إلغاء'),
-            ),
-            ElevatedButton(
-              style: ElevatedButton.styleFrom(
-                  backgroundColor: Colors.black.withOpacity(0.7)),
-              onPressed: () async {
-                final name = nameCtrl.text.trim();
-                // Capture messenger before any await to avoid BuildContext-across-async-gap lint.
-                final messenger = ScaffoldMessenger.of(ctx);
-                if (name.isEmpty) {
-                  messenger.showSnackBar(
-                    const SnackBar(content: Text('يرجى إدخال اسم العميل')),
-                  );
-                  return;
-                }
-
-                final bool isOnline = ConnectivityService.instance.isOnline;
-
-                // ── Duplicate-name check ──────────────────────────────────
-                if (isOnline) {
-                  try {
-                    final query = await FirebaseFirestore.instance
-                        .collection('clients')
-                        .where('clientName', isEqualTo: name)
-                        .limit(1)
-                        .get()
-                        .timeout(const Duration(seconds: 5));
-                    if (query.docs.isNotEmpty) {
-                      messenger.showSnackBar(
-                        const SnackBar(
-                            content: Text('يوجد عميل بهذا الاسم بالفعل')),
-                      );
-                      return;
-                    }
-                  } catch (_) {
-                    // Network error during check — fall through and save.
-                  }
-                } else {
-                  // Offline: check against Hive local cache.
-                  final existing = ClientRepository.instance.findByName(name);
-                  if (existing != null) {
-                    messenger.showSnackBar(
-                      const SnackBar(
-                          content: Text('يوجد عميل بهذا الاسم بالفعل')),
-                    );
-                    return;
-                  }
-                }
-
-                // ── Phone validation ──────────────────────────────────────
-                final phoneLocal = phoneCtrl.text.trim();
-                if (phoneLocal.isNotEmpty &&
-                    !EgyptPhoneField.isValidLocalPart(phoneCtrl.text)) {
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                          'رقم الهاتف غير صحيح. اتركه فارغاً أو أدخل رقماً صالحاً'),
-                    ),
-                  );
-                  return;
-                }
-
-                final balance = double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
-                final docRef =
-                    FirebaseFirestore.instance.collection('clients').doc();
-                final clientId = docRef.id;
-
-                final data = <String, dynamic>{
-                  'clientName': name,
-                  'balance': balance,
-                  'id': clientId,
-                };
-                if (phoneLocal.isNotEmpty) {
-                  data['phone'] =
-                      EgyptPhoneField.toWhatsappDigits(phoneCtrl.text);
-                }
-
-                // ── Always persist to Hive immediately ───────────────────
-                await ClientRepository.instance.upsertLocal(clientId, data);
-
-                if (isOnline) {
-                  // ── Online: write directly to Firestore ──────────────
-                  try {
-                    await docRef.set(data, SetOptions(merge: true));
-                    if (balance != 0) {
-                      await docRef.collection('balanceHistory').add({
-                        'enteredBalance': balance,
-                        'balanceBefore': 0.0,
-                        'type': 'opening',
-                        'timestamp': FieldValue.serverTimestamp(),
-                      });
-                      await ClientInvoiceBalanceSyncService.syncForClient(clientId);
-                    }
-                  } catch (e) {
-                    // Online write failed — queue for later sync.
-                    await SyncQueueManager.instance.enqueue(
-                      operationType: 'createClient',
-                      payload: {'clientId': clientId, 'data': data, 'openingBalance': balance},
-                    );
-                  }
-                } else {
-                  // ── Offline: queue the creation for later sync ────────
-                  await SyncQueueManager.instance.enqueue(
-                    operationType: 'createClient',
-                    payload: {'clientId': clientId, 'data': data, 'openingBalance': balance},
-                  );
-                  messenger.showSnackBar(
-                    const SnackBar(
-                      content: Text(
-                          'تم حفظ العميل محلياً وسيتم مزامنته عند الاتصال بالإنترنت'),
-                      duration: Duration(seconds: 3),
-                    ),
-                  );
-                }
-
-                if (ctx.mounted) Navigator.pop(ctx);
-              },
-              child: const Text('حفظ', style: TextStyle(color: Colors.white)),
-            ),
-          ],
         ),
       ),
     );
@@ -609,9 +649,9 @@ class _ClientOpeningBalancesPageState
   }
 
   Future<void> _initializeHive() async {
-    final dir = await getApplicationDocumentsDirectory();
-    Hive.init(dir.path);
-    final box = await Hive.openBox<String>('deletedClients');
+    final box = Hive.isBoxOpen('deletedClients')
+        ? Hive.box<String>('deletedClients')
+        : await Hive.openBox<String>('deletedClients');
     if (mounted) {
       setState(() {
         _deletedClientsBox = box;
@@ -3414,21 +3454,55 @@ class _ClientListPage extends StatefulWidget {
 class _ClientListPageState extends State<_ClientListPage> {
   String _searchQuery = '';
   Box<String>? _deletedClientsBox;
+  List<Map<String, dynamic>> _clients = [];
+  bool _isSyncing = false;
 
   @override
   void initState() {
     super.initState();
     _initializeHive();
+    _loadFromHive();
+    _backgroundSync();
   }
 
   Future<void> _initializeHive() async {
-    final dir = await getApplicationDocumentsDirectory();
-    Hive.init(dir.path);
-    final box = await Hive.openBox<String>('deletedClients');
+    final box = Hive.isBoxOpen('deletedClients')
+        ? Hive.box<String>('deletedClients')
+        : await Hive.openBox<String>('deletedClients');
     if (mounted) {
       setState(() {
         _deletedClientsBox = box;
       });
+    }
+  }
+
+  /// Load clients instantly from Hive (0ms)
+  void _loadFromHive() {
+    final locals = ClientRepository.instance.getAll();
+    if (mounted) {
+      setState(() {
+        _clients = locals
+            .map((c) => <String, dynamic>{
+                  'id': c.id,
+                  'clientName': c.name,
+                  'balance': c.balance,
+                  'phone': c.phone,
+                })
+            .toList();
+      });
+    }
+  }
+
+  /// Background sync from Firestore → Hive, then refresh display
+  Future<void> _backgroundSync() async {
+    if (!ConnectivityService.instance.isOnline) return;
+    if (mounted) setState(() => _isSyncing = true);
+    try {
+      await ClientRepository.instance.deltaSync();
+      _loadFromHive(); // refresh from freshly synced Hive
+    } catch (_) {
+    } finally {
+      if (mounted) setState(() => _isSyncing = false);
     }
   }
 
@@ -3452,10 +3526,21 @@ class _ClientListPageState extends State<_ClientListPage> {
                     _deletedClientsBox!.containsKey(clientId)) {
                   await _deletedClientsBox!.delete(clientId);
                 }
+                // 1. Delete from local Hive immediately
+                await ClientRepository.instance.deleteLocal(clientId);
+                await BalanceHistoryRepository.instance
+                    .deleteForParent('client', clientId);
+                _loadFromHive();
+
+                // 2. Delete from Firestore
                 await FirebaseFirestore.instance
                     .collection('clients')
                     .doc(clientId)
-                    .delete();
+                    .delete()
+                    .catchError((e) {
+                  debugPrint('Firestore client delete error: $e');
+                });
+
                 if (mounted) {
                   ScaffoldMessenger.of(context).showSnackBar(
                     const SnackBar(content: Text('تم حذف العميل بنجاح')),
@@ -3569,27 +3654,33 @@ class _ClientListPageState extends State<_ClientListPage> {
     final oldDigits = previousPhone.replaceAll(RegExp(r'\D'), '');
     if (newDigits == oldDigits) return;
 
-    showDialog(
-      context: context,
-      barrierDismissible: false,
-      builder: (_) => Center(
-        child: CircularProgressIndicator(
-          color: Colors.orange.withOpacity(0.7),
-        ),
-      ),
-    );
+    // Update Hive immediately
+    final local = ClientRepository.instance.getById(clientId);
+    if (local != null) {
+      final data = <String, dynamic>{
+        'clientName': local.name,
+        'balance': local.balance,
+        'id': clientId,
+        'phone': newDigits.isEmpty ? null : newDigits,
+      };
+      await ClientRepository.instance.upsertLocal(clientId, data);
+      _loadFromHive();
+    }
 
-    try {
-      final clientRef =
-          FirebaseFirestore.instance.collection('clients').doc(clientId);
-      if (newDigits.isEmpty) {
-        await clientRef.update({'phone': FieldValue.delete()});
-      } else {
-        await clientRef.update({'phone': newDigits});
-      }
+    // Background sync to Firestore
+    if (newDigits.isEmpty) {
+      FirebaseFirestore.instance
+          .collection('clients')
+          .doc(clientId)
+          .update({'phone': FieldValue.delete()}).catchError((_) {});
+    } else {
+      FirebaseFirestore.instance
+          .collection('clients')
+          .doc(clientId)
+          .update({'phone': newDigits}).catchError((_) {});
+    }
 
-      if (!mounted) return;
-      Navigator.of(context).pop();
+    if (mounted) {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text(
@@ -3598,13 +3689,6 @@ class _ClientListPageState extends State<_ClientListPage> {
                 : 'تم تحديث رقم الهاتف بنجاح',
           ),
         ),
-      );
-      setState(() {});
-    } catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('فشل تحديث رقم الهاتف: $e')),
       );
     }
   }
@@ -3642,7 +3726,8 @@ class _ClientListPageState extends State<_ClientListPage> {
     );
   }
 
-  Future<void> _performClientRename(String oldClientId, String newName) async {
+  Future<void> _performClientRename(String clientId, String newName) async {
+    // Use PartyRenameService which already handles Hive + Firestore
     showDialog(
       context: context,
       barrierDismissible: false,
@@ -3652,62 +3737,74 @@ class _ClientListPageState extends State<_ClientListPage> {
         ),
       ),
     );
-
     try {
       await PartyRenameService.renameClient(
-        oldClientId: oldClientId,
+        oldClientId: clientId,
         newName: newName,
       );
-
-      if (_deletedClientsBox?.containsKey(oldClientId) ?? false) {
-        _deletedClientsBox!.put(newName, newName);
-        _deletedClientsBox!.delete(oldClientId);
+      _loadFromHive();
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم تغيير الاسم بنجاح')),
+        );
       }
-
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تم تغيير اسم العميل إلى "$newName"')),
-      );
-      setState(() {});
-    } on PartyRenameException catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(e.message)),
-      );
     } catch (e) {
-      if (!mounted) return;
-      Navigator.of(context).pop();
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('فشل تغيير الاسم: $e')),
-      );
+      if (mounted) {
+        Navigator.of(context).pop();
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ: $e')),
+        );
+      }
     }
   }
 
   @override
   Widget build(BuildContext context) {
+    final deletedIds = _deletedClientsBox?.keys.cast<String>().toSet() ?? {};
+    final visible = _clients.where((c) {
+      final id = c['id']?.toString() ?? '';
+      if (deletedIds.contains(id)) return false;
+      if (_searchQuery.isEmpty) return true;
+      final name = (c['clientName'] ?? '').toString().toLowerCase();
+      return name.contains(_searchQuery.toLowerCase());
+    }).toList();
+
     return Scaffold(
       appBar: AppBar(
         actions: [
+          if (_isSyncing)
+            const Padding(
+              padding: EdgeInsets.only(right: 12),
+              child: SizedBox(
+                width: 18,
+                height: 18,
+                child: CircularProgressIndicator(
+                    color: Colors.white, strokeWidth: 2),
+              ),
+            ),
+          IconButton(
+            icon: const Icon(Icons.refresh, color: Colors.white),
+            onPressed: _backgroundSync,
+            tooltip: 'تحديث',
+          ),
           IconButton(
             icon: const Icon(Icons.delete, color: Colors.white),
             onPressed: _deletedClientsBox == null
                 ? null
-                : () {
-                    Navigator.push(
+                : () => Navigator.push(
                       context,
                       MaterialPageRoute(
                         builder: (context) => DeletedClientsPage(
-                          deletedClients: _deletedClientsBox!.values.toSet(),
+                          deletedClients:
+                              _deletedClientsBox!.values.toSet(),
                           onRestoreClient: (clientId) {
                             _deletedClientsBox!.delete(clientId);
                             setState(() {});
                           },
                         ),
                       ),
-                    );
-                  },
+                    ),
           ),
         ],
         backgroundColor: Colors.black.withOpacity(0.7),
@@ -3751,93 +3848,54 @@ class _ClientListPageState extends State<_ClientListPage> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream:
-                  FirebaseFirestore.instance.collection('clients').snapshots(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData || _deletedClientsBox == null) {
-                  return Center(
-                    child: CircularProgressIndicator(
-                      color: Colors.black.withOpacity(0.7),
+            child: visible.isEmpty
+                ? const Center(
+                    child: Text('لا يوجد عملاء', style: TextStyle(fontSize: 16)),
+                  )
+                : GridView.builder(
+                    padding: const EdgeInsets.all(10),
+                    gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+                      crossAxisCount: AppResponsive.gridColumns(context),
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      childAspectRatio: 0.92,
                     ),
-                  );
-                }
+                    itemCount: visible.length,
+                    itemBuilder: (context, index) {
+                      final c = visible[index];
+                      final id = c['id']?.toString() ?? '';
+                      final name = (c['clientName'] ?? '').toString();
+                      final balance = (c['balance'] as num?)?.toDouble() ?? 0.0;
+                      final phone = (c['phone'] ?? '').toString();
 
-                final allClients = snapshot.data!.docs;
-                final filteredClients = _searchQuery.isEmpty
-                    ? allClients
-                    : allClients.where((client) {
-                        final clientData = client.data() as Map<String, dynamic>?;
-                        final clientName =
-                            clientData?['clientName']?.toString().toLowerCase() ??
-                                '';
-                        return clientName.contains(_searchQuery.toLowerCase());
-                      }).toList();
-                final visibleClients = filteredClients
-                    .where(
-                        (client) => !_deletedClientsBox!.containsKey(client.id))
-                    .toList();
-
-                if (visibleClients.isEmpty) {
-                  return const Center(child: Text('لا يوجد عملاء'));
-                }
-
-                return GridView.builder(
-                  padding: const EdgeInsets.all(10),
-                  gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
-                    crossAxisCount: AppResponsive.gridColumns(context),
-                    crossAxisSpacing: 10,
-                    mainAxisSpacing: 10,
-                    childAspectRatio: 0.92,
+                      return _PartyInfoCard(
+                        name: name,
+                        balance: balance,
+                        phone: phone,
+                        isClient: true,
+                        onTap: () async {
+                          await Navigator.push(
+                            context,
+                            MaterialPageRoute(
+                              builder: (context) =>
+                                  ClientInvoicesPage(clientId: id),
+                            ),
+                          );
+                          _loadFromHive();
+                        },
+                        onLongPress: () {
+                          _showClientOptionsSheet(id, name, phone);
+                        },
+                      );
+                    },
                   ),
-                  itemCount: visibleClients.length,
-                  itemBuilder: (context, index) {
-                    final client = visibleClients[index];
-                    final data = client.data() as Map<String, dynamic>;
-                    final name =
-                        (data['clientName'] ?? data['name'])?.toString() ??
-                            client.id;
-                    double balance =
-                        (data['balance'] ?? data['totalBalance'] as num?)
-                                ?.toDouble() ??
-                            0.0;
-                    if (balance == 0.0) {
-                      final local =
-                          ClientRepository.instance.getById(client.id);
-                      if (local != null && local.balance != 0.0) {
-                        balance = local.balance;
-                      }
-                    }
-                    final phone = (data['phone'] ?? data['clientPhone'])?.toString() ?? '';
-
-                    return _PartyInfoCard(
-                      name: name,
-                      balance: balance,
-                      phone: phone,
-                      isClient: true,
-                      onTap: () {
-                        Navigator.push(
-                          context,
-                          MaterialPageRoute(
-                            builder: (context) =>
-                                ClientInvoicesPage(clientId: client.id),
-                          ),
-                        );
-                      },
-                      onLongPress: () {
-                        _showClientOptionsSheet(client.id, name, phone);
-                      },
-                    );
-                  },
-                );
-              },
-            ),
           ),
         ],
       ),
     );
   }
 }
+
 
 class _ClientSelectionDialog extends StatefulWidget {
   final List<QueryDocumentSnapshot> clients;

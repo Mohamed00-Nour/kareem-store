@@ -4,12 +4,18 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart' as intl;
 
 import '../Services/invoice_number_utils.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/quote_execution_service.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
+import '../repositories/quote_repository.dart';
+import '../repositories/client_repository.dart';
+import '../local_db/hive_init.dart';
+import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
 import 'DecreaseProductPage.dart';
 
 class QuoteListPage extends StatelessWidget {
@@ -51,43 +57,65 @@ class QuoteListPage extends StatelessWidget {
           );
         },
       ),
-      body: StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-        stream: FirebaseFirestore.instance
-            .collection('price_quotes')
-            .orderBy('createdAt', descending: true)
-            .snapshots(),
-        builder: (context, snap) {
-          if (snap.connectionState == ConnectionState.waiting) {
-            return const Center(child: CircularProgressIndicator());
-          }
-          final docs = snap.data?.docs ?? [];
-          if (docs.isEmpty) {
-            return Center(
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Icon(Icons.description_outlined,
-                      size: 64.sp, color: Colors.black26),
-                  SizedBox(height: 16.h),
-                  Text(
-                    'لا توجد عروض أسعار',
-                    style: TextStyle(
-                        fontSize: 16.sp,
-                        color: Colors.black45,
-                        fontWeight: FontWeight.w600),
-                  ),
-                ],
-              ),
+      body: ValueListenableBuilder(
+        valueListenable: quotesBox.listenable(),
+        builder: (context, box, _) {
+          final localQuotes = QuoteRepository.instance.getAll();
+
+          if (localQuotes.isEmpty) {
+            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
+              stream: FirebaseFirestore.instance
+                  .collection('price_quotes')
+                  .orderBy('createdAt', descending: true)
+                  .snapshots(),
+              builder: (context, snap) {
+                if (snap.connectionState == ConnectionState.waiting) {
+                  return const Center(child: CircularProgressIndicator());
+                }
+                final docs = snap.data?.docs ?? [];
+                if (docs.isEmpty) {
+                  return Center(
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Icon(Icons.description_outlined,
+                            size: 64.sp, color: Colors.black26),
+                        SizedBox(height: 16.h),
+                        Text(
+                          'لا توجد عروض أسعار',
+                          style: TextStyle(
+                              fontSize: 16.sp,
+                              color: Colors.black45,
+                              fontWeight: FontWeight.w600),
+                        ),
+                      ],
+                    ),
+                  );
+                }
+                return ListView.builder(
+                  padding: EdgeInsets.fromLTRB(12.w, 12.h, 12.w, 90.h),
+                  itemCount: docs.length,
+                  itemBuilder: (context, i) {
+                    final doc = docs[i];
+                    QuoteRepository.instance.upsertLocal(doc.id, doc.data());
+                    return _QuoteCard(
+                      quoteId: doc.id,
+                      data: doc.data(),
+                    );
+                  },
+                );
+              },
             );
           }
+
           return ListView.builder(
             padding: EdgeInsets.fromLTRB(12.w, 12.h, 12.w, 90.h),
-            itemCount: docs.length,
+            itemCount: localQuotes.length,
             itemBuilder: (context, i) {
-              final doc = docs[i];
+              final quote = localQuotes[i];
               return _QuoteCard(
-                quoteId: doc.id,
-                data: doc.data(),
+                quoteId: quote.id,
+                data: quote.toMap(),
               );
             },
           );
@@ -96,6 +124,7 @@ class QuoteListPage extends StatelessWidget {
     );
   }
 }
+
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Quote Card (Collapsible, Editable, Sharable)
@@ -179,14 +208,8 @@ class _QuoteCardState extends State<_QuoteCard> {
       final clientName = widget.data['clientName']?.toString() ?? '';
       double prevBalance = 0.0;
       if (clientName.isNotEmpty) {
-        final q = await FirebaseFirestore.instance
-            .collection('clients')
-            .where('clientName', isEqualTo: clientName)
-            .limit(1)
-            .get();
-        if (q.docs.isNotEmpty) {
-          prevBalance = invoiceNum(q.docs.first.data()['balance']);
-        }
+        final localClient = ClientRepository.instance.findByName(clientName);
+        prevBalance = localClient?.balance ?? 0.0;
       }
 
       final invoice = await QuoteExecutionService.executeQuote(
@@ -233,10 +256,17 @@ class _QuoteCardState extends State<_QuoteCard> {
 
     setState(() => _deleting = true);
     try {
-      await FirebaseFirestore.instance
-          .collection('price_quotes')
-          .doc(widget.quoteId)
-          .delete();
+      // 1. Delete from local Hive storage immediately (0ms)
+      await QuoteRepository.instance.deleteLocal(widget.quoteId);
+
+      // 2. Enqueue background deletion to Firebase
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'deleteQuote',
+        payload: {'quoteId': widget.quoteId},
+      );
+
+      // Trigger background sync
+      ConnectivityService.instance.forceSync();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -246,6 +276,7 @@ class _QuoteCardState extends State<_QuoteCard> {
       if (mounted) setState(() => _deleting = false);
     }
   }
+
 
   void _showSuccessDialog(Map<String, dynamic> invoice) {
     showDialog(
