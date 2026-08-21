@@ -63,7 +63,7 @@ class InvoiceCubit extends Cubit<InvoiceState> {
       costPrice: p.costPrice,
       quantity: p.quantity,
       alertAmount: 0,
-      retail: false,
+      retail: p.retail,
     )).toList();
     emit(state.copyWith(products: mapped, isFetching: false));
   }

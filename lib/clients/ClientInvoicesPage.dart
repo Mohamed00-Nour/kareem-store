@@ -25,6 +25,7 @@ import '../sync/connectivity_service.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/balance_history_repository.dart';
+import '../repositories/box_repository.dart';
 import '../local_db/models/balance_history_local.dart';
 import '../sync/sync_queue_manager.dart';
 
@@ -130,7 +131,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     return InvoiceStockService.computeCostTotalAsync(products);
   }
 
-
   Future<void> _syncRootSalesInvoice(
     String clientInvoiceDocId,
     Map<String, dynamic> fields,
@@ -186,8 +186,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-
-
   Future<void> _fetchInvoices({bool reset = false}) async {
     _fetchClientName();
     if (reset && mounted) {
@@ -213,8 +211,12 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         widget.clientId,
       );
 
-      final salesDocs = localSales.map((inv) => _ItemDoc(id: inv.id, data: inv.toMap())).toList();
-      final returnDocs = localReturns.map((inv) => _ItemDoc(id: inv.id, data: inv.toMap())).toList();
+      final salesDocs = localSales
+          .map((inv) => _ItemDoc(id: inv.id, data: inv.toMap()))
+          .toList();
+      final returnDocs = localReturns
+          .map((inv) => _ItemDoc(id: inv.id, data: inv.toMap()))
+          .toList();
       final paymentDocs = localPayments
           .where((bh) => bh.type != 'sale' && bh.type != 'return')
           .map((bh) => _ItemDoc(id: bh.id, data: bh.toMap()))
@@ -249,7 +251,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   Future<void> _backgroundSyncInvoices() async {
     try {
       await ClientRepository.instance.deltaSync();
-      await BalanceHistoryRepository.instance.fullSyncForClient(widget.clientId);
+      await BalanceHistoryRepository.instance
+          .fullSyncForClient(widget.clientId);
       await InvoiceRepository.instance.deltaSyncSales();
       await InvoiceRepository.instance.deltaSyncReturns();
 
@@ -269,8 +272,12 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
       if (mounted) {
         setState(() {
-          _invoices = localSales.map((inv) => _ItemDoc(id: inv.id, data: inv.toMap())).toList();
-          _returnInvoices = localReturns.map((inv) => _ItemDoc(id: inv.id, data: inv.toMap())).toList();
+          _invoices = localSales
+              .map((inv) => _ItemDoc(id: inv.id, data: inv.toMap()))
+              .toList();
+          _returnInvoices = localReturns
+              .map((inv) => _ItemDoc(id: inv.id, data: inv.toMap()))
+              .toList();
           _payments = localPayments
               .where((bh) => bh.type != 'sale' && bh.type != 'return')
               .map((bh) => _ItemDoc(id: bh.id, data: bh.toMap()))
@@ -980,13 +987,18 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-  Future<void> _deleteInvoice(String invoiceId, double totalCost) async {
+  Future<void> _deleteInvoice(
+    String invoiceId,
+    double totalCost, {
+    Map<String, dynamic>? invoiceData,
+  }) async {
     final confirmDelete = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text('تأكيد الحذف'),
-          content: const Text('هل أنت متأكد أنك تريد حذف هذه الفاتورة؟'),
+          content: const Text(
+              'هل أنت متأكد أنك تريد حذف هذه الفاتورة؟\nسيتم إرجاع المنتجات إلى المخزون وإعادة حساب رصيد العميل.'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -1006,79 +1018,151 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       },
     );
 
-    if (confirmDelete != true) {
-      return; // Exit if the user cancels the deletion
+    if (confirmDelete != true || !mounted) {
+      return;
     }
 
     try {
-      // Fetch the invoice to get the products
-      final invoiceDoc = await FirebaseFirestore.instance
-          .collection('clients')
-          .doc(widget.clientId)
-          .collection('invoices')
-          .doc(invoiceId)
-          .get();
-
-      if (!invoiceDoc.exists) {
-        throw Exception('الفاتورة غير موجودة');
+      // 1. Get the invoice data (from parameter, local Hive, or Firestore)
+      Map<String, dynamic>? data = invoiceData;
+      if (data == null || (data['products'] as List?) == null) {
+        final localInv = InvoiceRepository.instance.getSaleById(invoiceId);
+        if (localInv != null) {
+          data = localInv.toMap();
+        }
       }
 
-      final invoiceData = invoiceDoc.data() as Map<String, dynamic>?;
-      final products =
-          List<Map<String, dynamic>>.from(invoiceData?['products'] ?? []);
-
-      // Add the product's amount back to the product's quantity
-      for (var product in products) {
-        QuerySnapshot productQuery = await FirebaseFirestore.instance
-            .collection('products')
-            .where('name', isEqualTo: product['product'])
+      if (data == null) {
+        final snap = await FirebaseFirestore.instance
+            .collection('clients')
+            .doc(widget.clientId)
+            .collection('invoices')
+            .doc(invoiceId)
             .get();
-
-        if (productQuery.docs.isNotEmpty) {
-          for (var doc in productQuery.docs) {
-            final docData = doc.data() as Map<String, dynamic>?;
-            double existingQuantity = (docData?['quantity'] ?? 0.0).toDouble();
-            double restoredQuantity =
-                existingQuantity + double.parse(product['amount']);
-
-            // Update the product's quantity
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(doc.id)
-                .update({'quantity': restoredQuantity});
-
-            // Log the change in the product's `changes` subcollection
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(doc.id)
-                .collection('changes')
-                .add({
-              'date': DateTime.now(),
-              'amount': product['amount'],
-              'type': 'increase',
-            });
+        if (snap.exists) {
+          data = snap.data();
+        } else {
+          final rootSnap = await FirebaseFirestore.instance
+              .collection('invoices')
+              .doc(invoiceId)
+              .get();
+          if (rootSnap.exists) {
+            data = rootSnap.data();
           }
         }
       }
 
-      // Delete the invoice
-      await FirebaseFirestore.instance
-          .collection('clients')
-          .doc(widget.clientId)
-          .collection('invoices')
-          .doc(invoiceId)
-          .delete();
-
-      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حذف الفاتورة بنجاح')),
+      final products = List<Map<String, dynamic>>.from(
+        (data?['products'] as List?) ?? [],
       );
-      await _refreshInvoices();
+      final paidAmount = invoiceNum(data?['paidAmount']);
+      final rootInvoiceId = data?['invoiceId']?.toString() ?? invoiceId;
+
+      // 2. Return products back to stock (Hive + background Firestore update)
+      if (products.isNotEmpty) {
+        await InvoiceStockService.applyStockChanges(
+          lines: products,
+          restore: true,
+          changeDate: DateTime.now(),
+        );
+      }
+
+      // 3. Delete invoice locally from Hive
+      await InvoiceRepository.instance.deleteSaleLocal(invoiceId);
+      if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
+        await InvoiceRepository.instance.deleteSaleLocal(rootInvoiceId);
+      }
+
+      // 4. Delete balance history entries for this invoice locally from Hive
+      await BalanceHistoryRepository.instance
+          .deleteByInvoiceId('client', widget.clientId, invoiceId);
+      if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
+        await BalanceHistoryRepository.instance
+            .deleteByInvoiceId('client', widget.clientId, rootInvoiceId);
+      }
+
+      // 5. Adjust Cash Box locally if there was a payment
+      if (paidAmount > 0) {
+        await BoxRepository.instance.decrement(paidAmount);
+      }
+
+      // 6. Sync deletion with Firestore & recalculate balance
+      final bool isOnline = ConnectivityService.instance.isOnline;
+      if (isOnline) {
+        // Delete from root collection
+        FirebaseFirestore.instance
+            .collection('invoices')
+            .doc(rootInvoiceId)
+            .delete()
+            .catchError((_) {});
+
+        // Delete from client's invoices subcollection
+        FirebaseFirestore.instance
+            .collection('clients')
+            .doc(widget.clientId)
+            .collection('invoices')
+            .doc(invoiceId)
+            .delete()
+            .catchError((_) {});
+
+        // Delete from client's balanceHistory subcollection
+        final bhSaleRef = FirebaseFirestore.instance
+            .collection('clients')
+            .doc(widget.clientId)
+            .collection('balanceHistory')
+            .doc('${rootInvoiceId}_sale');
+        final bhPayRef = FirebaseFirestore.instance
+            .collection('clients')
+            .doc(widget.clientId)
+            .collection('balanceHistory')
+            .doc('${rootInvoiceId}_pay');
+
+        final batch = FirebaseFirestore.instance.batch();
+        batch.delete(bhSaleRef);
+        batch.delete(bhPayRef);
+
+        if (paidAmount > 0) {
+          final boxRef =
+              FirebaseFirestore.instance.collection('box').doc('mainBox');
+          batch.set(
+            boxRef,
+            {'value': FieldValue.increment(-paidAmount)},
+            SetOptions(merge: true),
+          );
+        }
+        await batch.commit().catchError((_) {});
+
+        // Recalculate client's balance deterministically
+        await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+      } else {
+        // Enqueue offline delete operation
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'deleteInvoice',
+          payload: {
+            'clientId': widget.clientId,
+            'invoiceId': rootInvoiceId,
+            'clientSubDocId': invoiceId,
+            'paidAmount': paidAmount,
+          },
+        );
+      }
+
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+                'تم حذف الفاتورة وإرجاع المنتجات للمخزون وإعادة حساب الرصيد'),
+          ),
+        );
+        _fetchClientName();
+        await _refreshInvoices();
+      }
     } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('حدث خطأ أثناء حذف الفاتورة: $e')),
-      );
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('حدث خطأ أثناء حذف الفاتورة: $e')),
+        );
+      }
     }
   }
 
@@ -1095,9 +1179,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-  void _handleDeleteInvoice(String invoiceId, double totalCost) {
+  void _handleDeleteInvoice(
+    String invoiceId,
+    double totalCost, {
+    Map<String, dynamic>? invoiceData,
+  }) {
     if (_userRole == 'admin') {
-      _deleteInvoice(invoiceId, totalCost);
+      _deleteInvoice(invoiceId, totalCost, invoiceData: invoiceData);
     } else {
       _showPermissionDeniedDialog();
     }
@@ -1160,55 +1248,33 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     try {
       final products =
           List<Map<String, dynamic>>.from(data['products'] as List? ?? []);
-      final rootInvoiceId = data['invoiceId']?.toString() ?? '';
+      final rootInvoiceId = data['invoiceId']?.toString() ?? docId;
 
-      // 1. Reverse the stock restore (return invoice added stock, so delete must subtract)
-      for (final product in products) {
-        final name = product['product']?.toString() ?? '';
-        if (name.isEmpty) continue;
-        final amount =
-            double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
-        if (amount <= 0) continue;
-
-        // Apply stock changes locally
-        final localProd = ProductRepository.instance.findByName(name);
-        if (localProd != null) {
-          localProd.quantity -= amount;
-          localProd.updatedAt = DateTime.now();
-          await localProd.save();
-        }
-
-        if (ConnectivityService.instance.isOnline) {
-          final q = await FirebaseFirestore.instance
-              .collection('products')
-              .where('name', isEqualTo: name)
-              .get();
-          for (final pDoc in q.docs) {
-            final qty = (pDoc['quantity'] as num?)?.toDouble() ?? 0.0;
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(pDoc.id)
-                .update({'quantity': qty - amount});
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(pDoc.id)
-                .collection('changes')
-                .add({
-              'date': DateTime.now(),
-              'amount': amount,
-              'type': 'decrease',
-            });
-          }
-        }
+      // 1. Reverse the stock restore (return invoice added stock, so deleting it decreases stock)
+      if (products.isNotEmpty) {
+        await InvoiceStockService.applyStockChanges(
+          lines: products,
+          restore: false,
+          changeDate: DateTime.now(),
+          changeTypeWhenDecrease: 'decrease',
+        );
       }
 
       // 2. Delete return invoice locally from Hive
       await InvoiceRepository.instance.deleteReturnLocal(docId);
-      if (rootInvoiceId.isNotEmpty) {
+      if (rootInvoiceId.isNotEmpty && rootInvoiceId != docId) {
         await InvoiceRepository.instance.deleteReturnLocal(rootInvoiceId);
       }
 
-      // 3. Delete from Firestore if online
+      // 3. Delete balance history from Hive
+      await BalanceHistoryRepository.instance
+          .deleteByInvoiceId('client', widget.clientId, docId);
+      if (rootInvoiceId.isNotEmpty && rootInvoiceId != docId) {
+        await BalanceHistoryRepository.instance
+            .deleteByInvoiceId('client', widget.clientId, rootInvoiceId);
+      }
+
+      // 4. Delete from Firestore if online
       if (ConnectivityService.instance.isOnline) {
         if (rootInvoiceId.isNotEmpty) {
           FirebaseFirestore.instance
@@ -1239,12 +1305,22 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           await batch.commit();
         }
         await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+      } else {
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'deleteReturnInvoice',
+          payload: {
+            'clientId': widget.clientId,
+            'invoiceId': rootInvoiceId,
+            'clientSubDocId': docId,
+          },
+        );
       }
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم حذف فاتورة المرتجع بنجاح')),
         );
+        _fetchClientName();
         await _refreshInvoices();
       }
     } catch (e) {
@@ -1256,7 +1332,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-  void _handleEditReturnInvoice(String invoiceId, Map<String, dynamic> invoiceData) {
+  void _handleEditReturnInvoice(
+      String invoiceId, Map<String, dynamic> invoiceData) {
     if (_userRole == 'admin') {
       _showEditReturnInvoiceDialog(invoiceId, invoiceData);
     } else {
@@ -1264,7 +1341,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
   }
 
-  void _handleDeleteReturnInvoice(String invoiceId, Map<String, dynamic> invoiceData) {
+  void _handleDeleteReturnInvoice(
+      String invoiceId, Map<String, dynamic> invoiceData) {
     if (_userRole == 'admin') {
       _deleteReturnInvoice(invoiceId, invoiceData);
     } else {
@@ -1982,7 +2060,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     _fetchAllProds();
     _fetchClientName();
     _fetchInvoices(reset: true);
-    _syncClientInvoiceBalances();
   }
 
   Future<void> _fetchClientName() async {
@@ -2008,7 +2085,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         if (snap.exists && mounted) {
           final data = snap.data();
           if (data != null) {
-            final rawName = (data['clientName'] ?? data['name'])?.toString().trim() ?? '';
+            final rawName =
+                (data['clientName'] ?? data['name'])?.toString().trim() ?? '';
             final resolvedName = rawName.isNotEmpty ? rawName : widget.clientId;
             final balance = (data['balance'] as num?)?.toDouble() ?? 0.0;
 
@@ -2017,25 +2095,15 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
               _currentClientBalance = balance;
             });
 
-            final Map<String, dynamic> localData = Map<String, dynamic>.from(data);
+            final Map<String, dynamic> localData =
+                Map<String, dynamic>.from(data);
             localData['clientName'] = resolvedName;
-            await ClientRepository.instance.upsertLocal(widget.clientId, localData);
+            await ClientRepository.instance
+                .upsertLocal(widget.clientId, localData);
           }
         }
       }
     } catch (_) {}
-  }
-
-
-  Future<void> _syncClientInvoiceBalances() async {
-    try {
-      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
-      // Only refresh the client balance display — invoices were already
-      // loaded by _fetchInvoices(reset: true) in initState.
-      if (mounted) await _fetchClientName();
-    } catch (_) {
-      // Non-blocking backfill on open.
-    }
   }
 
   @override
@@ -2067,10 +2135,12 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   /// Combines sales invoices, return invoices, and payment entries sorted newest first.
   List<_InvoiceEntry> get _allMergedInvoices {
     final List<_InvoiceEntry> merged = [
-      ..._invoices.map((d) => _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.invoice)),
-      ..._returnInvoices
-          .map((d) => _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.returnInvoice)),
-      ..._payments.map((d) => _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.payment)),
+      ..._invoices.map((d) =>
+          _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.invoice)),
+      ..._returnInvoices.map((d) => _InvoiceEntry(
+          id: d.id, data: d.data, kind: _EntryKind.returnInvoice)),
+      ..._payments.map((d) =>
+          _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.payment)),
     ];
     merged.sort((a, b) => _entryDate(b).compareTo(_entryDate(a)));
     return merged;
@@ -2242,13 +2312,15 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                     if (!isReturn) ...[
                       IconButton(
                         icon: const Icon(Icons.edit, color: Colors.blue),
-                        onPressed: () => _handleEditInvoice(invoiceId, invoiceData),
+                        onPressed: () =>
+                            _handleEditInvoice(invoiceId, invoiceData),
                       ),
                       IconButton(
                         icon: const Icon(Icons.delete, color: Colors.red),
                         onPressed: () => _handleDeleteInvoice(
                           invoiceId,
                           totalSum,
+                          invoiceData: invoiceData,
                         ),
                       ),
                     ] else ...[
@@ -2256,13 +2328,15 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                         icon: const Icon(Icons.edit,
                             color: Colors.deepOrangeAccent),
                         tooltip: 'تعديل المرتجع',
-                        onPressed: () => _handleEditReturnInvoice(invoiceId, invoiceData),
+                        onPressed: () =>
+                            _handleEditReturnInvoice(invoiceId, invoiceData),
                       ),
                       IconButton(
                         icon:
                             const Icon(Icons.delete_forever, color: Colors.red),
                         tooltip: 'حذف المرتجع',
-                        onPressed: () => _handleDeleteReturnInvoice(invoiceId, invoiceData),
+                        onPressed: () =>
+                            _handleDeleteReturnInvoice(invoiceId, invoiceData),
                       ),
                     ],
                   ],
@@ -2606,8 +2680,10 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
   }
 
   void _loadFromLocalCache() {
-    final locals = BalanceHistoryRepository.instance.getForClient(widget.clientId);
-    final docs = locals.map((bh) => _ItemDoc(id: bh.id, data: bh.toMap())).toList();
+    final locals =
+        BalanceHistoryRepository.instance.getForClient(widget.clientId);
+    final docs =
+        locals.map((bh) => _ItemDoc(id: bh.id, data: bh.toMap())).toList();
     final sorted = _sortDocs(docs);
     if (mounted) {
       setState(() {
@@ -2674,8 +2750,7 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     return null;
   }
 
-  static List<_ItemDoc> _sortDocs(
-      List<_ItemDoc> docs) {
+  static List<_ItemDoc> _sortDocs(List<_ItemDoc> docs) {
     final sorted = List<_ItemDoc>.from(docs);
     sorted.sort((a, b) {
       final dataA = a.data;
@@ -3174,212 +3249,222 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
           ),
           body: _isLoading
               ? Center(
-                  child: CircularProgressIndicator(
-                      color: Colors.orange.shade700))
+                  child:
+                      CircularProgressIndicator(color: Colors.orange.shade700))
               : _historyDocs.isEmpty
                   ? const Center(
                       child:
                           Text('لا يوجد سجلات', style: TextStyle(fontSize: 16)))
                   : Directionality(
-                textDirection: TextDirection.rtl,
-                child: Padding(
-                  padding: const EdgeInsets.all(8.0),
-                  child: Card(
-                    elevation: 3,
-                    shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(12),
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: SingleChildScrollView(
-                      scrollDirection: Axis.vertical,
-                      child: SingleChildScrollView(
-                        scrollDirection: Axis.horizontal,
-                        child: Theme(
-                          data: Theme.of(context).copyWith(
-                            dividerColor: Colors.grey.shade300,
+                      textDirection: TextDirection.rtl,
+                      child: Padding(
+                        padding: const EdgeInsets.all(8.0),
+                        child: Card(
+                          elevation: 3,
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
                           ),
-                          child: DataTable(
-                            headingRowColor:
-                                MaterialStateProperty.all(Colors.black87),
-                            headingTextStyle: const TextStyle(
-                              color: Colors.white,
-                              fontWeight: FontWeight.bold,
-                              fontSize: 13,
-                            ),
-                            dataRowMaxHeight: 52,
-                            dataRowMinHeight: 44,
-                            columnSpacing: 20,
-                            columns: const [
-                              DataColumn(
-                                label: SizedBox(
-                                  width: 150,
-                                  child: Text('البيان',
-                                      textAlign: TextAlign.right),
+                          clipBehavior: Clip.antiAlias,
+                          child: SingleChildScrollView(
+                            scrollDirection: Axis.vertical,
+                            child: SingleChildScrollView(
+                              scrollDirection: Axis.horizontal,
+                              child: Theme(
+                                data: Theme.of(context).copyWith(
+                                  dividerColor: Colors.grey.shade300,
                                 ),
-                              ),
-                              DataColumn(
-                                label:
-                                    Text('الحركة', textAlign: TextAlign.right),
-                              ),
-                              DataColumn(
-                                label: Text('الرصيد قبل',
-                                    textAlign: TextAlign.right),
-                              ),
-                              DataColumn(
-                                label: Text('الرصيد بعد',
-                                    textAlign: TextAlign.right),
-                              ),
-                              DataColumn(
-                                label:
-                                    Text('التاريخ', textAlign: TextAlign.right),
-                              ),
-                              DataColumn(
-                                label:
-                                    Text('إجراءات', textAlign: TextAlign.right),
-                              ),
-                            ],
-                            rows: _historyDocs.map((doc) {
-                              final data = doc.data;
-                              final type =
-                                  data['type']?.toString() ?? 'deduction';
-                              final entered = (data['enteredBalance'] as num?)
-                                      ?.toDouble() ??
-                                  0.0;
-                              final before =
-                                  (data['balanceBefore'] as num?)?.toDouble() ??
-                                      0.0;
-                              final isIncrease = _isIncreaseType(type);
-                              final after = isIncrease
-                                  ? before + entered
-                                  : before - entered;
-                              final sign = isIncrease ? '+' : '-';
-                              final color = _colorForType(type, isIncrease);
-                              final description = _descriptionForEntry(data);
+                                child: DataTable(
+                                  headingRowColor:
+                                      MaterialStateProperty.all(Colors.black87),
+                                  headingTextStyle: const TextStyle(
+                                    color: Colors.white,
+                                    fontWeight: FontWeight.bold,
+                                    fontSize: 13,
+                                  ),
+                                  dataRowMaxHeight: 52,
+                                  dataRowMinHeight: 44,
+                                  columnSpacing: 20,
+                                  columns: const [
+                                    DataColumn(
+                                      label: SizedBox(
+                                        width: 150,
+                                        child: Text('البيان',
+                                            textAlign: TextAlign.right),
+                                      ),
+                                    ),
+                                    DataColumn(
+                                      label: Text('الحركة',
+                                          textAlign: TextAlign.right),
+                                    ),
+                                    DataColumn(
+                                      label: Text('الرصيد قبل',
+                                          textAlign: TextAlign.right),
+                                    ),
+                                    DataColumn(
+                                      label: Text('الرصيد بعد',
+                                          textAlign: TextAlign.right),
+                                    ),
+                                    DataColumn(
+                                      label: Text('التاريخ',
+                                          textAlign: TextAlign.right),
+                                    ),
+                                    DataColumn(
+                                      label: Text('إجراءات',
+                                          textAlign: TextAlign.right),
+                                    ),
+                                  ],
+                                  rows: _historyDocs.map((doc) {
+                                    final data = doc.data;
+                                    final type =
+                                        data['type']?.toString() ?? 'deduction';
+                                    final entered =
+                                        (data['enteredBalance'] as num?)
+                                                ?.toDouble() ??
+                                            0.0;
+                                    final before =
+                                        (data['balanceBefore'] as num?)
+                                                ?.toDouble() ??
+                                            0.0;
+                                    final isIncrease = _isIncreaseType(type);
+                                    final after = isIncrease
+                                        ? before + entered
+                                        : before - entered;
+                                    final sign = isIncrease ? '+' : '-';
+                                    final color =
+                                        _colorForType(type, isIncrease);
+                                    final description =
+                                        _descriptionForEntry(data);
 
-                              final rawTs = data['timestamp'] ?? data['date'];
-                              DateTime timestamp = DateTime.now();
-                              if (rawTs is Timestamp) {
-                                timestamp = rawTs.toDate();
-                              } else if (rawTs is DateTime) {
-                                timestamp = rawTs;
-                              } else if (rawTs is String) {
-                                timestamp =
-                                    DateTime.tryParse(rawTs) ?? DateTime.now();
-                              } else if (rawTs is int) {
-                                timestamp =
-                                    DateTime.fromMillisecondsSinceEpoch(rawTs);
-                              }
-                              final formattedDate =
-                                  intl.DateFormat('yyyy-MM-dd hh:mm a')
-                                      .format(timestamp);
+                                    final rawTs =
+                                        data['timestamp'] ?? data['date'];
+                                    DateTime timestamp = DateTime.now();
+                                    if (rawTs is Timestamp) {
+                                      timestamp = rawTs.toDate();
+                                    } else if (rawTs is DateTime) {
+                                      timestamp = rawTs;
+                                    } else if (rawTs is String) {
+                                      timestamp = DateTime.tryParse(rawTs) ??
+                                          DateTime.now();
+                                    } else if (rawTs is int) {
+                                      timestamp =
+                                          DateTime.fromMillisecondsSinceEpoch(
+                                              rawTs);
+                                    }
+                                    final formattedDate =
+                                        intl.DateFormat('yyyy-MM-dd hh:mm a')
+                                            .format(timestamp);
 
-                              return DataRow(
-                                cells: [
-                                  DataCell(
-                                    SizedBox(
-                                      width: 150,
-                                      child: Text(
-                                        description,
-                                        style: TextStyle(
-                                          fontWeight: FontWeight.w600,
-                                          fontSize: 12,
-                                          color: Colors.grey.shade800,
+                                    return DataRow(
+                                      cells: [
+                                        DataCell(
+                                          SizedBox(
+                                            width: 150,
+                                            child: Text(
+                                              description,
+                                              style: TextStyle(
+                                                fontWeight: FontWeight.w600,
+                                                fontSize: 12,
+                                                color: Colors.grey.shade800,
+                                              ),
+                                              overflow: TextOverflow.ellipsis,
+                                              maxLines: 2,
+                                            ),
+                                          ),
                                         ),
-                                        overflow: TextOverflow.ellipsis,
-                                        maxLines: 2,
-                                      ),
-                                    ),
-                                  ),
-                                  DataCell(
-                                    Text(
-                                      '$sign${entered.toStringAsFixed(2)}',
-                                      style: TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        fontSize: 13,
-                                        color: color,
-                                      ),
-                                    ),
-                                  ),
-                                  DataCell(
-                                    Text(
-                                      before.toStringAsFixed(2),
-                                      style: TextStyle(
-                                        color: Colors.grey.shade700,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ),
-                                  DataCell(
-                                    Text(
-                                      after.toStringAsFixed(2),
-                                      style: const TextStyle(
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.black87,
-                                        fontSize: 12,
-                                      ),
-                                    ),
-                                  ),
-                                  DataCell(
-                                    Text(
-                                      formattedDate,
-                                      style: TextStyle(
-                                        color: Colors.grey.shade600,
-                                        fontSize: 11,
-                                      ),
-                                    ),
-                                  ),
-                                  DataCell(
-                                    Row(
-                                      mainAxisSize: MainAxisSize.min,
-                                      children: [
-                                        IconButton(
-                                          icon: Icon(Icons.edit_outlined,
-                                              color: Colors.blue.shade700,
-                                              size: 18),
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                          tooltip: 'تعديل',
-                                          onPressed: _isBusy
-                                              ? null
-                                              : () => _editEntry(
-                                                    _InvoiceEntry(
-                                                      id: doc.id,
-                                                      data: data,
-                                                      kind: _EntryKind.payment,
-                                                    ),
-                                                  ),
+                                        DataCell(
+                                          Text(
+                                            '$sign${entered.toStringAsFixed(2)}',
+                                            style: TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              fontSize: 13,
+                                              color: color,
+                                            ),
+                                          ),
                                         ),
-                                        const SizedBox(width: 8),
-                                        IconButton(
-                                          icon: Icon(Icons.delete_outline,
-                                              color: Colors.red.shade700,
-                                              size: 18),
-                                          padding: EdgeInsets.zero,
-                                          constraints: const BoxConstraints(),
-                                          tooltip: 'حذف',
-                                          onPressed: _isBusy
-                                              ? null
-                                              : () => _deleteEntry(
-                                                    _InvoiceEntry(
-                                                      id: doc.id,
-                                                      data: data,
-                                                      kind: _EntryKind.payment,
-                                                    ),
-                                                  ),
+                                        DataCell(
+                                          Text(
+                                            before.toStringAsFixed(2),
+                                            style: TextStyle(
+                                              color: Colors.grey.shade700,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                        DataCell(
+                                          Text(
+                                            after.toStringAsFixed(2),
+                                            style: const TextStyle(
+                                              fontWeight: FontWeight.bold,
+                                              color: Colors.black87,
+                                              fontSize: 12,
+                                            ),
+                                          ),
+                                        ),
+                                        DataCell(
+                                          Text(
+                                            formattedDate,
+                                            style: TextStyle(
+                                              color: Colors.grey.shade600,
+                                              fontSize: 11,
+                                            ),
+                                          ),
+                                        ),
+                                        DataCell(
+                                          Row(
+                                            mainAxisSize: MainAxisSize.min,
+                                            children: [
+                                              IconButton(
+                                                icon: Icon(Icons.edit_outlined,
+                                                    color: Colors.blue.shade700,
+                                                    size: 18),
+                                                padding: EdgeInsets.zero,
+                                                constraints:
+                                                    const BoxConstraints(),
+                                                tooltip: 'تعديل',
+                                                onPressed: _isBusy
+                                                    ? null
+                                                    : () => _editEntry(
+                                                          _InvoiceEntry(
+                                                            id: doc.id,
+                                                            data: data,
+                                                            kind: _EntryKind
+                                                                .payment,
+                                                          ),
+                                                        ),
+                                              ),
+                                              const SizedBox(width: 8),
+                                              IconButton(
+                                                icon: Icon(Icons.delete_outline,
+                                                    color: Colors.red.shade700,
+                                                    size: 18),
+                                                padding: EdgeInsets.zero,
+                                                constraints:
+                                                    const BoxConstraints(),
+                                                tooltip: 'حذف',
+                                                onPressed: _isBusy
+                                                    ? null
+                                                    : () => _deleteEntry(
+                                                          _InvoiceEntry(
+                                                            id: doc.id,
+                                                            data: data,
+                                                            kind: _EntryKind
+                                                                .payment,
+                                                          ),
+                                                        ),
+                                              ),
+                                            ],
+                                          ),
                                         ),
                                       ],
-                                    ),
-                                  ),
-                                ],
-                              );
-                            }).toList(),
+                                    );
+                                  }).toList(),
+                                ),
+                              ),
+                            ),
                           ),
                         ),
                       ),
                     ),
-                  ),
-                ),
-              ),
         ),
         if (_isBusy)
           Container(

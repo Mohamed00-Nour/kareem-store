@@ -38,6 +38,24 @@ class BalanceHistoryRepository {
     await balanceHistoryBox.put(key, entry);
   }
 
+  Future<void> deleteLocal(String parentType, String parentId, String docId) async {
+    final key = _boxKey(parentType, parentId, docId);
+    await balanceHistoryBox.delete(key);
+  }
+
+  Future<void> deleteByInvoiceId(String parentType, String parentId, String invoiceId) async {
+    final keysToDelete = balanceHistoryBox.values
+        .where((e) =>
+            e.parentType == parentType &&
+            e.parentId == parentId &&
+            (e.id == invoiceId ||
+             e.id == '${invoiceId}_sale' ||
+             e.id == '${invoiceId}_pay'))
+        .map((e) => _boxKey(e.parentType, e.parentId, e.id))
+        .toList();
+    await balanceHistoryBox.deleteAll(keysToDelete);
+  }
+
   Future<void> deleteForParent(String parentType, String parentId) async {
     final keysToDelete = balanceHistoryBox.values
         .where((e) => e.parentType == parentType && e.parentId == parentId)

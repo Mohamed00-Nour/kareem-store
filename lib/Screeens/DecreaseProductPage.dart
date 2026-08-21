@@ -1,4 +1,4 @@
-import 'dart:ui' show ImageFilter;
+﻿import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'DecreaseProductComponents/product_model.dart';
@@ -856,7 +856,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     }
   }
 
-
   /// Loads products from Hive local cache (used when offline or on error).
   void _loadProductsFromLocalCache() {
     if (!mounted) return;
@@ -875,7 +874,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
               costPrice: p.costPrice,
               quantity: p.quantity,
               alertAmount: 0,
-              retail: false,
+              retail: p.retail,
             )));
       _isFetching = false;
     });
@@ -941,15 +940,12 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     }
   }
 
-
   /// Loads client names from Hive local cache.
   void _loadClientsFromLocalCache() {
     if (!mounted) return;
     final locals = ClientRepository.instance.getAll();
-    final names = locals
-        .map((c) => c.name.trim())
-        .where((n) => n.isNotEmpty)
-        .toList();
+    final names =
+        locals.map((c) => c.name.trim()).where((n) => n.isNotEmpty).toList();
     if (mounted) {
       setState(() {
         _clients = names;
@@ -1031,20 +1027,23 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       String? resolvedClientId;
       if (effectiveClient.isNotEmpty) {
         // ALWAYS use Hive local cache to resolve client ID instantly
-        final localClient = ClientRepository.instance.findByName(effectiveClient);
+        final localClient =
+            ClientRepository.instance.findByName(effectiveClient);
         if (localClient != null) {
           resolvedClientId = localClient.id;
         } else {
           // New client: Generate ID and save locally first
-          resolvedClientId = FirebaseFirestore.instance.collection('clients').doc().id;
+          resolvedClientId =
+              FirebaseFirestore.instance.collection('clients').doc().id;
           final clientData = {
             'clientName': effectiveClient,
             'balance': 0.0,
             'id': resolvedClientId,
           };
-          
-          await ClientRepository.instance.upsertLocal(resolvedClientId, clientData);
-          
+
+          await ClientRepository.instance
+              .upsertLocal(resolvedClientId, clientData);
+
           // Background sync to Firestore without blocking the UI
           FirebaseFirestore.instance
               .collection('clients')
@@ -1094,7 +1093,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
             'quoteData': {
               ...quoteData,
               'date': _selectedDate?.toIso8601String(),
-              'createdAt': _originalInvoice?['createdAt']?.toString() ?? DateTime.now().toIso8601String(),
+              'createdAt': _originalInvoice?['createdAt']?.toString() ??
+                  DateTime.now().toIso8601String(),
             },
           },
         );
@@ -1209,7 +1209,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         _lastInvoice = Map<String, dynamic>.from(invoiceData);
 
         // 1. Write to local Hive primary database immediately (<10ms)
-        await InvoiceRepository.instance.upsertSaleLocal(docRef.id, invoiceData);
+        await InvoiceRepository.instance
+            .upsertSaleLocal(docRef.id, invoiceData);
 
         // 2. Update stock locally
         await InvoiceStockService.applyStockChanges(
@@ -1224,8 +1225,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
         // 3. Update client balance & balance history locally in Hive
         if (resolvedClientId != null && resolvedClientId.isNotEmpty) {
-          await ClientRepository.instance.updateLocalBalance(resolvedClientId, updatedBalance);
-          
+          await ClientRepository.instance
+              .updateLocalBalance(resolvedClientId, updatedBalance);
+
           // Entry 1: Sales invoice total (debt increase)
           await BalanceHistoryRepository.instance.upsertLocal(
             BalanceHistoryLocal(
@@ -1280,7 +1282,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         // Trigger background sync without awaiting
         ConnectivityService.instance.forceSync();
       }
-
 
       if (!mounted) return;
       setState(() {
@@ -1471,7 +1472,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final name = clientName.trim();
     if (name.isEmpty) return false;
     if (_clientNameInList(name)) return true;
-    
+
     // ALWAYS deal with Hive directly for instant offline/online check
     final local = ClientRepository.instance.findByName(name);
     return local != null;
@@ -1493,7 +1494,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final type = widget.isReturnInvoice ? 'return' : 'sale';
     return LocalInvoiceCounter.nextNumber(type);
   }
-
 
   Future<void> _commitClientAndBoxWrites({
     required DocumentReference<Map<String, dynamic>> clientDocRef,
@@ -1532,7 +1532,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       'products': products,
     });
     // Entry 1: Invoice total (debt increase)
-    batch.set(clientDocRef.collection('balanceHistory').doc('${invoiceId}_sale'), {
+    batch.set(
+        clientDocRef.collection('balanceHistory').doc('${invoiceId}_sale'), {
       'enteredBalance': totalSumFinal,
       'balanceBefore': existingBalance,
       'timestamp': FieldValue.serverTimestamp(),
@@ -1542,7 +1543,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     });
     // Entry 2: Payment received (debt decrease) — only if > 0
     if (effectivePaid > 0) {
-      batch.set(clientDocRef.collection('balanceHistory').doc('${invoiceId}_pay'), {
+      batch.set(
+          clientDocRef.collection('balanceHistory').doc('${invoiceId}_pay'), {
         'enteredBalance': effectivePaid,
         'balanceBefore': existingBalance + totalSumFinal,
         'timestamp': FieldValue.serverTimestamp(),
@@ -2543,7 +2545,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       clientName: _clientNameController.text,
       clientBalance: _clientBalance,
       notes: _isEditing ? _editingNotes : '',
-      originalPaidAmount: _isEditing ? invoiceNum(_originalInvoice?['paidAmount']) : 0.0,
+      originalPaidAmount:
+          _isEditing ? invoiceNum(_originalInvoice?['paidAmount']) : 0.0,
       totalSum: _calculateTotalSum(),
       clients: _clients,
       isReturnInvoice: widget.isReturnInvoice,
@@ -2578,8 +2581,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   void _showCalculatorDialog() {
     showCalculatorDialog(context);
   }
-
-
 
   void _queryClientBalanceDialog() {
     String? _selectedClient;
@@ -3581,8 +3582,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 // ─────────────────────────────────────────────────────────────
 // Helper widgets
 // ─────────────────────────────────────────────────────────────
-
-
 
 class _DrawerItem {
   final IconData icon;

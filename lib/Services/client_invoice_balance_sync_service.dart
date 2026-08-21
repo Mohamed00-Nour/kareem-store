@@ -77,11 +77,9 @@ class ClientInvoiceBalanceSyncService {
 
     final clientRef = _firestore.collection('clients').doc(trimmed);
 
-    // Fetch existing client document to get stored balance
     final clientSnap = await clientRef.get();
     if (!clientSnap.exists) return;
-    final clientData = clientSnap.data() as Map<String, dynamic>? ?? {};
-    final double existingClientBalance = (clientData['balance'] as num?)?.toDouble() ?? 0.0;
+    final clientData = clientSnap.data() ?? {};
 
     final results = await Future.wait([
       clientRef.collection('invoices').get(),
@@ -290,13 +288,23 @@ class ClientInvoiceBalanceSyncService {
 
     // Refresh history documents to get the final aligned state
     final finalHistoryDocs = (await clientRef.collection('balanceHistory').get()).docs;
-    final sorted = _sortDocsAscending(finalHistoryDocs);
+    var sorted = _sortDocsAscending(finalHistoryDocs);
 
-    var running = 0.0;
-    if (!sorted.any((d) => (d.data() as Map)['type'] == 'opening') && existingClientBalance != 0.0) {
-      running = existingClientBalance;
+    // If client has an openingBalance field not yet recorded in balanceHistory, create it once
+    final double rawOpeningBalance = (clientData['openingBalance'] as num?)?.toDouble() ?? 0.0;
+    if (rawOpeningBalance != 0.0 && !sorted.any((d) => (d.data() as Map)['type'] == 'opening')) {
+      final openingRef = clientRef.collection('balanceHistory').doc('${trimmed}_opening');
+      await openingRef.set({
+        'enteredBalance': rawOpeningBalance,
+        'balanceBefore': 0.0,
+        'timestamp': FieldValue.serverTimestamp(),
+        'type': 'opening',
+      });
+      final refreshed = (await clientRef.collection('balanceHistory').get()).docs;
+      sorted = _sortDocsAscending(refreshed);
     }
 
+    var running = 0.0;
     final Map<String, double> invPreviousBalances = {};
     final Map<String, double> invAfterBalances = {};
     WriteBatch recalculateBatch = _firestore.batch();

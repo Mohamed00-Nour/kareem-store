@@ -152,7 +152,7 @@ class _AddProductPageState extends State<AddProductPage> {
               costPrice: p.costPrice,
               quantity: p.quantity,
               alertAmount: 0,
-              retail: false,
+              retail: p.retail,
             )));
       _isFetching = false;
     });
