@@ -6,6 +6,7 @@ import '../repositories/expense_repository.dart';
 import '../repositories/quote_repository.dart';
 import '../repositories/box_repository.dart';
 import '../repositories/department_repository.dart';
+import '../repositories/payment_breakdown_repository.dart';
 import '../Services/invoice_number_utils.dart';
 import '../local_db/hive_init.dart';
 
@@ -44,6 +45,7 @@ class DataSyncService {
           QuoteRepository.instance.fullSync(),
           BoxRepository.instance.fullSync(),
           DepartmentRepository.instance.fullSync(),
+          PaymentBreakdownRepository.instance.fullSyncFromFirestore(),
         ]);
       } else {
         // Subsequent launches: only pull what changed since last sync.
@@ -58,6 +60,7 @@ class DataSyncService {
           QuoteRepository.instance.deltaSync(),
           BoxRepository.instance.fullSync(),
           DepartmentRepository.instance.deltaSync(),
+          PaymentBreakdownRepository.instance.fullSyncFromFirestore(),
         ]);
       }
     } catch (_) {

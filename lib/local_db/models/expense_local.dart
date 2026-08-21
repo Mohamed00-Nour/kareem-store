@@ -12,13 +12,13 @@ class ExpenseLocal extends HiveObject {
   @HiveField(1)
   String category;
 
-  @HiveField(2)
+  @HiveField(2, defaultValue: 0.0)
   double amount;
 
   @HiveField(3)
   DateTime date;
 
-  @HiveField(4)
+  @HiveField(4, defaultValue: '')
   String notes;
 
   @HiveField(5)

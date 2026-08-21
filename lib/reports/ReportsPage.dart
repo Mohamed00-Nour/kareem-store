@@ -7,6 +7,7 @@ import 'BestProductsReportPage.dart';
 import 'ClientsReportPage.dart';
 import 'InventoryReportPage.dart';
 import 'MonthlyComparisonReportPage.dart';
+import 'PaymentsReportPage.dart';
 
 class ReportsPage extends StatelessWidget {
   const ReportsPage({super.key});
@@ -14,6 +15,14 @@ class ReportsPage extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final List<_ReportCard> cards = [
+      _ReportCard(
+        title: 'المدفوعات',
+        subtitle: 'توزيع طرق المدفوعات (محفظة، نقدي، أنستاباي، تحويل)',
+        icon: Icons.account_balance_wallet_outlined,
+        color: Colors.deepOrange,
+        onTap: () => Navigator.push(context,
+            MaterialPageRoute(builder: (_) => const PaymentsReportPage())),
+      ),
       _ReportCard(
         title: 'تقرير المبيعات',
         subtitle: 'المبيعات والأرباح لفترة زمنية محددة',

@@ -10,13 +10,13 @@ class SupplierLocal extends HiveObject {
   @HiveField(1)
   String name;
 
-  @HiveField(2)
+  @HiveField(2, defaultValue: 0.0)
   double balance;
 
-  @HiveField(3)
+  @HiveField(3, defaultValue: '')
   String phone;
 
-  @HiveField(4)
+  @HiveField(4, defaultValue: '')
   String address;
 
   @HiveField(5)

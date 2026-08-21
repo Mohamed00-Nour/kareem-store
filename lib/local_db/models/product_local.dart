@@ -10,43 +10,43 @@ class ProductLocal extends HiveObject {
   @HiveField(1)
   String name;
 
-  @HiveField(2)
+  @HiveField(2, defaultValue: 0.0)
   double sellingPrice1;
 
-  @HiveField(3)
+  @HiveField(3, defaultValue: 0.0)
   double sellingPrice2;
 
-  @HiveField(4)
+  @HiveField(4, defaultValue: 0.0)
   double sellingPrice3;
 
-  @HiveField(5)
+  @HiveField(5, defaultValue: 0.0)
   double quantity;
 
-  @HiveField(6)
+  @HiveField(6, defaultValue: '')
   String description;
 
-  @HiveField(7)
+  @HiveField(7, defaultValue: 0.0)
   double costPrice;
 
-  @HiveField(8)
+  @HiveField(8, defaultValue: '')
   String barcode;
 
   @HiveField(9)
   DateTime updatedAt;
 
-  @HiveField(10)
+  @HiveField(10, defaultValue: 0.0)
   double alertAmount;
 
-  @HiveField(11)
+  @HiveField(11, defaultValue: '')
   String department;
 
-  @HiveField(12)
+  @HiveField(12, defaultValue: 0)
   int randomNumber;
 
-  @HiveField(13)
+  @HiveField(13, defaultValue: false)
   bool onDemand;
 
-  @HiveField(14)
+  @HiveField(14, defaultValue: false)
   bool retail;
 
   ProductLocal({

@@ -9,34 +9,34 @@ class QuoteLocal extends HiveObject {
   @HiveField(0)
   String id;
 
-  @HiveField(1)
+  @HiveField(1, defaultValue: '')
   String clientName;
 
-  @HiveField(2)
+  @HiveField(2, defaultValue: '')
   String clientId;
 
   @HiveField(3)
   DateTime date;
 
-  @HiveField(4)
+  @HiveField(4, defaultValue: 0.0)
   double totalSum;
 
-  @HiveField(5)
+  @HiveField(5, defaultValue: 0.0)
   double paidAmount;
 
-  @HiveField(6)
+  @HiveField(6, defaultValue: 'نقداً')
   String paymentMethod;
 
-  @HiveField(7)
+  @HiveField(7, defaultValue: '')
   String notes;
 
-  @HiveField(8)
+  @HiveField(8, defaultValue: 0.0)
   double invoiceDiscount;
 
-  @HiveField(9)
+  @HiveField(9, defaultValue: false)
   bool discountIsPercent;
 
-  @HiveField(10)
+  @HiveField(10, defaultValue: '[]')
   String productsJson;
 
   @HiveField(11)

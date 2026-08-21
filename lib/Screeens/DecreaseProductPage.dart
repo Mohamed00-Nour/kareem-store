@@ -24,6 +24,7 @@ import '../Services/invoice_stock_service.dart';
 import '../Services/sales_invoice_actions_service.dart';
 import '../Services/sales_invoice_update_service.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
+import '../repositories/payment_breakdown_repository.dart';
 import '../Widgets/egypt_phone_field.dart';
 import '../EditProductPage.dart';
 import 'g_Nav.dart';
@@ -2557,6 +2558,20 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     );
 
     if (result != null && mounted) {
+      if (result.walletAmount > 0 ||
+          result.cashAmount > 0 ||
+          result.instapayAmount > 0 ||
+          result.bankTransferAmount > 0) {
+        PaymentBreakdownRepository.instance.saveBreakdown(
+          wallet: result.walletAmount,
+          cash: result.cashAmount,
+          instapay: result.instapayAmount,
+          bankTransfer: result.bankTransferAmount,
+          notes: result.notes,
+          date: _selectedDate,
+        );
+      }
+
       // Sync read from Hive — instant, no await needed
       final bal = _getClientBalanceSync(result.clientName);
       setState(() {

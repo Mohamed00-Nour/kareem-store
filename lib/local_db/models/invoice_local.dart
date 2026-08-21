@@ -9,55 +9,55 @@ class InvoiceLocal extends HiveObject {
   @HiveField(0)
   String id;
 
-  @HiveField(1)
+  @HiveField(1, defaultValue: 0)
   int invoiceNumber;
 
-  @HiveField(2)
+  @HiveField(2, defaultValue: '')
   String clientId;
 
-  @HiveField(3)
+  @HiveField(3, defaultValue: '')
   String clientName;
 
-  @HiveField(4)
+  @HiveField(4, defaultValue: '')
   String supplierId;
 
-  @HiveField(5)
+  @HiveField(5, defaultValue: '')
   String supplierName;
 
   @HiveField(6)
   DateTime date;
 
-  @HiveField(7)
+  @HiveField(7, defaultValue: 0.0)
   double totalSum;
 
-  @HiveField(8)
+  @HiveField(8, defaultValue: 0.0)
   double paidAmount;
 
-  @HiveField(9)
+  @HiveField(9, defaultValue: 0.0)
   double balance;
 
-  @HiveField(10)
+  @HiveField(10, defaultValue: 0.0)
   double previousBalance;
 
-  @HiveField(11)
+  @HiveField(11, defaultValue: 0.0)
   double profitMargin;
 
-  @HiveField(12)
+  @HiveField(12, defaultValue: 'نقداً')
   String paymentMethod;
 
-  @HiveField(13)
+  @HiveField(13, defaultValue: '')
   String notes;
 
-  @HiveField(14)
+  @HiveField(14, defaultValue: 0.0)
   double invoiceDiscount;
 
-  @HiveField(15)
+  @HiveField(15, defaultValue: 'sale')
   String invoiceType; // 'sale', 'return', 'buying'
 
-  @HiveField(16)
+  @HiveField(16, defaultValue: false)
   bool isSpecial;
 
-  @HiveField(17)
+  @HiveField(17, defaultValue: '[]')
   String productsJson;
 
   @HiveField(18)

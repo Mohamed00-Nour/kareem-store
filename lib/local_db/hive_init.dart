@@ -9,6 +9,7 @@ import 'models/quote_local.dart';
 import 'models/box_local.dart';
 import 'models/balance_history_local.dart';
 import 'models/department_local.dart';
+import 'models/payment_breakdown_local.dart';
 
 /// Box names — use these constants everywhere to avoid typos.
 class HiveBoxNames {
@@ -61,6 +62,7 @@ Future<void> initHive() async {
   if (!Hive.isAdapterRegistered(7)) Hive.registerAdapter(BoxLocalAdapter());
   if (!Hive.isAdapterRegistered(8)) Hive.registerAdapter(BalanceHistoryLocalAdapter());
   if (!Hive.isAdapterRegistered(9)) Hive.registerAdapter(DepartmentLocalAdapter());
+  if (!Hive.isAdapterRegistered(10)) Hive.registerAdapter(PaymentBreakdownLocalAdapter());
 
   // Open all boxes on startup safely (handles corrupted cache or schema upgrades)
   await _openBoxSafely<ProductLocal>(HiveBoxNames.products);
@@ -76,6 +78,7 @@ Future<void> initHive() async {
   await _openBoxSafely<BoxLocal>(HiveBoxNames.box);
   await _openBoxSafely<BalanceHistoryLocal>(HiveBoxNames.balanceHistory);
   await _openBoxSafely<DepartmentLocal>(HiveBoxNames.departments);
+  await _openBoxSafely<PaymentBreakdownLocal>('paymentBreakdownsBox');
 }
 
 /// Opens a Hive box safely. If corrupted or schema changed, clears disk cache and re-opens cleanly.
@@ -101,7 +104,17 @@ Future<Box<T>> _openBoxSafely<T>(String name) async {
     try {
       await Hive.deleteBoxFromDisk(name);
     } catch (_) {}
-    return await Hive.openBox<T>(name);
+    try {
+      return await Hive.openBox<T>(name);
+    } catch (_) {
+      try {
+        await Hive.close();
+      } catch (_) {}
+      try {
+        await Hive.deleteBoxFromDisk(name);
+      } catch (_) {}
+      return await Hive.openBox<T>(name);
+    }
   }
 }
 

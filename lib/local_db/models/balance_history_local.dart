@@ -8,34 +8,34 @@ class BalanceHistoryLocal extends HiveObject {
   @HiveField(0)
   String id;
 
-  @HiveField(1)
+  @HiveField(1, defaultValue: '')
   String parentId; // clientId or supplierId
 
-  @HiveField(2)
+  @HiveField(2, defaultValue: '')
   String parentType; // 'client' or 'supplier'
 
-  @HiveField(3)
+  @HiveField(3, defaultValue: 0.0)
   double enteredBalance;
 
-  @HiveField(4)
+  @HiveField(4, defaultValue: 0.0)
   double balanceBefore;
 
-  @HiveField(5)
+  @HiveField(5, defaultValue: '')
   String type; // 'sale', 'sale_payment', 'return', 'return_payment', 'addition', 'deduction', 'opening'
 
-  @HiveField(6)
+  @HiveField(6, defaultValue: '')
   String invoiceId;
 
-  @HiveField(7)
+  @HiveField(7, defaultValue: '')
   String invoiceNumber;
 
   @HiveField(8)
   DateTime timestamp;
 
-  @HiveField(9)
+  @HiveField(9, defaultValue: '')
   String direction; // 'له' or 'عليه' for suppliers
 
-  @HiveField(10)
+  @HiveField(10, defaultValue: '')
   String notes;
 
   BalanceHistoryLocal({

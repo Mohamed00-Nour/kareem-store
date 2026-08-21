@@ -8,6 +8,10 @@ class CheckoutSelectionResult {
   final String notes;
   final double invoiceDiscount;
   final bool discountIsPercent;
+  final double walletAmount;
+  final double cashAmount;
+  final double instapayAmount;
+  final double bankTransferAmount;
 
   CheckoutSelectionResult({
     required this.clientName,
@@ -16,6 +20,10 @@ class CheckoutSelectionResult {
     required this.notes,
     required this.invoiceDiscount,
     required this.discountIsPercent,
+    this.walletAmount = 0.0,
+    this.cashAmount = 0.0,
+    this.instapayAmount = 0.0,
+    this.bankTransferAmount = 0.0,
   });
 }
 
@@ -112,6 +120,10 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
   late TextEditingController paidCtrl;
   late TextEditingController discountCtrl;
   late TextEditingController notesCtrl;
+  late TextEditingController walletCtrl;
+  late TextEditingController cashCtrl;
+  late TextEditingController instapayCtrl;
+  late TextEditingController bankTransferCtrl;
 
   @override
   void initState() {
@@ -126,6 +138,10 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
     paidCtrl = TextEditingController(text: widget.isEditing && widget.originalPaidAmount > 0 ? widget.originalPaidAmount.toStringAsFixed(2) : '');
     discountCtrl = TextEditingController(text: widget.isEditing && widget.invoiceDiscount > 0 ? widget.invoiceDiscount.toStringAsFixed(2) : '');
     notesCtrl = TextEditingController(text: notes);
+    walletCtrl = TextEditingController();
+    cashCtrl = TextEditingController();
+    instapayCtrl = TextEditingController();
+    bankTransferCtrl = TextEditingController();
     lastManualPaid = widget.isEditing && widget.originalPaidAmount > 0 ? widget.originalPaidAmount.toStringAsFixed(2) : '';
   }
 
@@ -134,6 +150,10 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
     paidCtrl.dispose();
     discountCtrl.dispose();
     notesCtrl.dispose();
+    walletCtrl.dispose();
+    cashCtrl.dispose();
+    instapayCtrl.dispose();
+    bankTransferCtrl.dispose();
     super.dispose();
   }
 
@@ -565,6 +585,111 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                             vertical: 10.h, horizontal: 12.w),
                       ),
                     ),
+                    SizedBox(height: 12.h),
+                    // ── Payment Breakdown Fields Header ──
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'تفاصيل توزيع المدفوعات (اختياري)',
+                        style: TextStyle(
+                          fontSize: 13.sp,
+                          fontWeight: FontWeight.bold,
+                          color: Colors.black87,
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 8.h),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: walletCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            textAlign: TextAlign.right,
+                            onTap: () => _selectAllField(walletCtrl),
+                            decoration: InputDecoration(
+                              labelText: 'محفظة',
+                              labelStyle: TextStyle(fontSize: 12.sp, color: Colors.orange.shade800),
+                              hintText: '0.0',
+                              hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.r)),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8.r),
+                                borderSide: BorderSide(color: Colors.orange.shade800, width: 1.5),
+                              ),
+                              contentPadding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: 8.w),
+                        Expanded(
+                          child: TextField(
+                            controller: cashCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            textAlign: TextAlign.right,
+                            onTap: () => _selectAllField(cashCtrl),
+                            decoration: InputDecoration(
+                              labelText: 'نقدي',
+                              labelStyle: TextStyle(fontSize: 12.sp, color: Colors.green.shade800),
+                              hintText: '0.0',
+                              hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.r)),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8.r),
+                                borderSide: BorderSide(color: Colors.green.shade800, width: 1.5),
+                              ),
+                              contentPadding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 8.h),
+                    Row(
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: instapayCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            textAlign: TextAlign.right,
+                            onTap: () => _selectAllField(instapayCtrl),
+                            decoration: InputDecoration(
+                              labelText: 'أنستاباي',
+                              labelStyle: TextStyle(fontSize: 12.sp, color: Colors.purple.shade800),
+                              hintText: '0.0',
+                              hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.r)),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8.r),
+                                borderSide: BorderSide(color: Colors.purple.shade800, width: 1.5),
+                              ),
+                              contentPadding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
+                            ),
+                          ),
+                        ),
+                        SizedBox(width: 8.w),
+                        Expanded(
+                          child: TextField(
+                            controller: bankTransferCtrl,
+                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            textAlign: TextAlign.right,
+                            onTap: () => _selectAllField(bankTransferCtrl),
+                            decoration: InputDecoration(
+                              labelText: 'تحويل بنكي',
+                              labelStyle: TextStyle(fontSize: 12.sp, color: Colors.blue.shade800),
+                              hintText: '0.0',
+                              hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
+                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.r)),
+                              focusedBorder: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8.r),
+                                borderSide: BorderSide(color: Colors.blue.shade800, width: 1.5),
+                              ),
+                              contentPadding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
                     SizedBox(height: 14.h),
                     Row(children: [
                       Expanded(
@@ -618,6 +743,12 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                                     );
                                     return;
                                   }
+
+                                  final wallet = double.tryParse(walletCtrl.text.trim()) ?? 0.0;
+                                  final cash = double.tryParse(cashCtrl.text.trim()) ?? 0.0;
+                                  final instapay = double.tryParse(instapayCtrl.text.trim()) ?? 0.0;
+                                  final bankTransfer = double.tryParse(bankTransferCtrl.text.trim()) ?? 0.0;
+
                                   Navigator.pop(context, CheckoutSelectionResult(
                                     clientName: checkoutClient.trim(),
                                     paidAmount: paidAmount,
@@ -625,6 +756,10 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                                     notes: notes,
                                     invoiceDiscount: invoiceDiscount,
                                     discountIsPercent: discountIsPercent,
+                                    walletAmount: wallet,
+                                    cashAmount: cash,
+                                    instapayAmount: instapay,
+                                    bankTransferAmount: bankTransfer,
                                   ));
                                 },
                           child: widget.isSaving

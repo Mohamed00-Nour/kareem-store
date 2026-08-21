@@ -17,9 +17,9 @@ class BoxLocalAdapter extends TypeAdapter<BoxLocal> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return BoxLocal(
-      id: fields[0]?.toString() ?? '',
-      value: (fields[1] as num?)?.toDouble() ?? 0.0,
-      updatedAt: fields[2] is DateTime ? fields[2] as DateTime : DateTime.now(),
+      id: fields[0] as String,
+      value: fields[1] == null ? 0.0 : fields[1] as double,
+      updatedAt: fields[2] as DateTime,
     );
   }
 

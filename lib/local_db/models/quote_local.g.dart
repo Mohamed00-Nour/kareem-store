@@ -17,18 +17,18 @@ class QuoteLocalAdapter extends TypeAdapter<QuoteLocal> {
       for (int i = 0; i < numOfFields; i++) reader.readByte(): reader.read(),
     };
     return QuoteLocal(
-      id: fields[0]?.toString() ?? '',
-      clientName: fields[1]?.toString() ?? '',
-      clientId: fields[2]?.toString() ?? '',
-      date: fields[3] is DateTime ? fields[3] as DateTime : DateTime.now(),
-      totalSum: (fields[4] as num?)?.toDouble() ?? 0.0,
-      paidAmount: (fields[5] as num?)?.toDouble() ?? 0.0,
-      paymentMethod: fields[6]?.toString() ?? 'نقداً',
-      notes: fields[7]?.toString() ?? '',
-      invoiceDiscount: (fields[8] as num?)?.toDouble() ?? 0.0,
-      discountIsPercent: fields[9] == true,
-      productsJson: fields[10]?.toString() ?? '[]',
-      createdAt: fields[11] is DateTime ? fields[11] as DateTime : DateTime.now(),
+      id: fields[0] as String,
+      clientName: fields[1] == null ? '' : fields[1] as String,
+      clientId: fields[2] == null ? '' : fields[2] as String,
+      date: fields[3] as DateTime,
+      totalSum: fields[4] == null ? 0.0 : fields[4] as double,
+      paidAmount: fields[5] == null ? 0.0 : fields[5] as double,
+      paymentMethod: fields[6] == null ? 'نقداً' : fields[6] as String,
+      notes: fields[7] == null ? '' : fields[7] as String,
+      invoiceDiscount: fields[8] == null ? 0.0 : fields[8] as double,
+      discountIsPercent: fields[9] == null ? false : fields[9] as bool,
+      productsJson: fields[10] == null ? '[]' : fields[10] as String,
+      createdAt: fields[11] as DateTime,
     );
   }
 

@@ -7,7 +7,7 @@ class BoxLocal extends HiveObject {
   @HiveField(0)
   String id;
 
-  @HiveField(1)
+  @HiveField(1, defaultValue: 0.0)
   double value;
 
   @HiveField(2)
