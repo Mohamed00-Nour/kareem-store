@@ -104,28 +104,39 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       });
     }
 
-    // 2. Background refresh if online
+    // 2. Background refresh & history sync if online
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection('suppliers')
-          .doc(widget.supplierId)
-          .get();
-      if (mounted && doc.exists) {
-        final data = doc.data();
-        if (data != null) {
-          final resolvedName = data['name'] ?? data['supplierName'] ?? 'المورد';
-          final balance = (data['totalBalance'] ?? data['balance'] ?? 0.0).toDouble();
-          setState(() {
-            _supplierName = resolvedName;
-            if (local == null) {
-              _currentSupplierBalance = balance;
+      if (ConnectivityService.instance.isOnline) {
+        await BalanceHistoryRepository.instance
+            .fullSyncForSupplier(widget.supplierId);
+
+        final doc = await FirebaseFirestore.instance
+            .collection('suppliers')
+            .doc(widget.supplierId)
+            .get();
+        if (mounted && doc.exists) {
+          final data = doc.data();
+          if (data != null) {
+            final resolvedName =
+                data['name'] ?? data['supplierName'] ?? 'المورد';
+            final Map<String, dynamic> localData =
+                Map<String, dynamic>.from(data);
+            localData['name'] = resolvedName;
+            localData['balance'] = (data['totalBalance'] ?? data['balance'] ?? 0.0).toDouble();
+
+            await SupplierRepository.instance
+                .upsertLocal(widget.supplierId, localData);
+
+            final refreshed =
+                SupplierRepository.instance.getById(widget.supplierId);
+            if (mounted) {
+              setState(() {
+                _supplierName = refreshed?.name ?? resolvedName;
+                _currentSupplierBalance = refreshed?.balance ??
+                    (data['totalBalance'] ?? data['balance'] ?? 0.0).toDouble();
+              });
             }
-          });
-          final Map<String, dynamic> localData = Map<String, dynamic>.from(data);
-          if (local != null) {
-            localData['balance'] = local.balance;
           }
-          SupplierRepository.instance.upsertLocal(widget.supplierId, localData);
         }
       }
     } catch (_) {}
@@ -1534,6 +1545,89 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
                       ),
                     ),
                     onChanged: (v) => setState(() => _searchQuery = v.trim()),
+                  ),
+                ),
+              ),
+              // ── Supplier Name & Running Balance Header Card (Under Search Bar) ──
+              Padding(
+                padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 4.h),
+                child: Container(
+                  padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
+                  decoration: BoxDecoration(
+                    gradient: LinearGradient(
+                      colors: [
+                        Colors.orange.shade800,
+                        Colors.orange.shade600
+                      ],
+                      begin: Alignment.centerRight,
+                      end: Alignment.centerLeft,
+                    ),
+                    borderRadius: BorderRadius.circular(12.r),
+                    boxShadow: [
+                      BoxShadow(
+                        color: Colors.orange.withOpacity(0.25),
+                        blurRadius: 6,
+                        offset: const Offset(0, 3),
+                      ),
+                    ],
+                  ),
+                  child: Directionality(
+                    textDirection: ui.TextDirection.rtl,
+                    child: Row(
+                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                      children: [
+                        Expanded(
+                          child: Row(
+                            children: [
+                              Icon(Icons.person,
+                                  color: Colors.white, size: 22.sp),
+                              SizedBox(width: 8.w),
+                              Expanded(
+                                child: Text(
+                                  _supplierName ?? 'المورد',
+                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 1,
+                                  style: TextStyle(
+                                    fontSize: 16.sp,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.white,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        SizedBox(width: 12.w),
+                        Container(
+                          padding: EdgeInsets.symmetric(
+                              horizontal: 10.w, vertical: 4.h),
+                          decoration: BoxDecoration(
+                            color: Colors.black.withOpacity(0.2),
+                            borderRadius: BorderRadius.circular(8.r),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Text(
+                                'الرصيد: ',
+                                style: TextStyle(
+                                  fontSize: 13.sp,
+                                  color: Colors.white.withOpacity(0.9),
+                                ),
+                              ),
+                              Text(
+                                '${(_currentSupplierBalance ?? 0.0).toStringAsFixed(2)} ج.م',
+                                style: TextStyle(
+                                  fontSize: 15.sp,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.white,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ),
                   ),
                 ),
               ),
