@@ -709,6 +709,7 @@ class _AddProductPageState extends State<AddProductPage> {
     required String sp1Text,
     required String sp2Text,
     required String sp3Text,
+    String? description,
   }) async {
     final updates = <String, dynamic>{};
     if (sp1Text.trim().isNotEmpty &&
@@ -723,33 +724,90 @@ class _AddProductPageState extends State<AddProductPage> {
         (sp3 - product.sellingPrice3).abs() > 0.001) {
       updates['sellingPrice3'] = sp3;
     }
+    if (description != null && description != (product.description ?? '')) {
+      updates['description'] = description;
+    }
     if (updates.isEmpty) return;
 
-    try {
-      final query = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: product.name)
-          .limit(1)
-          .get();
-      if (query.docs.isEmpty) return;
-      await query.docs.first.reference.update(updates);
+    // 1. SAVE TO HIVE FIRST (INSTANT, LOCAL, 0ms WAIT)
+    String? docId = product.id.isNotEmpty ? product.id : null;
+    docId ??= await _resolveLineProductDocId(
+        {'product': product.name, 'productId': product.id});
 
-      if (!mounted) return;
-      setState(() {
-        final idx = _products.indexWhere((p) => p.name == product.name);
-        if (idx == -1) return;
+    if (docId != null && docId.isNotEmpty) {
+      final existingLocal = productsBox.get(docId);
+      if (existingLocal != null) {
         if (updates.containsKey('sellingPrice1')) {
-          _products[idx].sellingPrice1 = sp1;
+          existingLocal.sellingPrice1 = sp1;
         }
         if (updates.containsKey('sellingPrice2')) {
-          _products[idx].sellingPrice2 = sp2;
+          existingLocal.sellingPrice2 = sp2;
         }
         if (updates.containsKey('sellingPrice3')) {
-          _products[idx].sellingPrice3 = sp3;
+          existingLocal.sellingPrice3 = sp3;
         }
+        if (updates.containsKey('description')) {
+          existingLocal.description = description!;
+        }
+        existingLocal.updatedAt = DateTime.now();
+        await existingLocal.save();
+      }
+    } else {
+      final existingByName = ProductRepository.instance.findByName(product.name);
+      if (existingByName != null) {
+        if (updates.containsKey('sellingPrice1')) {
+          existingByName.sellingPrice1 = sp1;
+        }
+        if (updates.containsKey('sellingPrice2')) {
+          existingByName.sellingPrice2 = sp2;
+        }
+        if (updates.containsKey('sellingPrice3')) {
+          existingByName.sellingPrice3 = sp3;
+        }
+        if (updates.containsKey('description')) {
+          existingByName.description = description!;
+        }
+        existingByName.updatedAt = DateTime.now();
+        await existingByName.save();
+        docId = existingByName.id;
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        final idx = _products.indexWhere((p) => p.name == product.name);
+        if (idx != -1) {
+          if (updates.containsKey('sellingPrice1')) {
+            _products[idx].sellingPrice1 = sp1;
+          }
+          if (updates.containsKey('sellingPrice2')) {
+            _products[idx].sellingPrice2 = sp2;
+          }
+          if (updates.containsKey('sellingPrice3')) {
+            _products[idx].sellingPrice3 = sp3;
+          }
+          if (updates.containsKey('description')) {
+            _products[idx].description = description;
+          }
+        }
+        product.description = description;
       });
+    }
+
+    // 2. BACKGROUND FIREBASE SYNC
+    try {
+      if (docId != null && docId.isNotEmpty) {
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'editProduct',
+          payload: {
+            'productId': docId,
+            'data': updates,
+          },
+        );
+        ConnectivityService.instance.forceSync();
+      }
     } catch (e) {
-      debugPrint('Failed to sync product prices: $e');
+      debugPrint('Failed to enqueue product update sync: $e');
     }
   }
 
@@ -998,6 +1056,12 @@ class _AddProductPageState extends State<AddProductPage> {
         : null;
     bool removeProduct = false;
 
+    String description = editIndex != null
+        ? (_addedProducts[editIndex]['description']?.toString() ??
+            product.description ??
+            '')
+        : (product.description ?? '');
+
     double weightedCost = product.quantity > 0
         ? (product.quantity * product.costPrice + qty * newCost) /
             (product.quantity + qty)
@@ -1008,6 +1072,7 @@ class _AddProductPageState extends State<AddProductPage> {
     final sp1Ctrl = TextEditingController(text: sp1.toStringAsFixed(2));
     final sp2Ctrl = TextEditingController(text: sp2.toStringAsFixed(2));
     final sp3Ctrl = TextEditingController(text: sp3.toStringAsFixed(2));
+    final descriptionCtrl = TextEditingController(text: description);
 
     showModalBottomSheet(
       context: context,
@@ -1350,6 +1415,34 @@ class _AddProductPageState extends State<AddProductPage> {
                     ),
                     SizedBox(height: 12.h),
 
+                    // ── وصف / ملاحظات المنتج ──
+                    Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: Text('وصف المنتج',
+                              style: TextStyle(
+                                  fontSize: 13.sp, fontWeight: FontWeight.bold)),
+                        ),
+                        SizedBox(height: 6.h),
+                        TextField(
+                          controller: descriptionCtrl,
+                          textAlign: TextAlign.right,
+                          maxLines: 2,
+                          decoration: InputDecoration(
+                            hintText: 'أدخل وصف أو ملاحظات المنتج...',
+                            border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(8.r)),
+                            contentPadding: EdgeInsets.symmetric(
+                                horizontal: 12.w, vertical: 8.h),
+                          ),
+                          onChanged: (v) => setSheet(() => description = v),
+                        ),
+                      ],
+                    ),
+                    SizedBox(height: 12.h),
+
                     // ── إلغاء المنتج ──
                     Row(
                         mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -1402,6 +1495,7 @@ class _AddProductPageState extends State<AddProductPage> {
                               }
                               return;
                             }
+                            final descText = descriptionCtrl.text.trim();
                             await _syncProductPricesToFirestore(
                               product: product,
                               sp1: sp1,
@@ -1410,6 +1504,7 @@ class _AddProductPageState extends State<AddProductPage> {
                               sp1Text: sp1Ctrl.text,
                               sp2Text: sp2Ctrl.text,
                               sp3Text: sp3Ctrl.text,
+                              description: descText,
                             );
                             if (!mounted) return;
                             final entry = {
@@ -1424,6 +1519,7 @@ class _AddProductPageState extends State<AddProductPage> {
                               'newSellingPrice2': sp2,
                               'newSellingPrice3': sp3,
                               'expiryDate': expiryDate,
+                              'description': descText,
                             };
                             if (editIndex != null) {
                               final lineId =

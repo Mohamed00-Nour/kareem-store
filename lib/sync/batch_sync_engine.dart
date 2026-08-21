@@ -166,7 +166,8 @@ class BatchSyncEngine {
     final List<dynamic> products = payload['products'] ?? [];
     final double totalSum = (payload['totalSum'] as num).toDouble();
     final double paidAmount = (payload['paidAmount'] as num).toDouble();
-    final int invoiceNumber = (invoiceData['invoiceNumber'] as num?)?.toInt() ?? 0;
+    final int invoiceNumber =
+        (invoiceData['invoiceNumber'] as num?)?.toInt() ?? 0;
     final String clientName = invoiceData['clientName']?.toString() ?? '';
 
     // Convert ISO date string back to DateTime for Firestore
@@ -207,7 +208,8 @@ class BatchSyncEngine {
           .doc('${invoiceId}_sale');
       batch.set(histRef1, {
         'enteredBalance': totalSum,
-        'balanceBefore': (invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0,
+        'balanceBefore':
+            (invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0,
         'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
         'type': 'sale',
         'invoiceId': invoiceId,
@@ -222,7 +224,9 @@ class BatchSyncEngine {
             .doc('${invoiceId}_pay');
         batch.set(histRef2, {
           'enteredBalance': paidAmount,
-          'balanceBefore': ((invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0) + totalSum,
+          'balanceBefore':
+              ((invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0) +
+                  totalSum,
           'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
           'type': 'sale_payment',
           'invoiceId': invoiceId,
@@ -285,7 +289,6 @@ class BatchSyncEngine {
     }
   }
 
-
   Future<void> _syncEditInvoice(Map<String, dynamic> payload) async {
     final String clientId = payload['clientId'];
     final String invoiceId = payload['invoiceId'];
@@ -298,10 +301,7 @@ class BatchSyncEngine {
     }
 
     // Update root invoice document
-    await _fs
-        .collection('invoices')
-        .doc(invoiceId)
-        .update(updateData);
+    await _fs.collection('invoices').doc(invoiceId).update(updateData);
 
     // Also update in client sub-collection if clientId is available
     if (clientId.isNotEmpty) {
@@ -388,7 +388,11 @@ class BatchSyncEngine {
 
     // 2. Write balance history log entry.
     batch.set(
-      _fs.collection('clients').doc(clientId).collection('balanceHistory').doc(),
+      _fs
+          .collection('clients')
+          .doc(clientId)
+          .collection('balanceHistory')
+          .doc(),
       logEntry,
     );
 
@@ -399,8 +403,7 @@ class BatchSyncEngine {
     );
   }
 
-  Future<void> _syncAdjustSupplierBalance(
-      Map<String, dynamic> payload) async {
+  Future<void> _syncAdjustSupplierBalance(Map<String, dynamic> payload) async {
     final String supplierId = payload['supplierId'];
     final double amount = (payload['amount'] as num).toDouble();
     final bool isAddition = payload['isAddition'] == true;
@@ -511,13 +514,18 @@ class BatchSyncEngine {
 
     // 4. Write to client sub-collection with exact invoiceId.
     batch.set(
-      _fs.collection('clients').doc(clientId).collection('returnInvoices').doc(invoiceId),
+      _fs
+          .collection('clients')
+          .doc(clientId)
+          .collection('returnInvoices')
+          .doc(invoiceId),
       invoiceData,
       SetOptions(merge: true),
     );
 
     // 5. Balance history log entries with deterministic IDs
-    final int invoiceNumber = (invoiceData['invoiceNumber'] as num?)?.toInt() ?? 0;
+    final int invoiceNumber =
+        (invoiceData['invoiceNumber'] as num?)?.toInt() ?? 0;
     final histRef1 = _fs
         .collection('clients')
         .doc(clientId)
@@ -525,7 +533,8 @@ class BatchSyncEngine {
         .doc('${invoiceId}_return');
     batch.set(histRef1, {
       'enteredBalance': totalSum,
-      'balanceBefore': (invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0,
+      'balanceBefore':
+          (invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0,
       'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
       'type': 'return',
       'invoiceId': invoiceId,
@@ -540,7 +549,9 @@ class BatchSyncEngine {
           .doc('${invoiceId}_return_pay');
       batch.set(histRef2, {
         'enteredBalance': paidAmount,
-        'balanceBefore': ((invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0) - totalSum,
+        'balanceBefore':
+            ((invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0) -
+                totalSum,
         'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
         'type': 'return_payment',
         'invoiceId': invoiceId,
@@ -739,8 +750,8 @@ class BatchSyncEngine {
     final existingSnap = await docRef.get();
     if (existingSnap.exists) {
       // Already synced — nothing to do.
-      await ClientRepository.instance.upsertLocal(
-          clientId, existingSnap.data()!);
+      await ClientRepository.instance
+          .upsertLocal(clientId, existingSnap.data()!);
       return;
     }
 
@@ -859,8 +870,7 @@ class BatchSyncEngine {
 
   // ── Update Box (offline sync) ─────────────────────────────────────────────
   Future<void> _syncUpdateBox(Map<String, dynamic> payload) async {
-    final double changeAmount =
-        (payload['changeAmount'] as num).toDouble();
+    final double changeAmount = (payload['changeAmount'] as num).toDouble();
     final double value = (payload['value'] as num).toDouble();
     final String type = payload['type']?.toString() ?? 'addition';
     final String name = payload['name']?.toString() ?? '';
@@ -913,4 +923,3 @@ class BatchSyncEngine {
     await batch.commit();
   }
 }
-
