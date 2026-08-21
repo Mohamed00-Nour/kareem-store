@@ -2268,6 +2268,10 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     final remainingOwed = invoiceClientRemainingOwed(invoiceData);
     final totalSum = invoiceNum(invoiceData['totalSum']);
     final discount = invoiceResolveDiscount(invoiceData);
+    final String notes =
+        (invoiceData['notes'] ?? invoiceData['description'] ?? '')
+            .toString()
+            .trim();
 
     final invoiceId = entry.id;
     final isExpanded = _expandedInvoiceIds.contains(invoiceId);
@@ -2414,6 +2418,36 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                   style: const TextStyle(fontSize: 14)),
               Text('$formattedTime :الوقت ',
                   style: const TextStyle(fontSize: 14)),
+              if (notes.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Container(
+                  width: double.infinity,
+                  padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+                  decoration: BoxDecoration(
+                    color: Colors.orange.shade50,
+                    borderRadius: BorderRadius.circular(6.r),
+                    border: Border.all(color: Colors.orange.shade200),
+                  ),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Icon(Icons.note_alt_outlined,
+                          size: 16.sp, color: Colors.orange.shade800),
+                      SizedBox(width: 6.w),
+                      Expanded(
+                        child: Text(
+                          'بيانات إضافية: $notes',
+                          style: TextStyle(
+                            fontSize: 13.sp,
+                            color: Colors.black87,
+                            fontWeight: FontWeight.w500,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              ],
               SizedBox(height: 10.h),
               _buildInvoiceProductsTable(
                 List<dynamic>.from(invoiceData['products'] ?? []),

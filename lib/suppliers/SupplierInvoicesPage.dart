@@ -122,7 +122,8 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
             final Map<String, dynamic> localData =
                 Map<String, dynamic>.from(data);
             localData['name'] = resolvedName;
-            localData['balance'] = (data['totalBalance'] ?? data['balance'] ?? 0.0).toDouble();
+            localData['balance'] =
+                (data['totalBalance'] ?? data['balance'] ?? 0.0).toDouble();
 
             await SupplierRepository.instance
                 .upsertLocal(widget.supplierId, localData);
@@ -141,7 +142,6 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       }
     } catch (_) {}
   }
-
 
   Query _invoicesQuery() => FirebaseFirestore.instance
       .collection('suppliers')
@@ -351,9 +351,8 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     try {
       final bool isOnline = ConnectivityService.instance.isOnline;
       if (isOnline) {
-        final supplierRef = FirebaseFirestore.instance
-            .collection('suppliers')
-            .doc(supplierId);
+        final supplierRef =
+            FirebaseFirestore.instance.collection('suppliers').doc(supplierId);
 
         await supplierRef
             .update({'totalBalance': newBalance, 'balance': newBalance});
@@ -1552,13 +1551,11 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
               Padding(
                 padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 4.h),
                 child: Container(
-                  padding: EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 14.w, vertical: 10.h),
                   decoration: BoxDecoration(
                     gradient: LinearGradient(
-                      colors: [
-                        Colors.orange.shade800,
-                        Colors.orange.shade600
-                      ],
+                      colors: [Colors.orange.shade800, Colors.orange.shade600],
                       begin: Alignment.centerRight,
                       end: Alignment.centerLeft,
                     ),
