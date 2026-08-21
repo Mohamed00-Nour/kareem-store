@@ -132,26 +132,7 @@ class InvoiceRepository {
   }
 
   Future<void> deltaSyncSales() async {
-    final lastSyncStr = appMetaBox.get(HiveMetaKeys.lastInvoiceSyncAt) as String?;
-    if (lastSyncStr == null) {
-      await fullSyncSales();
-      return;
-    }
-    final lastSync = DateTime.parse(lastSyncStr);
-    final snap = await _fs
-        .collection('invoices')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(lastSync))
-        .get();
-
-    for (final doc in snap.docs) {
-      final data = doc.data();
-      if (data['deleted'] == true) {
-        await invoicesBox.delete(doc.id);
-      } else {
-        await invoicesBox.put(doc.id, InvoiceLocal.fromFirestore(doc.id, data, defaultType: 'sale'));
-      }
-    }
-    await appMetaBox.put(HiveMetaKeys.lastInvoiceSyncAt, DateTime.now().toIso8601String());
+    await fullSyncSales();
   }
 
   Future<void> fullSyncReturns() async {
@@ -166,26 +147,7 @@ class InvoiceRepository {
   }
 
   Future<void> deltaSyncReturns() async {
-    final lastSyncStr = appMetaBox.get(HiveMetaKeys.lastReturnInvoiceSyncAt) as String?;
-    if (lastSyncStr == null) {
-      await fullSyncReturns();
-      return;
-    }
-    final lastSync = DateTime.parse(lastSyncStr);
-    final snap = await _fs
-        .collection('returnInvoices')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(lastSync))
-        .get();
-
-    for (final doc in snap.docs) {
-      final data = doc.data();
-      if (data['deleted'] == true) {
-        await returnInvoicesBox.delete(doc.id);
-      } else {
-        await returnInvoicesBox.put(doc.id, InvoiceLocal.fromFirestore(doc.id, data, defaultType: 'return'));
-      }
-    }
-    await appMetaBox.put(HiveMetaKeys.lastReturnInvoiceSyncAt, DateTime.now().toIso8601String());
+    await fullSyncReturns();
   }
 
   Future<void> fullSyncBuying() async {
@@ -200,25 +162,6 @@ class InvoiceRepository {
   }
 
   Future<void> deltaSyncBuying() async {
-    final lastSyncStr = appMetaBox.get(HiveMetaKeys.lastBuyingInvoiceSyncAt) as String?;
-    if (lastSyncStr == null) {
-      await fullSyncBuying();
-      return;
-    }
-    final lastSync = DateTime.parse(lastSyncStr);
-    final snap = await _fs
-        .collection('buying invoices')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(lastSync))
-        .get();
-
-    for (final doc in snap.docs) {
-      final data = doc.data();
-      if (data['deleted'] == true) {
-        await buyingInvoicesBox.delete(doc.id);
-      } else {
-        await buyingInvoicesBox.put(doc.id, InvoiceLocal.fromFirestore(doc.id, data, defaultType: 'buying'));
-      }
-    }
-    await appMetaBox.put(HiveMetaKeys.lastBuyingInvoiceSyncAt, DateTime.now().toIso8601String());
+    await fullSyncBuying();
   }
 }

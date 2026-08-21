@@ -76,6 +76,9 @@ double invoiceResolveDiscount(Map<String, dynamic> invoice) {
 }
 /// Synced client total owed — same [balance] on all invoices (المتبقي عليكم).
 double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
+  if (invoice.containsKey('_computedRemainingOwed') && invoice['_computedRemainingOwed'] != null) {
+    return invoiceNum(invoice['_computedRemainingOwed']);
+  }
   if (invoice.containsKey('currentClientBalance') && invoice['currentClientBalance'] != null) {
     return invoiceNum(invoice['currentClientBalance']);
   }
@@ -90,6 +93,9 @@ double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
 
 /// Synced supplier running balance — same [balance] on all buying invoices.
 double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
+  if (invoice.containsKey('_computedRemainingOwed') && invoice['_computedRemainingOwed'] != null) {
+    return invoiceNum(invoice['_computedRemainingOwed']);
+  }
   if (invoice.containsKey('currentSupplierBalance') && invoice['currentSupplierBalance'] != null) {
     return invoiceNum(invoice['currentSupplierBalance']);
   }
@@ -104,6 +110,9 @@ double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
 
 /// Calculates previous balance based on stored historical previousBalance or dynamic calculation fallback.
 double invoiceDynamicPreviousBalance(Map<String, dynamic> invoice) {
+  if (invoice.containsKey('_computedPrevBalance') && invoice['_computedPrevBalance'] != null) {
+    return invoiceNum(invoice['_computedPrevBalance']);
+  }
   if (invoice.containsKey('previousBalance') && invoice['previousBalance'] != null) {
     return invoiceNum(invoice['previousBalance']);
   }

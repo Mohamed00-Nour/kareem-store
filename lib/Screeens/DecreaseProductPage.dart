@@ -1,4 +1,4 @@
-﻿import 'dart:ui' show ImageFilter;
+import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'DecreaseProductComponents/product_model.dart';
@@ -1197,7 +1197,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'profitMargin': profitMargin,
           'paidAmount': effectivePaid,
           'balance': balance,
-          'previousBalance': _clientBalance,
+          'previousBalance': existingBalance,
           'paymentMethod': paymentMethod,
           'notes': notes,
           'invoiceDiscount': effectiveDiscountAmt,

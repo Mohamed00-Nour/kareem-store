@@ -21,7 +21,19 @@ class BalanceHistoryRepository {
         .where((e) => e.parentType == 'client' && e.parentId == cId)
         .toList();
     list.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    return list;
+
+    // Deduplicate by entry ID or invoiceId + type
+    final seenKeys = <String>{};
+    final deduplicated = <BalanceHistoryLocal>[];
+    for (final item in list) {
+      final key = item.invoiceId.isNotEmpty
+          ? '${item.invoiceId}_${item.type}'
+          : item.id;
+      if (seenKeys.add(key)) {
+        deduplicated.add(item);
+      }
+    }
+    return deduplicated;
   }
 
   List<BalanceHistoryLocal> getForSupplier(String supplierId) {
@@ -30,7 +42,19 @@ class BalanceHistoryRepository {
         .where((e) => e.parentType == 'supplier' && e.parentId == sId)
         .toList();
     list.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-    return list;
+
+    // Deduplicate by entry ID or invoiceId + type
+    final seenKeys = <String>{};
+    final deduplicated = <BalanceHistoryLocal>[];
+    for (final item in list) {
+      final key = item.invoiceId.isNotEmpty
+          ? '${item.invoiceId}_${item.type}'
+          : item.id;
+      if (seenKeys.add(key)) {
+        deduplicated.add(item);
+      }
+    }
+    return deduplicated;
   }
 
   Future<void> upsertLocal(BalanceHistoryLocal entry) async {
@@ -50,7 +74,9 @@ class BalanceHistoryRepository {
             e.parentId == parentId &&
             (e.id == invoiceId ||
              e.id == '${invoiceId}_sale' ||
-             e.id == '${invoiceId}_pay'))
+             e.id == '${invoiceId}_pay' ||
+             e.id == '${invoiceId}_return' ||
+             e.id == '${invoiceId}_return_pay'))
         .map((e) => _boxKey(e.parentType, e.parentId, e.id))
         .toList();
     await balanceHistoryBox.deleteAll(keysToDelete);

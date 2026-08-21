@@ -35,6 +35,9 @@ class BalanceHistoryLocal extends HiveObject {
   @HiveField(9)
   String direction; // 'له' or 'عليه' for suppliers
 
+  @HiveField(10)
+  String notes;
+
   BalanceHistoryLocal({
     required this.id,
     required this.parentId,
@@ -46,6 +49,7 @@ class BalanceHistoryLocal extends HiveObject {
     this.invoiceNumber = '',
     required this.timestamp,
     this.direction = '',
+    this.notes = '',
   });
 
   factory BalanceHistoryLocal.fromFirestore(
@@ -94,6 +98,7 @@ class BalanceHistoryLocal extends HiveObject {
       invoiceNumber: (data['invoiceNumber'] ?? '')?.toString() ?? '',
       timestamp: parsedTime,
       direction: (data['direction'] ?? '')?.toString() ?? '',
+      notes: (data['notes'] ?? data['description'] ?? '')?.toString() ?? '',
     );
   }
 
@@ -107,6 +112,7 @@ class BalanceHistoryLocal extends HiveObject {
       'invoiceNumber': invoiceNumber,
       'timestamp': timestamp,
       if (direction.isNotEmpty) 'direction': direction,
+      if (notes.isNotEmpty) 'notes': notes,
     };
   }
 }

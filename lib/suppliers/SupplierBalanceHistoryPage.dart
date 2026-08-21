@@ -39,6 +39,21 @@ class _SupplierBalanceHistoryPageState
   void _loadFromLocalCache() {
     final locals =
         BalanceHistoryRepository.instance.getForSupplier(widget.supplierId);
+    locals.sort((a, b) => a.timestamp.compareTo(b.timestamp));
+
+    double running = 0.0;
+    final Map<String, double> beforeMap = {};
+    for (final entry in locals) {
+      beforeMap[entry.id] = running;
+      final type = entry.type;
+      final isIncrease = type == 'buying' || type == 'opening' || type == 'addition';
+      if (isIncrease) {
+        running += entry.enteredBalance;
+      } else {
+        running -= entry.enteredBalance;
+      }
+    }
+
     locals.sort((a, b) => b.timestamp.compareTo(a.timestamp));
     if (mounted) {
       setState(() {

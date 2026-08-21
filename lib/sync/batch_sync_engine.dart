@@ -190,12 +190,13 @@ class BatchSyncEngine {
 
       // 3. Update client running balance.
       final double newBalance = totalSum - paidAmount;
-      batch.update(
+      batch.set(
         _fs.collection('clients').doc(clientId),
         {
           'balance': FieldValue.increment(newBalance),
           'updatedAt': FieldValue.serverTimestamp(),
         },
+        SetOptions(merge: true),
       );
 
       // 4. Balance history entries
@@ -474,10 +475,11 @@ class BatchSyncEngine {
     if (invoiceData['date'] is String) {
       invoiceData['date'] = DateTime.parse(invoiceData['date'] as String);
     }
+    invoiceData['updatedAt'] = FieldValue.serverTimestamp();
 
     // 1. Write the return invoice document.
     final invoiceRef = _fs.collection('returnInvoices').doc(invoiceId);
-    batch.set(invoiceRef, invoiceData);
+    batch.set(invoiceRef, invoiceData, SetOptions(merge: true));
 
     // 2. Restore stock for each product (atomic — safe for multi-device).
     for (final product in products) {
@@ -501,18 +503,52 @@ class BatchSyncEngine {
 
     // 3. Update client running balance (return reduces debt).
     final double balanceReduction = totalSum - paidAmount;
-    batch.update(
+    batch.set(
       _fs.collection('clients').doc(clientId),
       {'balance': FieldValue.increment(-balanceReduction)},
+      SetOptions(merge: true),
     );
 
-    // 4. Write to client sub-collection.
+    // 4. Write to client sub-collection with exact invoiceId.
     batch.set(
-      _fs.collection('clients').doc(clientId).collection('returnInvoices').doc(),
+      _fs.collection('clients').doc(clientId).collection('returnInvoices').doc(invoiceId),
       invoiceData,
+      SetOptions(merge: true),
     );
 
-    // 5. Cash box update (subtract refund paid).
+    // 5. Balance history log entries with deterministic IDs
+    final int invoiceNumber = (invoiceData['invoiceNumber'] as num?)?.toInt() ?? 0;
+    final histRef1 = _fs
+        .collection('clients')
+        .doc(clientId)
+        .collection('balanceHistory')
+        .doc('${invoiceId}_return');
+    batch.set(histRef1, {
+      'enteredBalance': totalSum,
+      'balanceBefore': (invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0,
+      'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
+      'type': 'return',
+      'invoiceId': invoiceId,
+      'invoiceNumber': invoiceNumber,
+    });
+
+    if (paidAmount > 0) {
+      final histRef2 = _fs
+          .collection('clients')
+          .doc(clientId)
+          .collection('balanceHistory')
+          .doc('${invoiceId}_return_pay');
+      batch.set(histRef2, {
+        'enteredBalance': paidAmount,
+        'balanceBefore': ((invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0) - totalSum,
+        'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
+        'type': 'return_payment',
+        'invoiceId': invoiceId,
+        'invoiceNumber': invoiceNumber,
+      });
+    }
+
+    // 6. Cash box update (subtract refund paid).
     if (paidAmount > 0) {
       batch.set(
         _fs.collection('box').doc('mainBox'),

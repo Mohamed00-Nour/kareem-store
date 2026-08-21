@@ -337,10 +337,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       return;
     }
 
-    setState(() {
-      _isSaving = true; // Show loading overlay
-    });
-
     try {
       // 1. Get current balance from local Hive immediately
       final clientLocal = ClientRepository.instance.getById(widget.clientId);
@@ -365,9 +361,16 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           enteredBalance: enteredBalance,
           balanceBefore: currentBalance,
           type: isAddition ? 'addition' : 'deduction',
+          notes: notesText,
           timestamp: DateTime.now(),
         ),
       );
+
+      if (isAddition) {
+        await BoxRepository.instance.decrement(enteredBalance);
+      } else {
+        await BoxRepository.instance.increment(enteredBalance);
+      }
 
       _balanceController.clear();
       _addBalanceController.clear();
@@ -383,72 +386,89 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         );
       }
 
-      // 3. Sync to Firestore in background / queue for offline sync
-      final logEntry = <String, dynamic>{
-        'enteredBalance': enteredBalance,
-        'balanceBefore': currentBalance,
-        'type': isAddition ? 'addition' : 'deduction',
-        'notes': notesText,
-        'timestamp': DateTime.now().toIso8601String(),
-      };
+      // 3. Sync to Firestore asynchronously in background (non-blocking)
+      _syncClientBalanceToFirestoreInBackground(
+        clientId: widget.clientId,
+        clientName: _clientName ?? widget.clientId,
+        newBalance: newBalance,
+        currentBalance: currentBalance,
+        enteredBalance: enteredBalance,
+        isAddition: isAddition,
+        notesText: notesText,
+        historyId: historyId,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
+        );
+      }
+    }
+  }
 
+  void _syncClientBalanceToFirestoreInBackground({
+    required String clientId,
+    required String clientName,
+    required double newBalance,
+    required double currentBalance,
+    required double enteredBalance,
+    required bool isAddition,
+    required String notesText,
+    required String historyId,
+  }) async {
+    final logEntry = <String, dynamic>{
+      'enteredBalance': enteredBalance,
+      'balanceBefore': currentBalance,
+      'type': isAddition ? 'addition' : 'deduction',
+      'notes': notesText,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+
+    try {
       final bool isOnline = ConnectivityService.instance.isOnline;
       if (isOnline) {
-        try {
-          await FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .update({'balance': newBalance});
+        await FirebaseFirestore.instance
+            .collection('clients')
+            .doc(clientId)
+            .update({'balance': newBalance});
 
-          await FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('balanceHistory')
-              .doc(historyId)
-              .set({
-            'enteredBalance': enteredBalance,
-            'balanceBefore': currentBalance,
-            'type': isAddition ? 'addition' : 'deduction',
-            'notes': notesText,
-            'timestamp': FieldValue.serverTimestamp(),
-          });
+        await FirebaseFirestore.instance
+            .collection('clients')
+            .doc(clientId)
+            .collection('balanceHistory')
+            .doc(historyId)
+            .set({
+          'enteredBalance': enteredBalance,
+          'balanceBefore': currentBalance,
+          'type': isAddition ? 'addition' : 'deduction',
+          'notes': notesText,
+          'timestamp': FieldValue.serverTimestamp(),
+        });
 
-          DocumentReference boxDocRef =
-              FirebaseFirestore.instance.collection('box').doc('mainBox');
+        DocumentReference boxDocRef =
+            FirebaseFirestore.instance.collection('box').doc('mainBox');
 
-          await boxDocRef.set(
-            {
-              'value': FieldValue.increment(
-                  isAddition ? -enteredBalance : enteredBalance)
-            },
-            SetOptions(merge: true),
-          );
+        await boxDocRef.set(
+          {
+            'value': FieldValue.increment(
+                isAddition ? -enteredBalance : enteredBalance)
+          },
+          SetOptions(merge: true),
+        );
 
-          await boxDocRef.collection('changes').add({
-            'date': FieldValue.serverTimestamp(),
-            'value': enteredBalance,
-            'type': isAddition ? 'decrement' : 'addition',
-            'name': _clientName ?? widget.clientId,
-            'notes': notesText,
-            'invoiceNumber': null,
-          });
-        } catch (e) {
-          await SyncQueueManager.instance.enqueue(
-            operationType: 'adjustClientBalance',
-            payload: {
-              'clientId': widget.clientId,
-              'amount': enteredBalance,
-              'isAddition': isAddition,
-              'logEntry': logEntry,
-              'newBalance': newBalance,
-            },
-          );
-        }
+        await boxDocRef.collection('changes').add({
+          'date': FieldValue.serverTimestamp(),
+          'value': enteredBalance,
+          'type': isAddition ? 'decrement' : 'addition',
+          'name': clientName,
+          'notes': notesText,
+          'invoiceNumber': null,
+        });
       } else {
         await SyncQueueManager.instance.enqueue(
           operationType: 'adjustClientBalance',
           payload: {
-            'clientId': widget.clientId,
+            'clientId': clientId,
             'amount': enteredBalance,
             'isAddition': isAddition,
             'logEntry': logEntry,
@@ -456,18 +476,17 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           },
         );
       }
-    } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
-        );
-      }
-    } finally {
-      if (mounted) {
-        setState(() {
-          _isSaving = false;
-        });
-      }
+    } catch (_) {
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'adjustClientBalance',
+        payload: {
+          'clientId': clientId,
+          'amount': enteredBalance,
+          'isAddition': isAddition,
+          'logEntry': logEntry,
+          'newBalance': newBalance,
+        },
+      );
     }
   }
 
@@ -2092,12 +2111,17 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
             setState(() {
               _clientName = resolvedName;
-              _currentClientBalance = balance;
+              if (local == null) {
+                _currentClientBalance = balance;
+              }
             });
 
             final Map<String, dynamic> localData =
                 Map<String, dynamic>.from(data);
             localData['clientName'] = resolvedName;
+            if (local != null) {
+              localData['balance'] = local.balance;
+            }
             await ClientRepository.instance
                 .upsertLocal(widget.clientId, localData);
           }
@@ -2132,16 +2156,57 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     return DateTime(0);
   }
 
-  /// Combines sales invoices, return invoices, and payment entries sorted newest first.
+  /// Combines sales invoices, return invoices, and payment entries sorted newest first,
+  /// with dynamically calculated chronological running balances.
   List<_InvoiceEntry> get _allMergedInvoices {
     final List<_InvoiceEntry> merged = [
-      ..._invoices.map((d) =>
-          _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.invoice)),
+      ..._invoices.map((d) => _InvoiceEntry(
+          id: d.id,
+          data: Map<String, dynamic>.from(d.data),
+          kind: _EntryKind.invoice)),
       ..._returnInvoices.map((d) => _InvoiceEntry(
-          id: d.id, data: d.data, kind: _EntryKind.returnInvoice)),
-      ..._payments.map((d) =>
-          _InvoiceEntry(id: d.id, data: d.data, kind: _EntryKind.payment)),
+          id: d.id,
+          data: Map<String, dynamic>.from(d.data),
+          kind: _EntryKind.returnInvoice)),
+      ..._payments.map((d) => _InvoiceEntry(
+          id: d.id,
+          data: Map<String, dynamic>.from(d.data),
+          kind: _EntryKind.payment)),
     ];
+
+    // Sort ascending by date to compute chronological running balances
+    merged.sort((a, b) => _entryDate(a).compareTo(_entryDate(b)));
+
+    var running = 0.0;
+    for (final entry in merged) {
+      final data = entry.data;
+      data['_computedPrevBalance'] = running;
+
+      if (entry.kind == _EntryKind.invoice) {
+        final total = invoiceNum(data['totalSum']);
+        final paid = invoiceNum(data['paidAmount']);
+        running += (total - paid);
+      } else if (entry.kind == _EntryKind.returnInvoice) {
+        final total = invoiceNum(data['totalSum']);
+        final paid = invoiceNum(data['paidAmount']);
+        running -= (total - paid);
+      } else if (entry.kind == _EntryKind.payment) {
+        final type = data['type']?.toString() ?? '';
+        // Invoice paidAmount is already accounted for in invoice/return entries
+        if (type == 'sale_payment' || type == 'return_payment') continue;
+
+        final entered = invoiceNum(
+            data['enteredBalance'] ?? data['amount'] ?? data['value']);
+        if (type == 'opening' || type == 'addition' || type == 'sale') {
+          running += entered;
+        } else if (type == 'deduction' || type == 'return') {
+          running -= entered;
+        }
+      }
+      data['_computedRemainingOwed'] = running;
+    }
+
+    // Sort descending (newest first) for UI display
     merged.sort((a, b) => _entryDate(b).compareTo(_entryDate(a)));
     return merged;
   }
@@ -2684,10 +2749,36 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
         BalanceHistoryRepository.instance.getForClient(widget.clientId);
     final docs =
         locals.map((bh) => _ItemDoc(id: bh.id, data: bh.toMap())).toList();
-    final sorted = _sortDocs(docs);
+
+    // 1. Sort ascending (oldest first)
+    final sortedAscending = _sortDocsAscending(docs);
+
+    // 2. Compute dynamic chronological running balances
+    double running = 0.0;
+    for (final item in sortedAscending) {
+      final data = item.data;
+      final type = data['type']?.toString() ?? 'deduction';
+      final entered = (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
+      final isIncrease = _isIncreaseType(type);
+
+      item.computedBefore = running;
+      if (isIncrease) {
+        running += entered;
+      } else {
+        running -= entered;
+      }
+      item.computedAfter = running;
+    }
+
+    // 3. Keep Hive local balance updated with exact running balance
+    ClientRepository.instance.updateLocalBalance(widget.clientId, running);
+
+    // 4. Sort descending for display (newest first)
+    final sortedDescending = _sortDocs(sortedAscending);
+
     if (mounted) {
       setState(() {
-        _historyDocs = sorted;
+        _historyDocs = sortedDescending;
         _isLoading = false;
       });
     }
@@ -2718,6 +2809,55 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
         setState(() => _isLoading = false);
       }
     });
+  }
+
+  static int _typePriorityAscending(String type) {
+    switch (type) {
+      case 'opening':
+        return 0;
+      case 'sale':
+        return 1;
+      case 'sale_payment':
+        return 2;
+      case 'return':
+        return 3;
+      case 'return_payment':
+        return 4;
+      case 'addition':
+        return 5;
+      case 'deduction':
+        return 6;
+      default:
+        return 7;
+    }
+  }
+
+  static List<_ItemDoc> _sortDocsAscending(List<_ItemDoc> docs) {
+    final sorted = List<_ItemDoc>.from(docs);
+    sorted.sort((a, b) {
+      final dataA = a.data;
+      final dataB = b.data;
+      final typeA = dataA['type']?.toString() ?? '';
+      final typeB = dataB['type']?.toString() ?? '';
+
+      final dateA = _parseDocDate(dataA['timestamp'] ?? dataA['date']);
+      final dateB = _parseDocDate(dataB['timestamp'] ?? dataB['date']);
+
+      if (dateA != null && dateB != null) {
+        final cmp = dateA.compareTo(dateB);
+        if (cmp != 0) return cmp;
+      } else if (dateA != null) {
+        return -1;
+      } else if (dateB != null) {
+        return 1;
+      }
+
+      if (typeA == 'opening' && typeB != 'opening') return -1;
+      if (typeB == 'opening' && typeA != 'opening') return 1;
+
+      return _typePriorityAscending(typeA).compareTo(_typePriorityAscending(typeB));
+    });
+    return sorted;
   }
 
   static int _typePriority(String type) {
@@ -3481,8 +3621,15 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
 class _ItemDoc {
   final String id;
   final Map<String, dynamic> data;
+  double? computedBefore;
+  double? computedAfter;
 
-  _ItemDoc({required this.id, required this.data});
+  _ItemDoc({
+    required this.id,
+    required this.data,
+    this.computedBefore,
+    this.computedAfter,
+  });
 }
 
 // ──────────────────────────────────────────────────────────────

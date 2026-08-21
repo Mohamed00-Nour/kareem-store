@@ -27,13 +27,14 @@ class BalanceHistoryLocalAdapter extends TypeAdapter<BalanceHistoryLocal> {
       invoiceNumber: fields[7]?.toString() ?? '',
       timestamp: fields[8] is DateTime ? fields[8] as DateTime : DateTime.now(),
       direction: fields[9]?.toString() ?? '',
+      notes: fields[10]?.toString() ?? '',
     );
   }
 
   @override
   void write(BinaryWriter writer, BalanceHistoryLocal obj) {
     writer
-      ..writeByte(10)
+      ..writeByte(11)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -53,7 +54,9 @@ class BalanceHistoryLocalAdapter extends TypeAdapter<BalanceHistoryLocal> {
       ..writeByte(8)
       ..write(obj.timestamp)
       ..writeByte(9)
-      ..write(obj.direction);
+      ..write(obj.direction)
+      ..writeByte(10)
+      ..write(obj.notes);
   }
 
   @override

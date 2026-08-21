@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/supplier_local.dart';
 
+import 'balance_history_repository.dart';
+
 /// Repository for Supplier data.
 ///
 /// READ  → Hive local cache (instant, zero network).
@@ -14,9 +16,32 @@ class SupplierRepository {
 
   // ── Cache helpers ─────────────────────────────────────────────────────────
 
-  /// All suppliers from local cache, sorted by name.
+  /// Compute live running balance for a supplier directly from local Hive transaction history.
+  double computeLiveBalanceFromHive(String supplierId) {
+    final history = BalanceHistoryRepository.instance.getForSupplier(supplierId);
+    if (history.isEmpty) {
+      final existing = suppliersBox.get(supplierId);
+      return existing?.balance ?? 0.0;
+    }
+    double running = 0.0;
+    for (final bh in history) {
+      final type = bh.type;
+      final isIncrease = type == 'buying' || type == 'opening' || type == 'addition';
+      if (isIncrease) {
+        running += bh.enteredBalance;
+      } else {
+        running -= bh.enteredBalance;
+      }
+    }
+    return running;
+  }
+
+  /// All suppliers from local cache, with instant live balances computed from Hive.
   List<SupplierLocal> getAll() {
     final suppliers = suppliersBox.values.toList();
+    for (final s in suppliers) {
+      s.balance = computeLiveBalanceFromHive(s.id);
+    }
     suppliers.sort((a, b) => a.name.compareTo(b.name));
     return suppliers;
   }
@@ -25,21 +50,33 @@ class SupplierRepository {
   List<SupplierLocal> search(String query) {
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return getAll();
-    return suppliersBox.values
+    final list = suppliersBox.values
         .where((s) => s.name.toLowerCase().contains(q))
-        .toList()
-      ..sort((a, b) => a.name.compareTo(b.name));
+        .toList();
+    for (final s in list) {
+      s.balance = computeLiveBalanceFromHive(s.id);
+    }
+    list.sort((a, b) => a.name.compareTo(b.name));
+    return list;
   }
 
-  /// Get a single supplier by Firestore document ID.
-  SupplierLocal? getById(String id) => suppliersBox.get(id);
+  /// Get a single supplier by Firestore document ID with instant Hive balance.
+  SupplierLocal? getById(String id) {
+    final s = suppliersBox.get(id);
+    if (s != null) {
+      s.balance = computeLiveBalanceFromHive(s.id);
+    }
+    return s;
+  }
 
-  /// Get a single supplier by name (case-insensitive).
+  /// Get a single supplier by name (case-insensitive) with instant Hive balance.
   SupplierLocal? findByName(String name) {
     final n = name.trim().toLowerCase();
     try {
-      return suppliersBox.values
-          .firstWhere((s) => s.name.toLowerCase() == n);
+      final s = suppliersBox.values
+          .firstWhere((supplier) => supplier.name.toLowerCase() == n);
+      s.balance = computeLiveBalanceFromHive(s.id);
+      return s;
     } catch (_) {
       return null;
     }
@@ -51,11 +88,16 @@ class SupplierRepository {
   Future<void> fullSync() async {
     final snap = await _fs.collection('suppliers').get();
     final box = suppliersBox;
-    await box.clear();
     final Map<String, SupplierLocal> entries = {};
     for (final doc in snap.docs) {
-      entries[doc.id] = SupplierLocal.fromFirestore(doc.id, doc.data());
+      final serverSupplier = SupplierLocal.fromFirestore(doc.id, doc.data());
+      final localExisting = box.get(doc.id);
+      if (localExisting != null) {
+        serverSupplier.balance = localExisting.balance;
+      }
+      entries[doc.id] = serverSupplier;
     }
+    await box.clear();
     await box.putAll(entries);
     appMetaBox.put(
       HiveMetaKeys.lastSupplierSyncAt,

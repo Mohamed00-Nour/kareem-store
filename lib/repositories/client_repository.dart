@@ -4,6 +4,8 @@ import '../local_db/hive_init.dart';
 import '../local_db/models/client_local.dart';
 import '../sync/sync_queue_manager.dart';
 
+import 'balance_history_repository.dart';
+
 /// Repository for Client data.
 ///
 /// READ  → Hive local cache (instant, zero network).
@@ -16,9 +18,35 @@ class ClientRepository {
 
   // ── Cache helpers ─────────────────────────────────────────────────────────
 
-  /// All clients from local cache, sorted by name.
+  /// Compute live running balance for a client directly from local Hive transaction history.
+  double computeLiveBalanceFromHive(String clientId) {
+    final history = BalanceHistoryRepository.instance.getForClient(clientId);
+    if (history.isEmpty) {
+      final existing = clientsBox.get(clientId);
+      return existing?.balance ?? 0.0;
+    }
+    double running = 0.0;
+    for (final bh in history) {
+      final type = bh.type;
+      final isIncrease = type == 'sale' ||
+          type == 'addition' ||
+          type == 'opening' ||
+          type == 'return_payment';
+      if (isIncrease) {
+        running += bh.enteredBalance;
+      } else {
+        running -= bh.enteredBalance;
+      }
+    }
+    return running;
+  }
+
+  /// All clients from local cache, with instant live balances computed from Hive.
   List<ClientLocal> getAll() {
     final clients = clientsBox.values.toList();
+    for (final c in clients) {
+      c.balance = computeLiveBalanceFromHive(c.id);
+    }
     clients.sort((a, b) => a.name.compareTo(b.name));
     return clients;
   }
@@ -27,21 +55,33 @@ class ClientRepository {
   List<ClientLocal> search(String query) {
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return getAll();
-    return clientsBox.values
+    final list = clientsBox.values
         .where((c) => c.name.toLowerCase().contains(q))
-        .toList()
-      ..sort((a, b) => a.name.compareTo(b.name));
+        .toList();
+    for (final c in list) {
+      c.balance = computeLiveBalanceFromHive(c.id);
+    }
+    list.sort((a, b) => a.name.compareTo(b.name));
+    return list;
   }
 
-  /// Get a single client by Firestore document ID.
-  ClientLocal? getById(String id) => clientsBox.get(id);
+  /// Get a single client by Firestore document ID with instant Hive balance.
+  ClientLocal? getById(String id) {
+    final c = clientsBox.get(id);
+    if (c != null) {
+      c.balance = computeLiveBalanceFromHive(c.id);
+    }
+    return c;
+  }
 
-  /// Get a single client by name (case-insensitive).
+  /// Get a single client by name (case-insensitive) with instant Hive balance.
   ClientLocal? findByName(String name) {
     final n = name.trim().toLowerCase();
     try {
-      return clientsBox.values
-          .firstWhere((c) => c.name.toLowerCase() == n);
+      final c = clientsBox.values
+          .firstWhere((client) => client.name.toLowerCase() == n);
+      c.balance = computeLiveBalanceFromHive(c.id);
+      return c;
     } catch (_) {
       return null;
     }
@@ -70,11 +110,10 @@ class ClientRepository {
     final Map<String, ClientLocal> entries = {};
     for (final doc in snap.docs) {
       final serverClient = ClientLocal.fromFirestore(doc.id, doc.data());
-      if (pendingClientIds.contains(doc.id)) {
-        final localExisting = box.get(doc.id);
-        if (localExisting != null) {
-          serverClient.balance = localExisting.balance;
-        }
+      final localExisting = box.get(doc.id);
+      if (localExisting != null) {
+        // Hive is our primary local DB — preserve local Hive balance from being overwritten by stale server reads
+        serverClient.balance = localExisting.balance;
       }
       entries[doc.id] = serverClient;
     }

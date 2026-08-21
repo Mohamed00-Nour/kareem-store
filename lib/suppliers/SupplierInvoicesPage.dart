@@ -12,7 +12,11 @@ import '../Screeens/AddProductPage.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/supplier_statement_pdf_service.dart';
+import '../local_db/models/balance_history_local.dart';
+import '../repositories/balance_history_repository.dart';
+import '../repositories/box_repository.dart';
 import '../repositories/supplier_repository.dart';
+import '../sync/connectivity_service.dart';
 import 'SupplierBalanceHistoryPage.dart';
 
 class SupplierInvoicesPage extends StatefulWidget {
@@ -108,13 +112,20 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
           .get();
       if (mounted && doc.exists) {
         final data = doc.data();
-        setState(() {
-          _supplierName = data?['name'] ?? data?['supplierName'] ?? 'المورد';
-          _currentSupplierBalance =
-              (data?['totalBalance'] ?? data?['balance'] ?? 0.0).toDouble();
-        });
         if (data != null) {
-          SupplierRepository.instance.upsertLocal(widget.supplierId, data);
+          final resolvedName = data['name'] ?? data['supplierName'] ?? 'المورد';
+          final balance = (data['totalBalance'] ?? data['balance'] ?? 0.0).toDouble();
+          setState(() {
+            _supplierName = resolvedName;
+            if (local == null) {
+              _currentSupplierBalance = balance;
+            }
+          });
+          final Map<String, dynamic> localData = Map<String, dynamic>.from(data);
+          if (local != null) {
+            localData['balance'] = local.balance;
+          }
+          SupplierRepository.instance.upsertLocal(widget.supplierId, localData);
         }
       }
     } catch (_) {}
@@ -227,6 +238,13 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       return;
     }
 
+    if (notesText.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('يرجى إدخال البيان')),
+      );
+      return;
+    }
+
     final isAddition = addText.isNotEmpty;
     final valueText = isAddition ? addText : deductText;
     double enteredBalance = double.tryParse(valueText) ?? 0.0;
@@ -238,117 +256,156 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       return;
     }
 
-    setState(() {
-      _isSaving = true;
-    });
-
     try {
-      final supplierRef = FirebaseFirestore.instance
-          .collection('suppliers')
-          .doc(widget.supplierId);
-      final supplierSnap = await supplierRef.get();
+      // 1. Get current balance from local Hive immediately
+      final supplierLocal =
+          SupplierRepository.instance.getById(widget.supplierId);
+      final double currentBalance =
+          supplierLocal?.balance ?? _currentSupplierBalance ?? 0.0;
+      final String supplierName =
+          supplierLocal?.name ?? _supplierName ?? widget.supplierId;
 
-      double currentBalance = 0.0;
-      String supplierName = '';
-
-      if (supplierSnap.exists) {
-        final data = supplierSnap.data();
-        currentBalance =
-            (data?['totalBalance'] ?? data?['balance'] ?? 0.0).toDouble();
-        supplierName = data?['name'] ?? data?['supplierName'] ?? '';
-      }
-
-      double newBalance = isAddition
+      final double newBalance = isAddition
           ? currentBalance + enteredBalance
           : currentBalance - enteredBalance;
 
-      await supplierRef
-          .update({'totalBalance': newBalance, 'balance': newBalance});
+      final historyId = DateTime.now().millisecondsSinceEpoch.toString();
+
+      // 2. Save to local Hive database immediately (<1ms)
+      await SupplierRepository.instance
+          .updateLocalBalance(widget.supplierId, newBalance);
+
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: historyId,
+          parentId: widget.supplierId,
+          parentType: 'supplier',
+          enteredBalance: enteredBalance,
+          balanceBefore: currentBalance,
+          type: isAddition ? 'addition' : 'voucher',
+          notes: notesText,
+          timestamp: DateTime.now(),
+        ),
+      );
 
       if (!isAddition) {
-        // Create voucher for payment to supplier
-        final voucherSnap = await FirebaseFirestore.instance
-            .collection('supplier_vouchers')
-            .orderBy('voucherNumber', descending: true)
-            .limit(1)
-            .get();
-        final nextVoucher = voucherSnap.docs.isNotEmpty
-            ? (voucherSnap.docs.first['voucherNumber'] as int) + 1
-            : 1;
-
-        final voucherRef = await FirebaseFirestore.instance
-            .collection('supplier_vouchers')
-            .add({
-          'supplierId': widget.supplierId,
-          'supplierName': supplierName,
-          'direction': 'عليه',
-          'amount': enteredBalance,
-          'description': notesText.isNotEmpty ? notesText : 'سداد نقدي للمورد',
-          'date': Timestamp.now(),
-          'timestamp': DateTime.now(),
-          'voucherNumber': nextVoucher,
-        });
-
-        await supplierRef.collection('balanceHistory').add({
-          'enteredBalance': enteredBalance,
-          'balanceBefore': currentBalance,
-          'type': 'voucher',
-          'voucherId': voucherRef.id,
-          'notes': notesText.isNotEmpty ? notesText : 'سداد نقدي للمورد',
-          'timestamp': DateTime.now(),
-        });
-      } else {
-        await supplierRef.collection('balanceHistory').add({
-          'enteredBalance': enteredBalance,
-          'balanceBefore': currentBalance,
-          'type': 'addition',
-          'notes': notesText.isNotEmpty ? notesText : 'إضافة رصيد للمورد',
-          'timestamp': DateTime.now(),
-        });
-      }
-
-      if (!isAddition) {
-        // Update box - payment to supplier decreases box
-        DocumentReference boxDocRef =
-            FirebaseFirestore.instance.collection('box').doc('mainBox');
-        await boxDocRef.set(
-          {'value': FieldValue.increment(-enteredBalance)},
-          SetOptions(merge: true),
-        );
-
-        await boxDocRef.collection('changes').add({
-          'date': FieldValue.serverTimestamp(),
-          'value': enteredBalance,
-          'type': 'decrement',
-          'name': supplierName,
-          'notes': notesText,
-          'invoiceNumber': null,
-        });
+        await BoxRepository.instance.decrement(enteredBalance);
       }
 
       _balanceController.clear();
       _addBalanceController.clear();
       _notesController.clear();
 
-      await SupplierInvoiceBalanceSyncService.syncForSupplier(
-          widget.supplierId);
-      _fetchSupplierName();
-      _refreshInvoices();
-
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
-      );
-    } catch (e) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
-      );
-    } finally {
       if (mounted) {
         setState(() {
-          _isSaving = false;
+          _currentSupplierBalance = newBalance;
         });
+        _fetchSupplierName();
+        _refreshInvoices();
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
+        );
+      }
+
+      // 3. Sync to Firestore asynchronously in background (non-blocking)
+      _syncSupplierBalanceToFirestoreInBackground(
+        supplierId: widget.supplierId,
+        supplierName: supplierName,
+        newBalance: newBalance,
+        currentBalance: currentBalance,
+        enteredBalance: enteredBalance,
+        isAddition: isAddition,
+        notesText: notesText,
+        historyId: historyId,
+      );
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ في حفظ الرصيد: $e')),
+        );
       }
     }
+  }
+
+  void _syncSupplierBalanceToFirestoreInBackground({
+    required String supplierId,
+    required String supplierName,
+    required double newBalance,
+    required double currentBalance,
+    required double enteredBalance,
+    required bool isAddition,
+    required String notesText,
+    required String historyId,
+  }) async {
+    try {
+      final bool isOnline = ConnectivityService.instance.isOnline;
+      if (isOnline) {
+        final supplierRef = FirebaseFirestore.instance
+            .collection('suppliers')
+            .doc(supplierId);
+
+        await supplierRef
+            .update({'totalBalance': newBalance, 'balance': newBalance});
+
+        if (!isAddition) {
+          final voucherSnap = await FirebaseFirestore.instance
+              .collection('supplier_vouchers')
+              .orderBy('voucherNumber', descending: true)
+              .limit(1)
+              .get();
+          final nextVoucher = voucherSnap.docs.isNotEmpty
+              ? (voucherSnap.docs.first['voucherNumber'] as int) + 1
+              : 1;
+
+          final voucherRef = await FirebaseFirestore.instance
+              .collection('supplier_vouchers')
+              .add({
+            'supplierId': supplierId,
+            'supplierName': supplierName,
+            'direction': 'عليه',
+            'amount': enteredBalance,
+            'description':
+                notesText.isNotEmpty ? notesText : 'سداد نقدي للمورد',
+            'date': Timestamp.now(),
+            'timestamp': DateTime.now(),
+            'voucherNumber': nextVoucher,
+          });
+
+          await supplierRef.collection('balanceHistory').doc(historyId).set({
+            'enteredBalance': enteredBalance,
+            'balanceBefore': currentBalance,
+            'type': 'voucher',
+            'voucherId': voucherRef.id,
+            'notes': notesText.isNotEmpty ? notesText : 'سداد نقدي للمورد',
+            'timestamp': DateTime.now(),
+          });
+
+          DocumentReference boxDocRef =
+              FirebaseFirestore.instance.collection('box').doc('mainBox');
+          await boxDocRef.set(
+            {'value': FieldValue.increment(-enteredBalance)},
+            SetOptions(merge: true),
+          );
+
+          await boxDocRef.collection('changes').add({
+            'date': FieldValue.serverTimestamp(),
+            'value': enteredBalance,
+            'type': 'decrement',
+            'name': supplierName,
+            'notes': notesText,
+            'invoiceNumber': null,
+          });
+        } else {
+          await supplierRef.collection('balanceHistory').doc(historyId).set({
+            'enteredBalance': enteredBalance,
+            'balanceBefore': currentBalance,
+            'type': 'addition',
+            'notes': notesText.isNotEmpty ? notesText : 'إضافة رصيد للمورد',
+            'timestamp': DateTime.now(),
+          });
+        }
+      }
+    } catch (_) {}
   }
 
   void _showPermissionDeniedDialog() {
@@ -768,7 +825,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
                       focusedBorder: const OutlineInputBorder(
                         borderSide: BorderSide(color: Colors.orange),
                       ),
-                      labelText: 'البيان / ملاحظات العملية (اختياري)',
+                      labelText: 'البيان / ملاحظات العملية (مطلوب)',
                       labelStyle: TextStyle(
                         color: Colors.black.withOpacity(0.7),
                         fontSize: 14.sp,
@@ -801,6 +858,24 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
                       borderRadius: BorderRadius.circular(8.r)),
                 ),
                 onPressed: () {
+                  final deductText = _balanceController.text.trim();
+                  final addText = _addBalanceController.text.trim();
+                  final notesText = _notesController.text.trim();
+
+                  if (deductText.isEmpty && addText.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('يرجى إدخال المبلغ')),
+                    );
+                    return;
+                  }
+
+                  if (notesText.isEmpty) {
+                    ScaffoldMessenger.of(context).showSnackBar(
+                      const SnackBar(content: Text('يرجى إدخال البيان')),
+                    );
+                    return;
+                  }
+
                   Navigator.pop(ctx);
                   _saveBalance();
                 },
@@ -843,6 +918,39 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       ..._payments.map((d) =>
           _SupplierInvoiceEntry(doc: d, kind: _SupplierEntryKind.payment)),
     ];
+
+    // Sort ascending by date to compute chronological running balances
+    merged.sort((a, b) => _entryDate(a).compareTo(_entryDate(b)));
+
+    var running = 0.0;
+    for (final entry in merged) {
+      final data = entry.data;
+      data['_computedPrevBalance'] = running;
+
+      if (entry.kind == _SupplierEntryKind.invoice) {
+        final total = invoiceNum(data['totalSum']);
+        final paid = invoiceNum(data['paidAmount']);
+        running += (total - paid);
+      } else if (entry.kind == _SupplierEntryKind.returnInvoice) {
+        final total = invoiceNum(data['totalSum']);
+        final paid = invoiceNum(data['paidAmount']);
+        running -= (total - paid);
+      } else if (entry.kind == _SupplierEntryKind.payment) {
+        final type = data['type']?.toString() ?? '';
+        if (type == 'buying_payment' || type == 'return_payment') continue;
+
+        final entered = invoiceNum(
+            data['enteredBalance'] ?? data['amount'] ?? data['value']);
+        if (type == 'opening' || type == 'addition' || type == 'buying') {
+          running += entered;
+        } else if (type == 'deduction' || type == 'return') {
+          running -= entered;
+        }
+      }
+      data['_computedRemainingOwed'] = running;
+    }
+
+    // Sort descending (newest first) for UI display
     merged.sort((a, b) => _entryDate(b).compareTo(_entryDate(a)));
     return merged;
   }
@@ -1494,5 +1602,6 @@ class _SupplierInvoiceEntry {
 
   _SupplierInvoiceEntry({required this.doc, required this.kind});
 
+  String get id => doc.id;
   Map<String, dynamic> get data => doc.data() as Map<String, dynamic>;
 }

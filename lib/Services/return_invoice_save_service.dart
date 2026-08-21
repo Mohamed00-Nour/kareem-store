@@ -85,7 +85,7 @@ class ReturnInvoiceSaveService {
       'profitMargin': profitMargin,
       'paidAmount': paidAmount,
       'balance': balance,
-      'previousBalance': previousBalanceSnapshot,
+      'previousBalance': existingBalance,
       'paymentMethod': paymentMethod,
       'notes': notes,
       'invoiceDiscount': effectiveDiscountAmt,
@@ -108,8 +108,8 @@ class ReturnInvoiceSaveService {
       catalog: catalog,
     );
 
-    // Save balance history entries locally
-    final hist1Id = _uuid.v4();
+    // Save balance history entries locally with deterministic IDs matching sync engine
+    final hist1Id = '${invoiceDocId}_return';
     await BalanceHistoryRepository.instance.upsertLocal(
       BalanceHistoryLocal(
         id: hist1Id,
@@ -125,7 +125,7 @@ class ReturnInvoiceSaveService {
     );
 
     if (paidAmount > 0) {
-      final hist2Id = _uuid.v4();
+      final hist2Id = '${invoiceDocId}_return_pay';
       await BalanceHistoryRepository.instance.upsertLocal(
         BalanceHistoryLocal(
           id: hist2Id,
