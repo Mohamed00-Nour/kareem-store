@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import '../models/invoice_app_footer.dart';
@@ -11,6 +12,7 @@ class InvoiceReceiptCard extends StatelessWidget {
   final String storeName;
   final String storeAddress;
   final String storePhone;
+  final String? logoPath;
   final bool showStoreHeader;
   final bool showClientAndMeta;
   final bool showCompactHeader;
@@ -32,9 +34,10 @@ class InvoiceReceiptCard extends StatelessWidget {
     required this.invoice,
     this.products,
     this.width = 360,
-    this.storeName = 'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
-    this.storeAddress = 'كفر الزيات - طنطا - الغربية',
-    this.storePhone = '01010573888',
+    this.storeName = '',
+    this.storeAddress = '',
+    this.storePhone = '',
+    this.logoPath,
     this.showStoreHeader = true,
     this.showClientAndMeta = true,
     this.showCompactHeader = false,
@@ -54,7 +57,7 @@ class InvoiceReceiptCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
+    final isBuying = invoiceIsSupplierPurchase(invoice) || invoice['invoiceType']?.toString() == 'buying';
     final lineProducts = _products;
     final previousBalance = invoiceDynamicPreviousBalance(invoice);
     final totalSum = invoiceNum(invoice['totalSum']);
@@ -70,60 +73,64 @@ class InvoiceReceiptCard extends StatelessWidget {
           (s, p) => s + invoiceNum(p['amount']),
         );
 
+    final hasCustomLogo = logoPath != null && logoPath!.isNotEmpty && File(logoPath!).existsSync();
+
     return Container(
       width: width,
       color: Colors.white,
-      padding: EdgeInsets.fromLTRB(10, 8, 10, 8 + captureBottomPadding),
+      padding: EdgeInsets.fromLTRB(12, 18, 12, 8 + captureBottomPadding),
       child: Column(
         mainAxisSize: MainAxisSize.min,
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           if (showStoreHeader) ...[
-            Center(
-              child: Image.asset(
-                'assets/Magdy store.png',
-                width: width * 0.38,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-              ),
-            ),
-            const SizedBox(height: 4),
-            Center(
-              child: Text(
-                storeName,
-                textAlign: TextAlign.center,
-                style:
-                    const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
-              ),
-            ),
-            const SizedBox(height: 2),
-            Center(
-              child: Text(
-                storeAddress,
-                textAlign: TextAlign.center,
-                style: const TextStyle(fontSize: 11, color: Colors.black54),
-              ),
-            ),
             const SizedBox(height: 6),
+            if (hasCustomLogo) ...[
+              Center(
+                child: Image.file(
+                  File(logoPath!),
+                  width: width * 0.45,
+                  fit: BoxFit.contain,
+                  errorBuilder: (_, __, ___) => const SizedBox.shrink(),
+                ),
+              ),
+              const SizedBox(height: 4),
+            ],
+            if (storeName.isNotEmpty) ...[
+              Center(
+                child: Text(
+                  storeName,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                ),
+              ),
+              const SizedBox(height: 2),
+            ],
+            if (storeAddress.isNotEmpty) ...[
+              Center(
+                child: Text(
+                  storeAddress,
+                  textAlign: TextAlign.center,
+                  style: const TextStyle(fontSize: 11, color: Colors.black54),
+                ),
+              ),
+              const SizedBox(height: 2),
+            ],
+            if (storePhone.isNotEmpty) ...[
+              for (final phoneLine in storePhone.split('\n').where((l) => l.trim().isNotEmpty))
+                Center(
+                  child: Text(
+                    phoneLine.trim(),
+                    textAlign: TextAlign.center,
+                    style: const TextStyle(fontSize: 11),
+                  ),
+                ),
+              const SizedBox(height: 4),
+            ],
             Center(
               child: Text(
                 isBuying ? 'فاتورة مشتريات' : 'فاتورة مبيعات',
                 style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
-              ),
-            ),
-            const SizedBox(height: 4),
-            const Center(
-              child: Text(
-                'مجدي حماد: 01010573888 - 01201820045',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11),
-              ),
-            ),
-            const Center(
-              child: Text(
-                'كريم حماد: 01068462105 - 01207968495',
-                textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11),
               ),
             ),
             const SizedBox(height: 8),
@@ -368,7 +375,7 @@ class InvoiceReceiptCard extends StatelessWidget {
 
   Widget _summaryTable(
       double previousBalance, double totalSum, double paid, double balance) {
-    final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
+    final isBuying = invoiceIsSupplierPurchase(invoice) || invoice['invoiceType']?.toString() == 'buying';
     final discount = invoiceResolveDiscount(invoice);
     return Table(
       border: TableBorder.all(color: Colors.grey.shade400),

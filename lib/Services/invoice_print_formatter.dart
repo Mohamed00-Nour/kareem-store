@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 
@@ -5,6 +6,7 @@ import '../models/invoice_app_footer.dart';
 import '../models/invoice_labels.dart';
 import '../models/invoice_receipt_print_data.dart';
 import '../models/printer_settings.dart';
+import 'header_helper.dart';
 import 'invoice_number_utils.dart';
 
 class InvoicePrintContext {
@@ -86,7 +88,7 @@ class InvoicePrintFormatter {
     for (final part in _headerLines(settings)) {
       line(_center(part, cols.width));
     }
-    final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
+    final isBuying = invoiceIsSupplierPurchase(invoice) || invoice['invoiceType']?.toString() == 'buying';
     final title = isBuying
         ? 'فاتورة مشتريات'
         : (invoice['invoiceType']?.toString() == 'return' ? 'فاتورة مرتجع' : labels.invoiceTitle);
@@ -260,7 +262,7 @@ class InvoicePrintFormatter {
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
     final invoiceNo = invoice['invoiceNumber']?.toString() ?? '';
-    final isBuying = invoice['supplierName'] != null || invoice['invoiceType']?.toString() == 'buying';
+    final isBuying = invoiceIsSupplierPurchase(invoice) || invoice['invoiceType']?.toString() == 'buying';
     final title = isBuying
         ? 'فاتورة مشتريات'
         : (invoice['invoiceType']?.toString() == 'return' ? 'فاتورة مرتجع' : labels.invoiceTitle);
@@ -390,7 +392,9 @@ class InvoicePrintFormatter {
     return InvoiceReceiptPrintData(
       paperMm: settings.paperSize.widthMm,
       escFontSize: _escSizeFromFont(settings.fontSize),
-      logoAssetPath: 'assets/Magdy store.png',
+      logoAssetPath: (settings.receiptLogoPath.isNotEmpty && File(settings.receiptLogoPath).existsSync())
+          ? settings.receiptLogoPath
+          : null,
       centeredLines: centered,
       metaTableRows: metaTable,
       bodyLines: body,
@@ -412,19 +416,7 @@ class InvoicePrintFormatter {
   }
 
   static List<String> _headerLines(PrinterSettings settings) {
-    final lines = <String>[];
-    final name = settings.receiptStoreName.trim();
-    if (name.isNotEmpty) lines.add(name);
-    final address = settings.receiptStoreAddress.trim();
-    if (address.isNotEmpty) lines.add(address);
-    final phone = settings.receiptStorePhone.trim();
-    if (phone.isNotEmpty) lines.add(phone);
-    if (lines.isEmpty) {
-      lines.add('أبو مجدي للحدايد والعدد والديكور والخشب والحلايا');
-      lines.add('كفر الزيات - طنطا - الغربية');
-      lines.add('01010573888');
-    }
-    return lines;
+    return HeaderHelper.getHeaderLines(settings);
   }
 
   static void _appendProductExtras(

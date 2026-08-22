@@ -7,6 +7,8 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:file_picker/file_picker.dart';
 import '../models/Expenses.dart';
+import '../Services/header_helper.dart';
+import '../Services/printer_settings_service.dart';
 
 class ExpensesDetails extends StatefulWidget {
   @override
@@ -258,14 +260,56 @@ class _ExpensesDetailsState extends State<ExpensesDetails> {
       _isLoading = true;
     });
 
+    final settings = await PrinterSettingsService.load();
+    final logoFile = HeaderHelper.getLogoFile(settings);
+    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final headerLines = HeaderHelper.getHeaderLines(settings);
+
     final pdf = pw.Document();
 
     pdf.addPage(
       pw.Page(
+        pageFormat: PdfPageFormat.a4,
+        margin: const pw.EdgeInsets.all(28),
         build: (pw.Context context) {
-          return pw.Center(
-            child: pw.Text('Expenses Report'),
-          ); // Center
+          return pw.Column(
+            crossAxisAlignment: pw.CrossAxisAlignment.stretch,
+            children: [
+              if (logoPdfImage != null) ...[
+                pw.Center(
+                  child: pw.Container(
+                    height: 50,
+                    child: pw.Image(logoPdfImage, fit: pw.BoxFit.contain),
+                  ),
+                ),
+                pw.SizedBox(height: 6),
+              ],
+              for (final line in headerLines) ...[
+                pw.Center(
+                  child: pw.Text(
+                    line,
+                    textDirection: pw.TextDirection.rtl,
+                    style: pw.TextStyle(fontSize: 14, fontWeight: pw.FontWeight.bold),
+                  ),
+                ),
+                pw.SizedBox(height: 2),
+              ],
+              pw.SizedBox(height: 8),
+              pw.Center(
+                child: pw.Text(
+                  'تقرير النثريات',
+                  textDirection: pw.TextDirection.rtl,
+                  style: pw.TextStyle(fontSize: 16, fontWeight: pw.FontWeight.bold),
+                ),
+              ),
+              pw.SizedBox(height: 12),
+              pw.Text(
+                'إجمالي النثريات: $_totalExpenses',
+                textDirection: pw.TextDirection.rtl,
+                style: const pw.TextStyle(fontSize: 12),
+              ),
+            ],
+          );
         },
       ),
     );

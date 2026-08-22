@@ -1,7 +1,9 @@
+import 'dart:io';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:image_picker/image_picker.dart';
 import '../Services/bluetooth_printer_service.dart';
 import '../Services/printer_settings_service.dart';
 import '../models/invoice_labels.dart';
@@ -29,6 +31,7 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
 
   PrinterConnectionType _connectionType = PrinterConnectionType.bluetooth;
   InvoiceLabels _labels = const InvoiceLabels();
+  String _logoPath = '';
   bool _showCustomerAddressAndPhone = false;
   bool _showPreviousCustomerDebt = false;
   bool _printProductNameOnSeparateLine = false;
@@ -78,6 +81,7 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
       _storeNameController.text = settings.receiptStoreName;
       _storeAddressController.text = settings.receiptStoreAddress;
       _storePhoneController.text = settings.receiptStorePhone;
+      _logoPath = settings.receiptLogoPath;
       _salesFooterController.text = settings.salesInvoiceFooter;
       _a4FooterController.text = settings.a4ReportFooter;
       _textHeightController.text = settings.textHeightPosition.toString();
@@ -113,6 +117,7 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
       receiptStoreName: _storeNameController.text.trim(),
       receiptStoreAddress: _storeAddressController.text.trim(),
       receiptStorePhone: _storePhoneController.text.trim(),
+      receiptLogoPath: _logoPath,
       salesInvoiceFooter: _salesFooterController.text.trim(),
       a4ReportFooter: _a4FooterController.text.trim(),
       textHeightPosition: int.tryParse(_textHeightController.text) ?? 10,
@@ -140,6 +145,24 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
       showProductImageOnInvoice: _showProductImageOnInvoice,
       labels: _labels,
     );
+  }
+
+  Future<void> _pickLogoImage() async {
+    try {
+      final picker = ImagePicker();
+      final picked = await picker.pickImage(source: ImageSource.gallery);
+      if (picked != null) {
+        setState(() {
+          _logoPath = picked.path;
+        });
+      }
+    } catch (e) {
+      if (mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text('خطأ أثناء اختيار اللوجو: $e')),
+        );
+      }
+    }
   }
 
   Future<void> _editInvoiceLabels() async {
@@ -483,14 +506,76 @@ class _PrinterSettingsPageState extends State<PrinterSettingsPage> {
                     SizedBox(height: 8.h),
                     TextField(
                       controller: _storePhoneController,
-                      keyboardType: TextInputType.phone,
+                      keyboardType: TextInputType.multiline,
+                      maxLines: null,
                       decoration: InputDecoration(
                         filled: true,
                         fillColor: Colors.white,
-                        hintText: 'رقم الهاتف (اختياري)',
+                        hintText: 'أرقام الهواتف (اختياري - أرقام متعددة في أسطر منفصلة)',
                         border: OutlineInputBorder(
                           borderRadius: BorderRadius.circular(6.r),
                         ),
+                      ),
+                    ),
+                    SizedBox(height: 12.h),
+                    _sectionLabel('شعار المحل (اللوجو)'),
+                    Container(
+                      padding: EdgeInsets.all(10.w),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(6.r),
+                        border: Border.all(color: Colors.grey.shade300),
+                      ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.center,
+                        children: [
+                          if (_logoPath.isNotEmpty && File(_logoPath).existsSync()) ...[
+                            ClipRRect(
+                              borderRadius: BorderRadius.circular(6.r),
+                              child: Image.file(
+                                File(_logoPath),
+                                height: 80.h,
+                                fit: BoxFit.contain,
+                                errorBuilder: (_, __, ___) => Text(
+                                  'تعذر تحميل الصورة',
+                                  style: TextStyle(color: Colors.red, fontSize: 12.sp),
+                                ),
+                              ),
+                            ),
+                            SizedBox(height: 8.h),
+                            Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                TextButton.icon(
+                                  onPressed: _pickLogoImage,
+                                  icon: const Icon(Icons.edit, size: 18),
+                                  label: const Text('تغيير اللوجو'),
+                                ),
+                                SizedBox(width: 12.w),
+                                TextButton.icon(
+                                  onPressed: () => setState(() => _logoPath = ''),
+                                  icon: const Icon(Icons.delete, size: 18, color: Colors.red),
+                                  label: const Text('حذف اللوجو', style: TextStyle(color: Colors.red)),
+                                ),
+                              ],
+                            ),
+                          ] else ...[
+                            Text(
+                              'لم يتم اختيار لوجو للمحل',
+                              style: TextStyle(fontSize: 13.sp, color: Colors.grey.shade600),
+                            ),
+                            SizedBox(height: 6.h),
+                            ElevatedButton.icon(
+                              onPressed: _pickLogoImage,
+                              style: ElevatedButton.styleFrom(
+                                backgroundColor: Colors.orange.shade700,
+                                foregroundColor: Colors.white,
+                              ),
+                              icon: const Icon(Icons.add_photo_alternate),
+                              label: const Text('اختيار صورة اللوجو'),
+                            ),
+                          ],
+                        ],
                       ),
                     ),
                     SizedBox(height: 14.h),

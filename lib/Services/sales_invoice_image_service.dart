@@ -131,6 +131,7 @@ class SalesInvoiceImageService {
                 storeName: settings.receiptStoreName,
                 storeAddress: settings.receiptStoreAddress,
                 storePhone: settings.receiptStorePhone,
+                logoPath: settings.receiptLogoPath,
                 showStoreHeader: showStoreHeader,
                 showClientAndMeta: showClientAndMeta,
                 showCompactHeader: showCompactHeader,

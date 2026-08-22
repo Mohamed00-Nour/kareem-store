@@ -7,6 +7,7 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../models/invoice_app_footer.dart';
+import 'header_helper.dart';
 import 'invoice_number_utils.dart';
 import 'printer_settings_service.dart';
 
@@ -73,19 +74,9 @@ class SalesInvoicePdfService {
               style: cell(fontSize: 9)),
         );
 
-    final headerLines = <String>[
-      if (settings.receiptStoreName.trim().isNotEmpty)
-        settings.receiptStoreName.trim(),
-      if (settings.receiptStoreAddress.trim().isNotEmpty)
-        settings.receiptStoreAddress.trim(),
-      if (settings.receiptStorePhone.trim().isNotEmpty)
-        settings.receiptStorePhone.trim(),
-    ];
-    if (headerLines.isEmpty) {
-      headerLines.add('أبو مجدي للحدايد والعدد والديكور والخشب والحلايا');
-      headerLines.add('كفر الزيات - طنطا - الغربية');
-      headerLines.add('01010573888');
-    }
+    final logoFile = HeaderHelper.getLogoFile(settings);
+    final pw.MemoryImage? logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final headerLines = HeaderHelper.getHeaderLines(settings);
 
     final pdf = pw.Document();
     pdf.addPage(
@@ -96,6 +87,16 @@ class SalesInvoicePdfService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
+              pw.SizedBox(height: 6),
+              if (logoPdfImage != null) ...[
+                pw.Center(
+                  child: pw.Container(
+                    height: 55,
+                    child: pw.Image(logoPdfImage, fit: pw.BoxFit.contain),
+                  ),
+                ),
+                pw.SizedBox(height: 6),
+              ],
               for (final line in headerLines) ...[
                 center(line, bold: true, fontSize: 13),
                 pw.SizedBox(height: 2),

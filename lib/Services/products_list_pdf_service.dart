@@ -6,6 +6,7 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
+import 'header_helper.dart';
 import 'invoice_number_utils.dart';
 import 'printer_settings_service.dart';
 
@@ -75,9 +76,9 @@ class ProductsListPdfService {
           ),
         );
 
-    final storeName = settings.receiptStoreName.trim().isNotEmpty
-        ? settings.receiptStoreName.trim()
-        : 'قائمة المنتجات';
+    final logoFile = HeaderHelper.getLogoFile(settings);
+    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final headerLines = HeaderHelper.getHeaderLines(settings);
     final generatedAt =
         DateFormat('yyyy/MM/dd HH:mm').format(DateTime.now());
 
@@ -123,16 +124,28 @@ class ProductsListPdfService {
         margin: const pw.EdgeInsets.all(28),
         textDirection: pw.TextDirection.rtl,
         build: (context) => [
-          pw.Text(
-            storeName,
-            textDirection: pw.TextDirection.rtl,
-            textAlign: pw.TextAlign.center,
-            style: pw.TextStyle(
-              font: amiriBold,
-              fontSize: 16,
+          if (logoPdfImage != null) ...[
+            pw.Center(
+              child: pw.Container(
+                height: 50,
+                child: pw.Image(logoPdfImage, fit: pw.BoxFit.contain),
+              ),
             ),
-          ),
-          pw.SizedBox(height: 6),
+            pw.SizedBox(height: 6),
+          ],
+          for (final line in headerLines) ...[
+            pw.Text(
+              line,
+              textDirection: pw.TextDirection.rtl,
+              textAlign: pw.TextAlign.center,
+              style: pw.TextStyle(
+                font: amiriBold,
+                fontSize: 14,
+              ),
+            ),
+            pw.SizedBox(height: 2),
+          ],
+          pw.SizedBox(height: 4),
           pw.Text(
             listTitle,
             textDirection: pw.TextDirection.rtl,

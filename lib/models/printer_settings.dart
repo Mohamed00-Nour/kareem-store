@@ -19,6 +19,7 @@ class PrinterSettings {
   final String receiptStoreName;
   final String receiptStoreAddress;
   final String receiptStorePhone;
+  final String receiptLogoPath;
   final String salesInvoiceFooter;
   final String a4ReportFooter;
   final int textHeightPosition;
@@ -47,10 +48,10 @@ class PrinterSettings {
   final InvoiceLabels labels;
 
   const PrinterSettings({
-    this.receiptStoreName =
-        'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
-    this.receiptStoreAddress = 'كفر الزيات - طنطا - الغربية',
-    this.receiptStorePhone = '01010573888',
+    this.receiptStoreName = '',
+    this.receiptStoreAddress = '',
+    this.receiptStorePhone = '',
+    this.receiptLogoPath = '',
     this.salesInvoiceFooter = '',
     this.a4ReportFooter = '',
     this.textHeightPosition = 1,
@@ -83,6 +84,7 @@ class PrinterSettings {
     String? receiptStoreName,
     String? receiptStoreAddress,
     String? receiptStorePhone,
+    String? receiptLogoPath,
     String? salesInvoiceFooter,
     String? a4ReportFooter,
     int? textHeightPosition,
@@ -114,6 +116,7 @@ class PrinterSettings {
       receiptStoreName: receiptStoreName ?? this.receiptStoreName,
       receiptStoreAddress: receiptStoreAddress ?? this.receiptStoreAddress,
       receiptStorePhone: receiptStorePhone ?? this.receiptStorePhone,
+      receiptLogoPath: receiptLogoPath ?? this.receiptLogoPath,
       salesInvoiceFooter: salesInvoiceFooter ?? this.salesInvoiceFooter,
       a4ReportFooter: a4ReportFooter ?? this.a4ReportFooter,
       textHeightPosition: textHeightPosition ?? this.textHeightPosition,
@@ -155,6 +158,7 @@ class PrinterSettings {
         'receiptStoreName': receiptStoreName,
         'receiptStoreAddress': receiptStoreAddress,
         'receiptStorePhone': receiptStorePhone,
+        'receiptLogoPath': receiptLogoPath,
         'salesInvoiceFooter': salesInvoiceFooter,
         'a4ReportFooter': a4ReportFooter,
         'textHeightPosition': textHeightPosition,
@@ -185,11 +189,10 @@ class PrinterSettings {
 
   factory PrinterSettings.fromMap(Map<String, dynamic> map) {
     return PrinterSettings(
-      receiptStoreName: map['receiptStoreName'] as String? ??
-          'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
-      receiptStoreAddress: map['receiptStoreAddress'] as String? ??
-          'كفر الزيات - طنطا - الغربية',
-      receiptStorePhone: map['receiptStorePhone'] as String? ?? '01010573888',
+      receiptStoreName: map['receiptStoreName'] as String? ?? '',
+      receiptStoreAddress: map['receiptStoreAddress'] as String? ?? '',
+      receiptStorePhone: map['receiptStorePhone'] as String? ?? '',
+      receiptLogoPath: map['receiptLogoPath'] as String? ?? '',
       salesInvoiceFooter: map['salesInvoiceFooter'] as String? ?? '',
       a4ReportFooter: map['a4ReportFooter'] as String? ?? '',
       textHeightPosition: map['textHeightPosition'] as int? ?? 1,
@@ -222,8 +225,9 @@ class PrinterSettings {
       showTaxQrOnInvoice: map['showTaxQrOnInvoice'] as bool? ?? false,
       showProductImageOnInvoice:
           map['showProductImageOnInvoice'] as bool? ?? false,
-      labels: InvoiceLabels.fromMap(
-          map['labels'] as Map<String, dynamic>?),
+      labels: map['labels'] is Map
+          ? InvoiceLabels.fromMap(map['labels'] as Map<String, dynamic>)
+          : const InvoiceLabels(),
     );
   }
 }

@@ -8,6 +8,8 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../models/invoice_app_footer.dart';
+import '../models/printer_settings.dart';
+import 'header_helper.dart';
 import 'invoice_number_utils.dart';
 import 'printer_settings_service.dart';
 
@@ -102,7 +104,7 @@ class SupplierStatementPdfService {
           rtl: rtl,
           center: center,
           reportFooter: reportFooter,
-          storeName: settings.receiptStoreName.trim(),
+          settings: settings,
         );
         break;
       case SupplierStatementType.invoices:
@@ -118,7 +120,7 @@ class SupplierStatementPdfService {
           rtl: rtl,
           center: center,
           invoiceFooter: invoiceFooter,
-          storeName: settings.receiptStoreName.trim(),
+          settings: settings,
           invoicesSubcollection: 'buying invoices',
           statementHeader: 'كشف حساب فواتير الشراء',
           invoiceTypeLabel: 'فاتورة شراء',
@@ -138,7 +140,7 @@ class SupplierStatementPdfService {
           rtl: rtl,
           center: center,
           invoiceFooter: invoiceFooter,
-          storeName: settings.receiptStoreName.trim(),
+          settings: settings,
           invoicesSubcollection: 'returnBuyingInvoices',
           statementHeader: 'كشف حساب فواتير المرتجع للمورد',
           invoiceTypeLabel: 'فاتورة مرتجع شراء',
@@ -174,7 +176,7 @@ class SupplierStatementPdfService {
     required String periodStr,
     required String nowStr,
     required String reportFooter,
-    required String storeName,
+    required PrinterSettings settings,
     required pw.TextStyle Function(
             {bool bold, double fontSize, bool useTajawal})
         cell,
@@ -185,6 +187,9 @@ class SupplierStatementPdfService {
             {bool bold, double fontSize, bool useTajawal})
         center,
   }) async {
+    final logoFile = HeaderHelper.getLogoFile(settings);
+    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final headerLines = HeaderHelper.getHeaderLines(settings);
     final snap = await FirebaseFirestore.instance
         .collection('suppliers')
         .doc(supplierId)
@@ -283,15 +288,22 @@ class SupplierStatementPdfService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              pw.Center(
-                child: rtl(
-                    storeName.isNotEmpty
-                        ? storeName
-                        : 'أبو مجدي للحدايد والعدد',
-                    bold: true,
-                    fontSize: 14),
-              ),
-              pw.SizedBox(height: 8),
+              if (logoPdfImage != null) ...[
+                pw.Center(
+                  child: pw.Container(
+                    height: 50,
+                    child: pw.Image(logoPdfImage, fit: pw.BoxFit.contain),
+                  ),
+                ),
+                pw.SizedBox(height: 6),
+              ],
+              for (final line in headerLines) ...[
+                pw.Center(
+                  child: rtl(line, bold: true, fontSize: 13),
+                ),
+                pw.SizedBox(height: 2),
+              ],
+              pw.SizedBox(height: 4),
               pw.Center(
                 child: rtl('كشف حساب مالي للمورد', bold: true, fontSize: 16),
               ),
@@ -390,7 +402,7 @@ class SupplierStatementPdfService {
     required String periodStr,
     required String nowStr,
     required String invoiceFooter,
-    required String storeName,
+    required PrinterSettings settings,
     required pw.TextStyle Function(
             {bool bold, double fontSize, bool useTajawal})
         cell,
@@ -405,6 +417,9 @@ class SupplierStatementPdfService {
     required String invoiceTypeLabel,
     required String emptyMessage,
   }) async {
+    final logoFile = HeaderHelper.getLogoFile(settings);
+    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final headerLines = HeaderHelper.getHeaderLines(settings);
     final snap = await FirebaseFirestore.instance
         .collection('suppliers')
         .doc(supplierId)
@@ -482,14 +497,22 @@ class SupplierStatementPdfService {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.stretch,
               children: [
-                pw.Center(
-                    child: rtl(
-                        storeName.isNotEmpty
-                            ? storeName
-                            : 'أبو مجدي للحدايد والعدد',
-                        bold: true,
-                        fontSize: 12)),
-                pw.SizedBox(height: 6),
+                if (logoPdfImage != null) ...[
+                  pw.Center(
+                    child: pw.Container(
+                      height: 45,
+                      child: pw.Image(logoPdfImage, fit: pw.BoxFit.contain),
+                    ),
+                  ),
+                  pw.SizedBox(height: 6),
+                ],
+                for (final line in headerLines) ...[
+                  pw.Center(
+                    child: rtl(line, bold: true, fontSize: 11),
+                  ),
+                  pw.SizedBox(height: 2),
+                ],
+                pw.SizedBox(height: 4),
                 pw.Center(
                     child: rtl(statementHeader, bold: true, fontSize: 14)),
                 pw.SizedBox(height: 4),

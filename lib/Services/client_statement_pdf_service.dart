@@ -8,6 +8,8 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 
 import '../models/invoice_app_footer.dart';
+import '../models/printer_settings.dart';
+import 'header_helper.dart';
 import 'invoice_number_utils.dart';
 import 'printer_settings_service.dart';
 
@@ -20,30 +22,36 @@ class ClientStatementPdfService {
     required DateTime from,
     required DateTime to,
   }) async {
+    final firestore = FirebaseFirestore.instance;
+
+    final clientDoc = await firestore.collection('clients').doc(clientId).get();
+    var clientName = clientId;
+    if (clientDoc.exists) {
+      final name = clientDoc.data()?['clientName']?.toString();
+      if (name != null && name.trim().isNotEmpty) {
+        clientName = name.trim();
+      }
+    }
+
+    final startInclusive = DateTime(from.year, from.month, from.day, 0, 0, 0);
     final endInclusive = DateTime(to.year, to.month, to.day, 23, 59, 59);
-    final startInclusive = DateTime(from.year, from.month, from.day);
 
-    final clientDoc = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(clientId)
-        .get();
-    final clientName =
-        (clientDoc.data()?['clientName'] ?? clientId).toString();
-
-    final amiriRegular = pw.Font.ttf(
-        (await rootBundle.load('fonts/Amiri-Regular.ttf')).buffer.asByteData());
+    final amiriRegular =
+        pw.Font.ttf((await rootBundle.load('fonts/Amiri-Regular.ttf'))
+            .buffer
+            .asByteData());
     final amiriBold = pw.Font.ttf(
         (await rootBundle.load('fonts/Amiri-Bold.ttf')).buffer.asByteData());
-    final tajawalFont = pw.Font.ttf(
+    final tajawal = pw.Font.ttf(
         (await rootBundle.load('fonts/Tajawal-Medium.ttf')).buffer.asByteData());
 
-    pw.TextStyle cell({bool bold = false, double fontSize = 10, bool useTajawal = false}) =>
+    pw.TextStyle cell({bool bold = false, double fontSize = 9, bool useTajawal = false}) =>
         pw.TextStyle(
-          font: useTajawal ? tajawalFont : (bold ? amiriBold : amiriRegular),
+          font: useTajawal ? tajawal : (bold ? amiriBold : amiriRegular),
           fontSize: fontSize,
         );
 
-    pw.Widget rtl(String text, {bool bold = false, double fontSize = 10, bool useTajawal = false}) =>
+    pw.Widget rtl(String text, {bool bold = false, double fontSize = 9, bool useTajawal = false}) =>
         pw.Text(
           text,
           textDirection: pw.TextDirection.rtl,
@@ -86,7 +94,7 @@ class ClientStatementPdfService {
           rtl: rtl,
           center: center,
           reportFooter: reportFooter,
-          storeName: settings.receiptStoreName.trim(),
+          settings: settings,
         );
         break;
       case ClientStatementType.invoices:
@@ -102,7 +110,7 @@ class ClientStatementPdfService {
           rtl: rtl,
           center: center,
           invoiceFooter: invoiceFooter,
-          storeName: settings.receiptStoreName.trim(),
+          settings: settings,
           invoicesSubcollection: 'invoices',
           statementHeader: 'كشف حساب الفواتير',
           invoiceTypeLabel: 'فاتورة مبيعات',
@@ -122,7 +130,7 @@ class ClientStatementPdfService {
           rtl: rtl,
           center: center,
           invoiceFooter: invoiceFooter,
-          storeName: settings.receiptStoreName.trim(),
+          settings: settings,
           invoicesSubcollection: 'returnInvoices',
           statementHeader: 'كشف حساب فواتير المرتجع',
           invoiceTypeLabel: 'فاتورة مرتجع',
@@ -158,11 +166,14 @@ class ClientStatementPdfService {
     required String periodStr,
     required String nowStr,
     required String reportFooter,
-    required String storeName,
+    required PrinterSettings settings,
     required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
     required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
     required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
   }) async {
+    final logoFile = HeaderHelper.getLogoFile(settings);
+    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final headerLines = HeaderHelper.getHeaderLines(settings);
     final snap = await FirebaseFirestore.instance
         .collection('clients')
         .doc(clientId)
@@ -300,10 +311,22 @@ class ClientStatementPdfService {
           return pw.Column(
             crossAxisAlignment: pw.CrossAxisAlignment.stretch,
             children: [
-              pw.Center(
-                child: rtl(storeName.isNotEmpty ? storeName : 'أبو مجدي للحدايد والعدد', bold: true, fontSize: 14),
-              ),
-              pw.SizedBox(height: 8),
+              if (logoPdfImage != null) ...[
+                pw.Center(
+                  child: pw.Container(
+                    height: 50,
+                    child: pw.Image(logoPdfImage, fit: pw.BoxFit.contain),
+                  ),
+                ),
+                pw.SizedBox(height: 6),
+              ],
+              for (final line in headerLines) ...[
+                pw.Center(
+                  child: rtl(line, bold: true, fontSize: 13),
+                ),
+                pw.SizedBox(height: 2),
+              ],
+              pw.SizedBox(height: 4),
               pw.Center(
                 child: rtl('كشف حساب مالي', bold: true, fontSize: 16),
               ),
@@ -396,7 +419,7 @@ class ClientStatementPdfService {
     required String periodStr,
     required String nowStr,
     required String invoiceFooter,
-    required String storeName,
+    required PrinterSettings settings,
     required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
     required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
     required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
@@ -405,6 +428,9 @@ class ClientStatementPdfService {
     required String invoiceTypeLabel,
     required String emptyMessage,
   }) async {
+    final logoFile = HeaderHelper.getLogoFile(settings);
+    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final headerLines = HeaderHelper.getHeaderLines(settings);
     final snap = await FirebaseFirestore.instance
         .collection('clients')
         .doc(clientId)
@@ -486,9 +512,22 @@ class ClientStatementPdfService {
             return pw.Column(
               crossAxisAlignment: pw.CrossAxisAlignment.stretch,
               children: [
-                pw.Center(
-                    child: rtl(storeName.isNotEmpty ? storeName : 'أبو مجدي للحدايد والعدد', bold: true, fontSize: 12)),
-                pw.SizedBox(height: 6),
+                if (logoPdfImage != null) ...[
+                  pw.Center(
+                    child: pw.Container(
+                      height: 45,
+                      child: pw.Image(logoPdfImage, fit: pw.BoxFit.contain),
+                    ),
+                  ),
+                  pw.SizedBox(height: 6),
+                ],
+                for (final line in headerLines) ...[
+                  pw.Center(
+                    child: rtl(line, bold: true, fontSize: 11),
+                  ),
+                  pw.SizedBox(height: 2),
+                ],
+                pw.SizedBox(height: 4),
                 pw.Center(
                     child: rtl(statementHeader, bold: true, fontSize: 14)),
                 pw.SizedBox(height: 4),
