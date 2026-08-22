@@ -10,13 +10,16 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Screeens/AddProductPage.dart';
 import '../Services/invoice_number_utils.dart';
+import '../Services/invoice_stock_service.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/supplier_statement_pdf_service.dart';
 import '../local_db/models/balance_history_local.dart';
 import '../repositories/balance_history_repository.dart';
 import '../repositories/box_repository.dart';
+import '../repositories/invoice_repository.dart';
 import '../repositories/supplier_repository.dart';
 import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
 import 'SupplierBalanceHistoryPage.dart';
 
 class SupplierInvoicesPage extends StatefulWidget {
@@ -480,75 +483,97 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     if (confirmDelete != true) return;
 
     try {
-      final invoiceDoc = await FirebaseFirestore.instance
-          .collection('suppliers')
-          .doc(widget.supplierId)
-          .collection('buying invoices')
-          .doc(invoiceId)
-          .get();
-
-      if (!invoiceDoc.exists) {
-        throw Exception('الفاتورة غير موجودة');
+      // 1. Get invoice data from local Hive or Firestore
+      Map<String, dynamic>? invoiceData;
+      final localInv = InvoiceRepository.instance.getBuyingById(invoiceId);
+      if (localInv != null) {
+        invoiceData = localInv.toMap();
       }
 
-      final invoiceData = invoiceDoc.data() as Map<String, dynamic>?;
-      final products =
-          List<Map<String, dynamic>>.from(invoiceData?['products'] ?? []);
-
-      for (var product in products) {
-        QuerySnapshot productQuery = await FirebaseFirestore.instance
-            .collection('products')
-            .where('name', isEqualTo: product['product'])
+      if (invoiceData == null) {
+        final invoiceDoc = await FirebaseFirestore.instance
+            .collection('suppliers')
+            .doc(widget.supplierId)
+            .collection('buying invoices')
+            .doc(invoiceId)
             .get();
 
-        if (productQuery.docs.isNotEmpty) {
-          for (var doc in productQuery.docs) {
-            double existingQuantity =
-                ((doc.data() as Map<String, dynamic>?)?['quantity'] ?? 0.0)
-                    .toDouble();
-            double amount =
-                double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
-            double restoredQuantity = existingQuantity - amount;
-
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(doc.id)
-                .update({'quantity': restoredQuantity});
-
-            await FirebaseFirestore.instance
-                .collection('products')
-                .doc(doc.id)
-                .collection('changes')
-                .add({
-              'date': DateTime.now(),
-              'amount': amount,
-              'type': 'decrease',
-            });
+        if (invoiceDoc.exists) {
+          invoiceData = invoiceDoc.data();
+        } else {
+          final rootDoc = await FirebaseFirestore.instance
+              .collection('buying invoices')
+              .doc(invoiceId)
+              .get();
+          if (rootDoc.exists) {
+            invoiceData = rootDoc.data();
           }
         }
       }
 
-      final rootId = invoiceData?['invoiceId']?.toString();
-      if (rootId != null && rootId.isNotEmpty) {
-        await FirebaseFirestore.instance
-            .collection('buying invoices')
-            .doc(rootId)
-            .delete();
+      final products =
+          List<Map<String, dynamic>>.from(invoiceData?['products'] ?? []);
+      final paidAmount = invoiceNum(invoiceData?['paidAmount']);
+      final totalSum = invoiceNum(invoiceData?['totalSum']);
+      final rootInvoiceId = invoiceData?['invoiceId']?.toString() ?? invoiceId;
+
+      // 2. Decrement stock in local Hive (purchase invoice added stock, deleting it removes that stock)
+      if (products.isNotEmpty) {
+        await InvoiceStockService.applyStockChanges(
+          lines: products,
+          restore: false,
+          changeDate: DateTime.now(),
+          changeTypeWhenDecrease: 'decrease',
+        );
       }
 
-      await FirebaseFirestore.instance
-          .collection('suppliers')
-          .doc(widget.supplierId)
-          .collection('buying invoices')
-          .doc(invoiceId)
-          .delete();
+      // 3. Delete invoice locally from Hive
+      await InvoiceRepository.instance.deleteBuyingLocal(invoiceId);
+      if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
+        await InvoiceRepository.instance.deleteBuyingLocal(rootInvoiceId);
+      }
 
-      await SupplierInvoiceBalanceSyncService.syncForSupplier(
-          widget.supplierId);
+      // 4. Delete balance history entries locally from Hive
+      await BalanceHistoryRepository.instance
+          .deleteByInvoiceId('supplier', widget.supplierId, invoiceId);
+      if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
+        await BalanceHistoryRepository.instance
+            .deleteByInvoiceId('supplier', widget.supplierId, rootInvoiceId);
+      }
+
+      // 5. Adjust Cash Box locally if there was a payment (paid cash is returned to box)
+      if (paidAmount > 0) {
+        await BoxRepository.instance.increment(paidAmount);
+      }
+
+      // 6. Update supplier balance locally in Hive
+      final unpaid = totalSum - paidAmount;
+      final localSup = SupplierRepository.instance.getById(widget.supplierId) ??
+          SupplierRepository.instance.findByName(_supplierName ?? '');
+      if (localSup != null) {
+        await SupplierRepository.instance
+            .updateLocalBalance(localSup.id, localSup.balance - unpaid);
+      }
+
+      // 7. Enqueue background deletion to SyncQueue
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'deleteBuyingInvoice',
+        payload: {
+          'supplierId': widget.supplierId,
+          'invoiceId': rootInvoiceId,
+          'supplierSubDocId': invoiceId,
+          'products': products,
+          'totalSum': totalSum,
+          'paidAmount': paidAmount,
+        },
+      );
+
+      // 8. Trigger sync
+      ConnectivityService.instance.forceSync();
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('تم حذف الفاتورة بنجاح')),
+        const SnackBar(content: Text('تم حذف الفاتورة وتحديث المخزون بنجاح')),
       );
       await _refreshInvoices();
     } catch (e) {

@@ -5,7 +5,14 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../Services/invoice_number_utils.dart';
+import '../Services/invoice_stock_service.dart';
+import '../repositories/balance_history_repository.dart';
+import '../repositories/box_repository.dart';
 import '../repositories/invoice_repository.dart';
+import '../repositories/supplier_repository.dart';
+import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
 import '../local_db/models/invoice_local.dart';
 import 'BuyingInvoiceDetailPage.dart';
 
@@ -284,48 +291,89 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
 
   void _deleteInvoice(int index) async {
     final removedInvoice = _filteredInvoices.removeAt(index);
-    final invoiceId = removedInvoice['id']; // Ensure 'id' field exists and is correct
+    final invoiceId = removedInvoice['id']?.toString() ??
+        removedInvoice['invoiceId']?.toString() ??
+        '';
 
     setState(() {});
 
     try {
-      // Delete the invoice from Firestore
-      await FirebaseFirestore.instance
-          .collection('buying invoices')
-          .doc(invoiceId)
-          .delete();
+      final products = List<Map<String, dynamic>>.from(
+        (removedInvoice['products'] as List?) ?? [],
+      );
+      final paidAmount = invoiceNum(removedInvoice['paidAmount']);
+      final totalSum = invoiceNum(removedInvoice['totalSum']);
+      final supplierId = removedInvoice['supplierId']?.toString() ?? '';
+      final supplierName = removedInvoice['supplierName']?.toString() ?? '';
 
+      // 1. Decrement stock in Hive (undo purchase)
+      if (products.isNotEmpty) {
+        await InvoiceStockService.applyStockChanges(
+          lines: products,
+          restore: false,
+          changeDate: DateTime.now(),
+          changeTypeWhenDecrease: 'decrease',
+        );
+      }
+
+      // 2. Delete invoice locally from Hive
+      if (invoiceId.isNotEmpty) {
+        await InvoiceRepository.instance.deleteBuyingLocal(invoiceId);
+      }
+
+      // 3. Delete balance history locally from Hive
+      if (supplierId.isNotEmpty && invoiceId.isNotEmpty) {
+        await BalanceHistoryRepository.instance
+            .deleteByInvoiceId('supplier', supplierId, invoiceId);
+      }
+
+      // 4. Adjust Cash Box locally if there was a payment
+      if (paidAmount > 0) {
+        await BoxRepository.instance.increment(paidAmount);
+      }
+
+      // 5. Update supplier balance locally in Hive
+      if (supplierId.isNotEmpty) {
+        final unpaid = totalSum - paidAmount;
+        final localSup = SupplierRepository.instance.getById(supplierId) ??
+            SupplierRepository.instance.findByName(supplierName);
+        if (localSup != null) {
+          await SupplierRepository.instance
+              .updateLocalBalance(localSup.id, localSup.balance - unpaid);
+        }
+      }
+
+      // 6. Enqueue deletion to SyncQueue
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'deleteBuyingInvoice',
+        payload: {
+          'supplierId': supplierId,
+          'invoiceId': invoiceId,
+          'products': products,
+          'totalSum': totalSum,
+          'paidAmount': paidAmount,
+        },
+      );
+
+      ConnectivityService.instance.forceSync();
+
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('تم حذف الفاتورة بنجاح'),
-          action: SnackBarAction(
-            label: 'تراجع',
-            onPressed: () async {
-              // Re-add the invoice to Firestore
-              await FirebaseFirestore.instance
-                  .collection('buying invoices')
-                  .doc(invoiceId)
-                  .set(removedInvoice);
-
-              setState(() {
-                _filteredInvoices.insert(index, removedInvoice);
-              });
-            },
-          ),
+        const SnackBar(
+          content: Text('تم حذف الفاتورة بنجاح وتحديث المخزون'),
           duration: Duration(seconds: 3),
         ),
       );
     } catch (e) {
       print('Error deleting invoice: $e');
-      // Re-add the invoice to the list if deletion fails
       if (!mounted) return;
       setState(() {
         _filteredInvoices.insert(index, removedInvoice);
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to delete invoice'),
-          duration: Duration(seconds: 3),
+          content: Text('حدث خطأ أثناء حذف الفاتورة: $e'),
+          duration: const Duration(seconds: 3),
         ),
       );
     }

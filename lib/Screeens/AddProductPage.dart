@@ -21,6 +21,7 @@ import '../repositories/box_repository.dart';
 import '../repositories/balance_history_repository.dart';
 import '../local_db/models/balance_history_local.dart';
 import '../local_db/hive_init.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'g_Nav.dart';
 
 void _selectAllField(TextEditingController controller) {
@@ -108,6 +109,7 @@ class _AddProductPageState extends State<AddProductPage> {
     super.initState();
     _fetchProducts();
     _fetchSuppliers();
+    productsBox.listenable().addListener(_onProductsBoxChanged);
     if (widget.invoiceToEdit != null) {
       _applyInvoiceToEdit(widget.invoiceToEdit!);
     } else {
@@ -116,8 +118,15 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
+  void _onProductsBoxChanged() {
+    if (mounted) {
+      _loadProductsFromLocalCache();
+    }
+  }
+
   @override
   void dispose() {
+    productsBox.listenable().removeListener(_onProductsBoxChanged);
     _dateController.dispose();
     // _productController is managed by Autocomplete's internal state — do not dispose here
     super.dispose();

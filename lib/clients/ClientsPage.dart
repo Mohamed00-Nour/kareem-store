@@ -177,6 +177,7 @@ import '../Services/whatsapp_invoice_share_service.dart';
 import '../sync/connectivity_service.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/balance_history_repository.dart';
+import '../repositories/box_repository.dart';
 import '../local_db/models/balance_history_local.dart';
 import '../sync/sync_queue_manager.dart';
 
@@ -1553,105 +1554,17 @@ class _ClientOpeningBalancesPageState
                                     final isAddition = direction == 'عليه';
                                     double delta = isAddition ? amount : -amount;
 
-                                    if (!isOnline) {
-                                      try {
-                                        final clientLocal = ClientRepository
-                                            .instance
-                                            .getById(clientId);
-                                        double latestBalance =
-                                            clientLocal?.balance ??
-                                                currentBalance;
-                                        double newBalance =
-                                            latestBalance + delta;
-
-                                        await ClientRepository.instance
-                                            .updateLocalBalance(
-                                                clientId, newBalance);
-
-                                        final vNumber =
-                                            int.tryParse(voucherCtrl.text) ??
-                                                nextVoucher;
-                                        String noteStr =
-                                            'سند $direction رقم $vNumber';
-                                        final dText = descCtrl.text.trim();
-                                        if (dText.isNotEmpty) {
-                                          noteStr += ' ($dText)';
-                                        }
-
-                                        final logEntry = <String, dynamic>{
-                                          'enteredBalance': amount,
-                                          'balanceBefore': latestBalance,
-                                          'type': isAddition
-                                              ? 'addition'
-                                              : 'deduction',
-                                          'notes': noteStr,
-                                          'timestamp':
-                                              selectedDate.toIso8601String(),
-                                        };
-
-                                        await SyncQueueManager.instance.enqueue(
-                                          operationType: 'adjustClientBalance',
-                                          payload: {
-                                            'clientId': clientId,
-                                            'amount': amount,
-                                            'isAddition': isAddition,
-                                            'logEntry': logEntry,
-                                            'newBalance': newBalance,
-                                          },
-                                        );
-
-                                        if (ctx.mounted) Navigator.pop(ctx);
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            const SnackBar(
-                                                content: Text(
-                                                    'تم إضافة المبلغ محلياً وسيتم مزامنته عند الاتصال بالإنترنت')),
-                                          );
-                                        }
-                                      } catch (e) {
-                                        if (context.mounted) {
-                                          ScaffoldMessenger.of(context)
-                                              .showSnackBar(
-                                            SnackBar(
-                                                content: Text(
-                                                    'حدث خطأ أثناء الإضافة: $e')),
-                                          );
-                                        }
-                                      } finally {
-                                        if (ctx.mounted) {
-                                          setDlg(() => isSaving = false);
-                                        }
-                                      }
-                                      return;
-                                    }
-
+                                    // ── Unified local-first path (online & offline identical) ──
+                                    // Write to Hive immediately, then enqueue for Firestore sync.
+                                    // No syncForClient() call — that would trigger a full recalculation race.
                                     try {
-                                      // Get current client balance
-                                      DocumentSnapshot clientDoc =
-                                          await FirebaseFirestore.instance
-                                              .collection('clients')
-                                              .doc(clientId)
-                                              .get();
-
-                                      double latestBalance = 0.0;
-                                      if (clientDoc.exists) {
-                                        final clientData = clientDoc.data()
-                                            as Map<String, dynamic>?;
-                                        latestBalance =
-                                            (clientData?['balance'] ?? 0.0)
-                                                .toDouble();
-                                      } else {
-                                        latestBalance = currentBalance;
-                                      }
-
-                                      double newBalance = latestBalance + delta;
-
-                                      // Update client balance
-                                      await FirebaseFirestore.instance
-                                          .collection('clients')
-                                          .doc(clientId)
-                                          .update({'balance': newBalance});
+                                      final clientLocal = ClientRepository
+                                          .instance
+                                          .getById(clientId);
+                                      final double latestBalance =
+                                          clientLocal?.balance ?? currentBalance;
+                                      final double newBalance =
+                                          latestBalance + delta;
 
                                       await ClientRepository.instance
                                           .updateLocalBalance(
@@ -1660,22 +1573,6 @@ class _ClientOpeningBalancesPageState
                                       final vNumber =
                                           int.tryParse(voucherCtrl.text) ??
                                               nextVoucher;
-                                      await FirebaseFirestore.instance
-                                          .collection('client_vouchers')
-                                          .add({
-                                        'clientId': clientId,
-                                        'clientName': clientName,
-                                        'voucherNumber': vNumber,
-                                        'direction': direction,
-                                        'amount': amount,
-                                        'description': descCtrl.text,
-                                        'date': selectedDate,
-                                        'paymentMethod': paymentMethod,
-                                        'timestamp':
-                                            FieldValue.serverTimestamp(),
-                                      });
-
-                                      // Construct notes for the balance history
                                       String noteStr = 'سند $direction';
                                       noteStr += ' رقم $vNumber';
                                       final dText = descCtrl.text.trim();
@@ -1683,50 +1580,70 @@ class _ClientOpeningBalancesPageState
                                         noteStr += ' ($dText)';
                                       }
 
-                                      await FirebaseFirestore.instance
-                                          .collection('clients')
-                                          .doc(clientId)
-                                          .collection('balanceHistory')
-                                          .add({
+                                      final historyId =
+                                          DateTime.now().millisecondsSinceEpoch.toString();
+
+                                      // ── Write balance history entry to Hive ──
+                                      await BalanceHistoryRepository.instance
+                                          .upsertLocal(
+                                        BalanceHistoryLocal(
+                                          id: historyId,
+                                          parentId: clientId,
+                                          parentType: 'client',
+                                          enteredBalance: amount,
+                                          balanceBefore: latestBalance,
+                                          type: isAddition
+                                              ? 'addition'
+                                              : 'deduction',
+                                          notes: noteStr,
+                                          timestamp: selectedDate,
+                                        ),
+                                      );
+
+                                      // ── Update cash box locally ──
+                                      await BoxRepository.instance.increment(
+                                          isAddition ? -amount : amount);
+
+                                      // ── Enqueue balance sync to Firestore ──
+                                      final logEntry = <String, dynamic>{
                                         'enteredBalance': amount,
                                         'balanceBefore': latestBalance,
                                         'type': isAddition
                                             ? 'addition'
                                             : 'deduction',
                                         'notes': noteStr,
-                                        'timestamp': selectedDate,
-                                      });
-
-                                      // Update the box collection
-                                      DocumentReference boxDocRef =
-                                          FirebaseFirestore.instance
-                                              .collection('box')
-                                              .doc('mainBox');
-
-                                      await boxDocRef.set(
-                                        {
-                                          'value': FieldValue.increment(
-                                              isAddition ? -amount : amount)
+                                        'timestamp':
+                                            selectedDate.toIso8601String(),
+                                      };
+                                      await SyncQueueManager.instance.enqueue(
+                                        operationType: 'adjustClientBalance',
+                                        payload: {
+                                          'clientId': clientId,
+                                          'amount': amount,
+                                          'isAddition': isAddition,
+                                          'logEntry': logEntry,
+                                          'newBalance': newBalance,
                                         },
-                                        SetOptions(merge: true),
                                       );
 
-                                      // Add change to the subcollection
-                                      await boxDocRef
-                                          .collection('changes')
-                                          .add({
-                                        'date': FieldValue.serverTimestamp(),
-                                        'value': amount,
-                                        'type': isAddition
-                                            ? 'decrement'
-                                            : 'addition',
-                                        'name': clientName,
-                                        'notes': noteStr,
-                                        'invoiceNumber': null,
-                                      });
-
-                                      await ClientInvoiceBalanceSyncService
-                                          .syncForClient(clientId);
+                                      // ── Background: trigger sync + write voucher (fire-and-forget) ──
+                                      if (isOnline) {
+                                        ConnectivityService.instance.forceSync();
+                                        FirebaseFirestore.instance
+                                            .collection('client_vouchers')
+                                            .add({
+                                          'clientId': clientId,
+                                          'clientName': clientName,
+                                          'voucherNumber': vNumber,
+                                          'direction': direction,
+                                          'amount': amount,
+                                          'description': descCtrl.text,
+                                          'date': selectedDate,
+                                          'paymentMethod': paymentMethod,
+                                          'timestamp':
+                                              FieldValue.serverTimestamp(),
+                                        }).catchError((_) {});
+                                      }
 
                                       if (ctx.mounted) Navigator.pop(ctx);
                                       if (context.mounted) {

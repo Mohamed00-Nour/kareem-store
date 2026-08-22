@@ -68,47 +68,11 @@ class ProductRepository {
     );
   }
 
-  /// Performs a **delta** sync — only fetches docs updated since the last sync.
-  /// Dramatically reduces Firestore read costs on subsequent app opens.
+  /// Delta sync — fetches products into Hive.
+  /// Performs fullSync to guarantee complete product list caching because product documents
+  /// in Firestore may not contain an updatedAt field.
   Future<void> deltaSync() async {
-    final lastSyncStr =
-        appMetaBox.get(HiveMetaKeys.lastProductSyncAt) as String?;
-
-    // If never synced, do a full sync instead.
-    if (lastSyncStr == null) {
-      await fullSync();
-      return;
-    }
-
-    final lastSync = DateTime.parse(lastSyncStr);
-    final snap = await _fs
-        .collection('products')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(lastSync))
-        .get();
-
-    if (snap.docs.isEmpty) {
-      await appMetaBox.put(
-        HiveMetaKeys.lastProductSyncAt,
-        DateTime.now().toIso8601String(),
-      );
-      return;
-    }
-
-    final box = productsBox;
-    for (final doc in snap.docs) {
-      final data = doc.data();
-      // Check if deleted flag is set
-      if (data['deleted'] == true) {
-        await box.delete(doc.id);
-      } else {
-        await box.put(doc.id, ProductLocal.fromFirestore(doc.id, data));
-      }
-    }
-
-    appMetaBox.put(
-      HiveMetaKeys.lastProductSyncAt,
-      DateTime.now().toIso8601String(),
-    );
+    await fullSync();
   }
 
   /// Updates a single product in the local cache (call after saving to Firestore).

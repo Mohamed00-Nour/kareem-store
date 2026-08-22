@@ -1,11 +1,11 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'invoice_number_utils.dart';
 import 'invoice_special_service.dart';
+import 'invoice_stock_service.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/client_repository.dart';
-import '../repositories/product_repository.dart';
 import '../repositories/balance_history_repository.dart';
-import '../local_db/hive_init.dart';
+import '../repositories/box_repository.dart';
 import '../sync/connectivity_service.dart';
 import '../sync/sync_queue_manager.dart';
 
@@ -99,39 +99,43 @@ class SalesInvoiceActionsService {
     // 1. Delete invoice from local Hive cache
     await InvoiceRepository.instance.deleteSaleLocal(rootInvoiceId);
 
-    // 2. Restore products stock in Hive
-    for (final product in products) {
-      final name = product['product']?.toString() ?? '';
-      if (name.isEmpty) continue;
-      final amount = invoiceNum(product['amount']);
-      if (amount <= 0) continue;
-
-      final localProd = ProductRepository.instance.findByName(name);
-      if (localProd != null) {
-        localProd.quantity += amount;
-        await productsBox.put(localProd.id, localProd);
-      }
+    // 2. Restore products stock in Hive & background Firestore
+    if (products.isNotEmpty) {
+      await InvoiceStockService.applyStockChanges(
+        lines: products,
+        restore: true,
+        changeDate: DateTime.now(),
+      );
     }
 
-    // 3. Update client balance in Hive
+    final totalSum = invoiceNum(invoice['totalSum']);
+    final paidAmount = invoiceNum(invoice['paidAmount']);
+
+    // 3. Adjust Cash Box locally if there was a payment
+    if (paidAmount > 0) {
+      await BoxRepository.instance.decrement(paidAmount);
+    }
+
+    // 4. Update client balance in Hive
     if (clientId.isNotEmpty) {
-      final totalSum = invoiceNum(invoice['totalSum']);
-      final paidAmount = invoiceNum(invoice['paidAmount']);
       final unpaid = totalSum - paidAmount;
       final localClient = ClientRepository.instance.getById(clientId) ?? ClientRepository.instance.findByName(clientName);
       if (localClient != null) {
         final newBal = localClient.balance - unpaid;
         await ClientRepository.instance.updateLocalBalance(localClient.id, newBal);
       }
-      await BalanceHistoryRepository.instance.deleteForParent('client', clientId);
+      await BalanceHistoryRepository.instance.deleteByInvoiceId('client', clientId, rootInvoiceId);
     }
 
-    // 4. Enqueue background deletion to Firebase
+    // 5. Enqueue background deletion to Firebase with complete payload
     await SyncQueueManager.instance.enqueue(
       operationType: 'deleteInvoice',
       payload: {
         'clientId': clientId,
         'invoiceId': rootInvoiceId,
+        'products': products,
+        'totalSum': totalSum,
+        'paidAmount': paidAmount,
       },
     );
 

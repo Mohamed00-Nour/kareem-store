@@ -12,6 +12,7 @@ import 'DecreaseProductComponents/bloc/invoice_state.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'Invoices/All_invoices.dart';
 import 'Invoices/InvoiceDetailPage.dart';
@@ -721,12 +722,25 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     super.initState();
     _fetchProducts();
     _fetchClients();
+    productsBox.listenable().addListener(_onProductsBoxChanged);
     if (widget.invoiceToEdit != null) {
       _applyInvoiceToEdit(widget.invoiceToEdit!);
     } else {
       _selectedDate = DateTime.now();
       _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
     }
+  }
+
+  void _onProductsBoxChanged() {
+    if (mounted) {
+      _loadProductsFromLocalCache();
+    }
+  }
+
+  @override
+  void dispose() {
+    productsBox.listenable().removeListener(_onProductsBoxChanged);
+    super.dispose();
   }
 
   Map<String, ResolvedInvoiceProduct> get _productCatalog =>

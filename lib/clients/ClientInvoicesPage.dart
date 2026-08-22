@@ -1075,9 +1075,10 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         (data?['products'] as List?) ?? [],
       );
       final paidAmount = invoiceNum(data?['paidAmount']);
+      final totalSum = invoiceNum(data?['totalSum']);
       final rootInvoiceId = data?['invoiceId']?.toString() ?? invoiceId;
 
-      // 2. Return products back to stock (Hive + background Firestore update)
+      // 2. Return products back to stock (Hive local cache)
       if (products.isNotEmpty) {
         await InvoiceStockService.applyStockChanges(
           lines: products,
@@ -1105,66 +1106,30 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         await BoxRepository.instance.decrement(paidAmount);
       }
 
-      // 6. Sync deletion with Firestore & recalculate balance
-      final bool isOnline = ConnectivityService.instance.isOnline;
-      if (isOnline) {
-        // Delete from root collection
-        FirebaseFirestore.instance
-            .collection('invoices')
-            .doc(rootInvoiceId)
-            .delete()
-            .catchError((_) {});
-
-        // Delete from client's invoices subcollection
-        FirebaseFirestore.instance
-            .collection('clients')
-            .doc(widget.clientId)
-            .collection('invoices')
-            .doc(invoiceId)
-            .delete()
-            .catchError((_) {});
-
-        // Delete from client's balanceHistory subcollection
-        final bhSaleRef = FirebaseFirestore.instance
-            .collection('clients')
-            .doc(widget.clientId)
-            .collection('balanceHistory')
-            .doc('${rootInvoiceId}_sale');
-        final bhPayRef = FirebaseFirestore.instance
-            .collection('clients')
-            .doc(widget.clientId)
-            .collection('balanceHistory')
-            .doc('${rootInvoiceId}_pay');
-
-        final batch = FirebaseFirestore.instance.batch();
-        batch.delete(bhSaleRef);
-        batch.delete(bhPayRef);
-
-        if (paidAmount > 0) {
-          final boxRef =
-              FirebaseFirestore.instance.collection('box').doc('mainBox');
-          batch.set(
-            boxRef,
-            {'value': FieldValue.increment(-paidAmount)},
-            SetOptions(merge: true),
-          );
-        }
-        await batch.commit().catchError((_) {});
-
-        // Recalculate client's balance deterministically
-        await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
-      } else {
-        // Enqueue offline delete operation
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'deleteInvoice',
-          payload: {
-            'clientId': widget.clientId,
-            'invoiceId': rootInvoiceId,
-            'clientSubDocId': invoiceId,
-            'paidAmount': paidAmount,
-          },
-        );
+      // 6. Update client balance locally in Hive
+      final unpaid = totalSum - paidAmount;
+      final localClient = ClientRepository.instance.getById(widget.clientId) ??
+          ClientRepository.instance.findByName(_clientName ?? widget.clientId);
+      if (localClient != null) {
+        await ClientRepository.instance
+            .updateLocalBalance(localClient.id, localClient.balance - unpaid);
       }
+
+      // 7. Enqueue sync operation to Firestore
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'deleteInvoice',
+        payload: {
+          'clientId': widget.clientId,
+          'invoiceId': rootInvoiceId,
+          'clientSubDocId': invoiceId,
+          'products': products,
+          'totalSum': totalSum,
+          'paidAmount': paidAmount,
+        },
+      );
+
+      // 8. Trigger background sync immediately
+      ConnectivityService.instance.forceSync();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -1268,6 +1233,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       final products =
           List<Map<String, dynamic>>.from(data['products'] as List? ?? []);
       final rootInvoiceId = data['invoiceId']?.toString() ?? docId;
+      final totalSum = invoiceNum(data['totalSum']);
+      final paidAmount = invoiceNum(data['paidAmount']);
 
       // 1. Reverse the stock restore (return invoice added stock, so deleting it decreases stock)
       if (products.isNotEmpty) {
@@ -1293,47 +1260,30 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
             .deleteByInvoiceId('client', widget.clientId, rootInvoiceId);
       }
 
-      // 4. Delete from Firestore if online
-      if (ConnectivityService.instance.isOnline) {
-        if (rootInvoiceId.isNotEmpty) {
-          FirebaseFirestore.instance
-              .collection('returnInvoices')
-              .doc(rootInvoiceId)
-              .delete()
-              .catchError((_) {});
-        }
-        FirebaseFirestore.instance
-            .collection('clients')
-            .doc(widget.clientId)
-            .collection('returnInvoices')
-            .doc(docId)
-            .delete()
-            .catchError((_) {});
-
-        if (rootInvoiceId.isNotEmpty) {
-          final historySnap = await FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('balanceHistory')
-              .where('invoiceId', isEqualTo: rootInvoiceId)
-              .get();
-          final batch = FirebaseFirestore.instance.batch();
-          for (final h in historySnap.docs) {
-            batch.delete(h.reference);
-          }
-          await batch.commit();
-        }
-        await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
-      } else {
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'deleteReturnInvoice',
-          payload: {
-            'clientId': widget.clientId,
-            'invoiceId': rootInvoiceId,
-            'clientSubDocId': docId,
-          },
-        );
+      // 4. Update client balance locally in Hive (return reduced debt, so deleting it restores debt)
+      final balanceDiff = totalSum - paidAmount;
+      final localClient = ClientRepository.instance.getById(widget.clientId) ??
+          ClientRepository.instance.findByName(_clientName ?? widget.clientId);
+      if (localClient != null) {
+        await ClientRepository.instance
+            .updateLocalBalance(localClient.id, localClient.balance + balanceDiff);
       }
+
+      // 5. Enqueue return deletion to SyncQueue
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'deleteReturn',
+        payload: {
+          'clientId': widget.clientId,
+          'invoiceId': rootInvoiceId,
+          'clientSubDocId': docId,
+          'products': products,
+          'totalSum': totalSum,
+          'paidAmount': paidAmount,
+        },
+      );
+
+      // 6. Trigger sync immediately
+      ConnectivityService.instance.forceSync();
 
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2092,7 +2042,9 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       });
     }
 
-    // 2. Background refresh from Firestore if online
+    // 2. Background refresh of client metadata from Firestore if online.
+    //    We ONLY update the name and upsert metadata — never overwrite balance
+    //    from Firestore because Hive is the primary balance store.
     try {
       final bool isOnline = ConnectivityService.instance.isOnline;
       if (isOnline) {
@@ -2107,21 +2059,19 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
             final rawName =
                 (data['clientName'] ?? data['name'])?.toString().trim() ?? '';
             final resolvedName = rawName.isNotEmpty ? rawName : widget.clientId;
-            final balance = (data['balance'] as num?)?.toDouble() ?? 0.0;
 
             setState(() {
               _clientName = resolvedName;
-              if (local == null) {
-                _currentClientBalance = balance;
-              }
+              // Never overwrite balance from Firestore — Hive is authoritative.
             });
 
+            // Upsert metadata but preserve local balance
             final Map<String, dynamic> localData =
                 Map<String, dynamic>.from(data);
             localData['clientName'] = resolvedName;
-            if (local != null) {
-              localData['balance'] = local.balance;
-            }
+            // Always keep the local Hive balance, not the Firestore one
+            final localBalance = local?.balance ?? _currentClientBalance ?? 0.0;
+            localData['balance'] = localBalance;
             await ClientRepository.instance
                 .upsertLocal(widget.clientId, localData);
           }
@@ -2804,8 +2754,10 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       item.computedAfter = running;
     }
 
-    // 3. Keep Hive local balance updated with exact running balance
-    ClientRepository.instance.updateLocalBalance(widget.clientId, running);
+    // 3. Display uses the computed running balance but does NOT write it
+    //    back to Hive — that would create a side-effect from a display-only page.
+    //    Balance persistence is handled exclusively by write operations (save invoice,
+    //    save payment, syncForClient, etc.).
 
     // 4. Sort descending for display (newest first)
     final sortedDescending = _sortDocs(sortedAscending);
@@ -3305,6 +3257,13 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
           if (clientInvSnap.exists) {
             final products = List<Map<String, dynamic>>.from(
                 clientInvSnap.data()?['products'] ?? []);
+            if (products.isNotEmpty) {
+              await InvoiceStockService.applyStockChanges(
+                lines: products,
+                restore: true,
+                changeDate: DateTime.now(),
+              );
+            }
             for (var product in products) {
               final name = product['product']?.toString() ?? '';
               if (name.isEmpty) continue;
@@ -3317,10 +3276,12 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                   .where('name', isEqualTo: name)
                   .get();
               for (var pDoc in q.docs) {
-                double qty = (pDoc['quantity'] as num?)?.toDouble() ?? 0.0;
-                batch.update(pDoc.reference, {'quantity': qty + amount});
+                batch.update(pDoc.reference, {
+                  'quantity': FieldValue.increment(amount),
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
                 batch.set(pDoc.reference.collection('changes').doc(), {
-                  'date': DateTime.now(),
+                  'date': FieldValue.serverTimestamp(),
                   'amount': amount,
                   'type': 'increase',
                 });
@@ -3332,6 +3293,7 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
           final rootInvRef =
               FirebaseFirestore.instance.collection('invoices').doc(invoiceId);
           batch.delete(rootInvRef);
+          await InvoiceRepository.instance.deleteSaleLocal(invoiceId);
         }
       } else if (type == 'return') {
         if (invoiceId.isNotEmpty) {
@@ -3344,6 +3306,14 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
           if (clientRetSnap.exists) {
             final products = List<Map<String, dynamic>>.from(
                 clientRetSnap.data()?['products'] ?? []);
+            if (products.isNotEmpty) {
+              await InvoiceStockService.applyStockChanges(
+                lines: products,
+                restore: false,
+                changeDate: DateTime.now(),
+                changeTypeWhenDecrease: 'decrease',
+              );
+            }
             for (var product in products) {
               final name = product['product']?.toString() ?? '';
               if (name.isEmpty) continue;
@@ -3356,10 +3326,12 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                   .where('name', isEqualTo: name)
                   .get();
               for (var pDoc in q.docs) {
-                double qty = (pDoc['quantity'] as num?)?.toDouble() ?? 0.0;
-                batch.update(pDoc.reference, {'quantity': qty - amount});
+                batch.update(pDoc.reference, {
+                  'quantity': FieldValue.increment(-amount),
+                  'updatedAt': FieldValue.serverTimestamp(),
+                });
                 batch.set(pDoc.reference.collection('changes').doc(), {
-                  'date': DateTime.now(),
+                  'date': FieldValue.serverTimestamp(),
                   'amount': amount,
                   'type': 'decrease',
                 });
@@ -3372,6 +3344,7 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
               .collection('returnInvoices')
               .doc(invoiceId);
           batch.delete(rootRetRef);
+          await InvoiceRepository.instance.deleteReturnLocal(invoiceId);
         }
       }
 

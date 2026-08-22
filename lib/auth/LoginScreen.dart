@@ -1,10 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:connectivity_plus/connectivity_plus.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Screeens/g_Nav.dart';
-import '../sync/connectivity_service.dart';
 
 class LoginScreen extends StatefulWidget {
   @override
@@ -59,7 +59,12 @@ class _LoginScreenState extends State<LoginScreen> {
     setState(() => _isLoading = true);
 
     try {
-      final bool isOnline = ConnectivityService.instance.isOnline;
+      // Do a live connectivity check instead of reading the cached flag,
+      // which may still be false if the app just started (race condition).
+      final connectivityResult = await Connectivity().checkConnectivity();
+      final bool isOnline = connectivityResult is List
+          ? (connectivityResult as List).any((r) => r != ConnectivityResult.none)
+          : connectivityResult != ConnectivityResult.none;
 
       if (isOnline) {
         try {
@@ -69,7 +74,7 @@ class _LoginScreenState extends State<LoginScreen> {
               .where('email', isEqualTo: email)
               .limit(1)
               .get()
-              .timeout(const Duration(seconds: 4));
+              .timeout(const Duration(seconds: 8));
 
           if (snapshot.docs.isNotEmpty) {
             final userData = snapshot.docs.first.data();

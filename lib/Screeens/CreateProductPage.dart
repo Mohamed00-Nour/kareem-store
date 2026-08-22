@@ -85,6 +85,7 @@ class _CreateProductPageState extends State<CreateProductPage> {
         'image': _imageController.text.isNotEmpty ? _imageController.text : null,
         'randomNumber': nextRandom,
         'department': _selectedDepartment,
+        'updatedAt': FieldValue.serverTimestamp(),
       };
 
       final productId = FirebaseFirestore.instance.collection('products').doc().id;

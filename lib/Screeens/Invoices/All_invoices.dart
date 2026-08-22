@@ -6,6 +6,7 @@ import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../Services/invoice_special_service.dart';
+import '../../Services/sales_invoice_actions_service.dart';
 import '../../repositories/invoice_repository.dart';
 import '../../local_db/models/invoice_local.dart';
 import 'InvoiceDetailPage.dart';
@@ -309,49 +310,37 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
 
   void _deleteInvoice(int index) async {
     final removedInvoice = _filteredInvoices.removeAt(index);
-    final invoiceId = removedInvoice['id']; // Ensure 'id' field exists and is correct
+    final invoiceId = removedInvoice['id']?.toString() ??
+        removedInvoice['invoiceId']?.toString() ??
+        '';
 
     setState(() {});
 
     try {
-      // Delete the invoice from Firestore
-      await FirebaseFirestore.instance
-          .collection(widget.collection)
-          .doc(invoiceId)
-          .delete();
+      if (invoiceId.isNotEmpty) {
+        await SalesInvoiceActionsService.deleteSalesInvoice(
+          invoice: removedInvoice,
+          rootInvoiceId: invoiceId,
+        );
+      }
 
+      if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text('تم حذف الفاتورة بنجاح'),
-          action: SnackBarAction(
-            label: 'تراجع',
-            onPressed: () async {
-              // Re-add the invoice to Firestore
-              await FirebaseFirestore.instance
-                  .collection(widget.collection)
-                  .doc(invoiceId)
-                  .set(removedInvoice);
-
-              if (!mounted) return;
-              setState(() {
-                _filteredInvoices.insert(index, removedInvoice);
-              });
-            },
-          ),
-          duration: Duration(seconds: 5),
+        const SnackBar(
+          content: Text('تم حذف الفاتورة بنجاح وإرجاع المنتجات للمخزون'),
+          duration: Duration(seconds: 3),
         ),
       );
     } catch (e) {
       print('Error deleting invoice: $e');
-      // Re-add the invoice to the list if deletion fails
       if (!mounted) return;
       setState(() {
         _filteredInvoices.insert(index, removedInvoice);
       });
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
-          content: Text('Failed to delete invoice'),
-          duration: Duration(seconds: 3),
+          content: Text('حدث خطأ أثناء حذف الفاتورة: $e'),
+          duration: const Duration(seconds: 3),
         ),
       );
     }

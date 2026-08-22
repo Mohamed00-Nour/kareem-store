@@ -231,7 +231,7 @@ class InvoiceStockService {
       refByDocId[product.id] = product.ref;
     }
 
-    // 1. Immediately apply stock changes to local Hive productsBox
+    // 1. Immediately apply stock changes to local Hive productsBox (<10ms UI update)
     for (final entry in deltaByDocId.entries) {
       final id = entry.key;
       final delta = entry.value;
@@ -243,46 +243,7 @@ class InvoiceStockService {
         await localProd.save();
       }
     }
-
-    // 2. Firestore batch write runs in the background — never blocks UI
-    //    (fails silently if offline; the sync engine will handle it later)
-    Future(() async {
-      try {
-        var batch = FirebaseFirestore.instance.batch();
-        var ops = 0;
-
-        Future<void> commitIfNeeded({bool force = false}) async {
-          if (ops == 0) return;
-          if (!force && ops < _batchOpLimit) return;
-          await batch.commit();
-          batch = FirebaseFirestore.instance.batch();
-          ops = 0;
-        }
-
-        for (final entry in deltaByDocId.entries) {
-          final id = entry.key;
-          final delta = entry.value;
-          final ref = refByDocId[id];
-          if (ref == null) continue;
-          final changeType =
-              restore ? changeTypeWhenRestore : changeTypeWhenDecrease;
-          final increment = restore ? delta : -delta;
-
-          batch.update(ref, {'quantity': FieldValue.increment(increment)});
-          batch.set(ref.collection('changes').doc(), {
-            'date': changeDateByDocId[id],
-            'amount': delta,
-            'type': changeType,
-          });
-          ops += 2;
-          if (ops >= _batchOpLimit) await commitIfNeeded(force: true);
-        }
-
-        await commitIfNeeded(force: true);
-      } catch (_) {
-        // Offline / network failure — local Hive is already updated
-      }
-    });
+    // Note: Firestore update is executed atomically via BatchSyncEngine via SyncQueueManager
   }
 }
 

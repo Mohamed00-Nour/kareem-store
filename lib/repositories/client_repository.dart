@@ -41,47 +41,36 @@ class ClientRepository {
     return running;
   }
 
-  /// All clients from local cache, with instant live balances computed from Hive.
+  /// All clients from local cache. Returns stored balances — no live recomputation.
+  /// Use [computeLiveBalanceFromHive] explicitly when you need a full recalculation.
   List<ClientLocal> getAll() {
     final clients = clientsBox.values.toList();
-    for (final c in clients) {
-      c.balance = computeLiveBalanceFromHive(c.id);
-    }
     clients.sort((a, b) => a.name.compareTo(b.name));
     return clients;
   }
 
-  /// Search clients locally by name — zero Firestore reads.
+  /// Search clients locally by name — zero Firestore reads. Returns stored balances.
   List<ClientLocal> search(String query) {
     final q = query.trim().toLowerCase();
     if (q.isEmpty) return getAll();
     final list = clientsBox.values
         .where((c) => c.name.toLowerCase().contains(q))
         .toList();
-    for (final c in list) {
-      c.balance = computeLiveBalanceFromHive(c.id);
-    }
     list.sort((a, b) => a.name.compareTo(b.name));
     return list;
   }
 
-  /// Get a single client by Firestore document ID with instant Hive balance.
+  /// Get a single client by Firestore document ID. Returns stored balance.
   ClientLocal? getById(String id) {
-    final c = clientsBox.get(id);
-    if (c != null) {
-      c.balance = computeLiveBalanceFromHive(c.id);
-    }
-    return c;
+    return clientsBox.get(id);
   }
 
-  /// Get a single client by name (case-insensitive) with instant Hive balance.
+  /// Get a single client by name (case-insensitive). Returns stored balance.
   ClientLocal? findByName(String name) {
     final n = name.trim().toLowerCase();
     try {
-      final c = clientsBox.values
+      return clientsBox.values
           .firstWhere((client) => client.name.toLowerCase() == n);
-      c.balance = computeLiveBalanceFromHive(c.id);
-      return c;
     } catch (_) {
       return null;
     }

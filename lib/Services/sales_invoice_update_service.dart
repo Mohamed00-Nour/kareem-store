@@ -143,6 +143,8 @@ class SalesInvoiceUpdateService {
         'clientId': newClientId ?? '',
         'invoiceId': rootInvoiceId,
         'updateData': rootUpdate,
+        'oldProducts': oldProducts,
+        'newProducts': newProducts,
       },
     );
 

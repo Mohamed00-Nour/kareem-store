@@ -1,3 +1,4 @@
+import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../Widgets/main-cards.dart';
@@ -17,6 +18,8 @@ import 'Invoices/SpecialInvoicesPage.dart';
 import '../expenses/ExpensesPage.dart';
 import 'ChangeCredentialsPage.dart';
 import '../sync/ui/sync_status_badge.dart';
+import '../Services/printer_settings_service.dart';
+import '../models/printer_settings.dart';
 
 class HomePage extends StatelessWidget {
   /// When false, back is handled by [GNavPage] (return to home tab, then exit).
@@ -153,34 +156,49 @@ class HomePage extends StatelessWidget {
             },
           ),
         ],
-        title: Directionality(
-          textDirection: TextDirection.ltr,
-          child: Row(
-            children: [
-              Image.asset(
-                'assets/Magdy store.png',
-                height: 40.h,
-                fit: BoxFit.contain,
-                errorBuilder: (_, __, ___) => const SizedBox.shrink(),
-              ),
-              Expanded(
-                child: Align(
-                  alignment: Alignment.centerRight,
-                  child: Text(
-                    'أبو مجدي للحدايد والعدد',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      color: Colors.white,
-                      fontSize: 18.sp,
-                      fontWeight: FontWeight.bold,
+        title: StreamBuilder<PrinterSettings>(
+          stream: PrinterSettingsService.stream(),
+          builder: (context, snapshot) {
+            final settings = snapshot.data;
+            final storeName = settings?.receiptStoreName.trim() ?? '';
+            final logoPath = settings?.receiptLogoPath.trim() ?? '';
+            final hasLogo = logoPath.isNotEmpty && File(logoPath).existsSync();
+
+            return Directionality(
+              textDirection: TextDirection.ltr,
+              child: Row(
+                children: [
+                  if (hasLogo) ...[
+                    Image.file(
+                      File(logoPath),
+                      height: 40.h,
+                      fit: BoxFit.contain,
+                      errorBuilder: (_, __, ___) => const SizedBox.shrink(),
                     ),
-                    overflow: TextOverflow.ellipsis,
-                    maxLines: 1,
+                    SizedBox(width: 8.w),
+                  ],
+                  Expanded(
+                    child: Align(
+                      alignment: Alignment.centerRight,
+                      child: storeName.isNotEmpty
+                          ? Text(
+                              storeName,
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                color: Colors.white,
+                                fontSize: 18.sp,
+                                fontWeight: FontWeight.bold,
+                              ),
+                              overflow: TextOverflow.ellipsis,
+                              maxLines: 1,
+                            )
+                          : const SizedBox.shrink(),
+                    ),
                   ),
-                ),
+                ],
               ),
-            ],
-          ),
+            );
+          },
         ),
       ),
       backgroundColor: const Color(0xffeeeced),

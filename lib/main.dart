@@ -10,6 +10,7 @@ import 'Widgets/responsive_screen_util_host.dart';
 import 'local_db/hive_init.dart';
 import 'repositories/data_sync_service.dart';
 import 'sync/connectivity_service.dart';
+import 'sync/realtime_sync_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -21,6 +22,8 @@ Future<void> main() async {
   DataSyncService.instance.syncOnStartup();
   // Start connectivity listener — auto-syncs queue when internet returns
   ConnectivityService.instance.startListening();
+  // Start real-time Firestore stream listener — streams stock & invoice changes to Hive across devices immediately
+  RealtimeSyncService.instance.startListening();
   runApp(const MyApp());
 }
 
