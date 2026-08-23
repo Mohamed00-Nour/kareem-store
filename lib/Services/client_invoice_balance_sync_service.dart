@@ -114,13 +114,40 @@ class ClientInvoiceBalanceSyncService {
     final Map<String, QueryDocumentSnapshot> historyReturnDocs = {};
     final Map<String, QueryDocumentSnapshot> historyReturnPaymentDocs = {};
 
+    bool matchesSalesMap(String invId, String invNum) {
+      if (invId.isNotEmpty && salesMap.containsKey(invId)) return true;
+      for (final sDoc in salesMap.values) {
+        if (invId.isNotEmpty && sDoc.id == invId) return true;
+        final sData = sDoc.data() as Map<String, dynamic>? ?? {};
+        final rootId = sData['invoiceId']?.toString() ?? '';
+        final rootNum = sData['invoiceNumber']?.toString() ?? '';
+        if (invId.isNotEmpty && rootId.isNotEmpty && (rootId == invId || invId.contains(rootId))) return true;
+        if (invNum.isNotEmpty && rootNum.isNotEmpty && rootNum == invNum) return true;
+      }
+      return false;
+    }
+
+    bool matchesReturnsMap(String invId, String invNum) {
+      if (invId.isNotEmpty && returnsMap.containsKey(invId)) return true;
+      for (final rDoc in returnsMap.values) {
+        if (invId.isNotEmpty && rDoc.id == invId) return true;
+        final rData = rDoc.data() as Map<String, dynamic>? ?? {};
+        final rootId = rData['invoiceId']?.toString() ?? '';
+        final rootNum = rData['invoiceNumber']?.toString() ?? '';
+        if (invId.isNotEmpty && rootId.isNotEmpty && (rootId == invId || invId.contains(rootId))) return true;
+        if (invNum.isNotEmpty && rootNum.isNotEmpty && rootNum == invNum) return true;
+      }
+      return false;
+    }
+
     for (final doc in historyDocs) {
       final data = doc.data();
       final type = data['type']?.toString();
       final invId = data['invoiceId']?.toString() ?? '';
+      final invNum = data['invoiceNumber']?.toString() ?? '';
 
       if (type == 'sale') {
-        if (!salesMap.containsKey(invId)) {
+        if (!matchesSalesMap(invId, invNum)) {
           batch.delete(doc.reference);
           opCount++;
           await commitBatchIfNeeded();
@@ -128,7 +155,7 @@ class ClientInvoiceBalanceSyncService {
           historySaleDocs[invId] = doc;
         }
       } else if (type == 'sale_payment') {
-        if (!salesMap.containsKey(invId)) {
+        if (!matchesSalesMap(invId, invNum)) {
           batch.delete(doc.reference);
           opCount++;
           await commitBatchIfNeeded();
@@ -136,7 +163,7 @@ class ClientInvoiceBalanceSyncService {
           historySalePaymentDocs[invId] = doc;
         }
       } else if (type == 'return') {
-        if (!returnsMap.containsKey(invId)) {
+        if (!matchesReturnsMap(invId, invNum)) {
           batch.delete(doc.reference);
           opCount++;
           await commitBatchIfNeeded();
@@ -144,7 +171,7 @@ class ClientInvoiceBalanceSyncService {
           historyReturnDocs[invId] = doc;
         }
       } else if (type == 'return_payment') {
-        if (!returnsMap.containsKey(invId)) {
+        if (!matchesReturnsMap(invId, invNum)) {
           batch.delete(doc.reference);
           opCount++;
           await commitBatchIfNeeded();

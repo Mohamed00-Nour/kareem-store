@@ -1094,11 +1094,20 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       }
 
       // 4. Delete balance history entries for this invoice locally from Hive
-      await BalanceHistoryRepository.instance
-          .deleteByInvoiceId('client', widget.clientId, invoiceId);
+      final invNumberStr = data?['invoiceNumber']?.toString();
+      await BalanceHistoryRepository.instance.deleteByInvoiceId(
+        'client',
+        widget.clientId,
+        invoiceId,
+        invoiceNumber: invNumberStr,
+      );
       if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
-        await BalanceHistoryRepository.instance
-            .deleteByInvoiceId('client', widget.clientId, rootInvoiceId);
+        await BalanceHistoryRepository.instance.deleteByInvoiceId(
+          'client',
+          widget.clientId,
+          rootInvoiceId,
+          invoiceNumber: invNumberStr,
+        );
       }
 
       // 5. Adjust Cash Box locally if there was a payment
@@ -1253,11 +1262,20 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       }
 
       // 3. Delete balance history from Hive
-      await BalanceHistoryRepository.instance
-          .deleteByInvoiceId('client', widget.clientId, docId);
+      final retNumberStr = data['invoiceNumber']?.toString();
+      await BalanceHistoryRepository.instance.deleteByInvoiceId(
+        'client',
+        widget.clientId,
+        docId,
+        invoiceNumber: retNumberStr,
+      );
       if (rootInvoiceId.isNotEmpty && rootInvoiceId != docId) {
-        await BalanceHistoryRepository.instance
-            .deleteByInvoiceId('client', widget.clientId, rootInvoiceId);
+        await BalanceHistoryRepository.instance.deleteByInvoiceId(
+          'client',
+          widget.clientId,
+          rootInvoiceId,
+          invoiceNumber: retNumberStr,
+        );
       }
 
       // 4. Update client balance locally in Hive (return reduced debt, so deleting it restores debt)

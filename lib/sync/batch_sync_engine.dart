@@ -467,30 +467,38 @@ class BatchSyncEngine {
 
     // 4. Delete balance history entries
     if (clientId.isNotEmpty) {
-      if (invoiceId.isNotEmpty) {
+      final idsToCheck = <String>{
+        if (invoiceId.isNotEmpty) invoiceId,
+        if (clientSubDocId.isNotEmpty) clientSubDocId,
+      };
+      for (final id in idsToCheck) {
         batch.delete(_fs
             .collection('clients')
             .doc(clientId)
             .collection('balanceHistory')
-            .doc('${invoiceId}_sale'));
+            .doc(id));
         batch.delete(_fs
             .collection('clients')
             .doc(clientId)
             .collection('balanceHistory')
-            .doc('${invoiceId}_pay'));
+            .doc('${id}_sale'));
+        batch.delete(_fs
+            .collection('clients')
+            .doc(clientId)
+            .collection('balanceHistory')
+            .doc('${id}_pay'));
       }
-      if (clientSubDocId.isNotEmpty && clientSubDocId != invoiceId) {
-        batch.delete(_fs
+      try {
+        final querySnap = await _fs
             .collection('clients')
             .doc(clientId)
             .collection('balanceHistory')
-            .doc('${clientSubDocId}_sale'));
-        batch.delete(_fs
-            .collection('clients')
-            .doc(clientId)
-            .collection('balanceHistory')
-            .doc('${clientSubDocId}_pay'));
-      }
+            .where('invoiceId', whereIn: idsToCheck.toList())
+            .get();
+        for (final doc in querySnap.docs) {
+          batch.delete(doc.reference);
+        }
+      } catch (_) {}
     }
 
     // 5. Adjust mainBox balance if paid.
@@ -785,30 +793,38 @@ class BatchSyncEngine {
 
     // 5. Delete balance history entries
     if (clientId.isNotEmpty) {
-      if (invoiceId.isNotEmpty) {
+      final idsToCheck = <String>{
+        if (invoiceId.isNotEmpty) invoiceId,
+        if (clientSubDocId.isNotEmpty) clientSubDocId,
+      };
+      for (final id in idsToCheck) {
         batch.delete(_fs
             .collection('clients')
             .doc(clientId)
             .collection('balanceHistory')
-            .doc('${invoiceId}_return'));
+            .doc(id));
         batch.delete(_fs
             .collection('clients')
             .doc(clientId)
             .collection('balanceHistory')
-            .doc('${invoiceId}_return_pay'));
+            .doc('${id}_return'));
+        batch.delete(_fs
+            .collection('clients')
+            .doc(clientId)
+            .collection('balanceHistory')
+            .doc('${id}_return_pay'));
       }
-      if (clientSubDocId.isNotEmpty && clientSubDocId != invoiceId) {
-        batch.delete(_fs
+      try {
+        final querySnap = await _fs
             .collection('clients')
             .doc(clientId)
             .collection('balanceHistory')
-            .doc('${clientSubDocId}_return'));
-        batch.delete(_fs
-            .collection('clients')
-            .doc(clientId)
-            .collection('balanceHistory')
-            .doc('${clientSubDocId}_return_pay'));
-      }
+            .where('invoiceId', whereIn: idsToCheck.toList())
+            .get();
+        for (final doc in querySnap.docs) {
+          batch.delete(doc.reference);
+        }
+      } catch (_) {}
     }
 
     // 6. Adjust mainBox if paidAmount > 0 (refund was paid out, so return money back to cash box)

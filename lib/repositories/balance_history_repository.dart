@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/balance_history_local.dart';
+import 'invoice_repository.dart';
 
 /// Repository for Client & Supplier Balance History entries.
 ///
@@ -17,22 +18,160 @@ class BalanceHistoryRepository {
 
   List<BalanceHistoryLocal> getForClient(String clientId) {
     final cId = clientId.trim();
-    final list = balanceHistoryBox.values
+    var list = balanceHistoryBox.values
         .where((e) => e.parentType == 'client' && e.parentId == cId)
         .toList();
+
+    final activeSales = InvoiceRepository.instance.getSalesByClient(cId);
+    final activeReturns = InvoiceRepository.instance.getReturnsByClient(cId);
+
+    // Auto-populate missing history entries for active local sales invoices in Hive
+    for (final inv in activeSales) {
+      final invId = inv.id.trim();
+      final invNum = inv.invoiceNumber.toString().trim();
+      final hasSaleEntry = list.any((e) =>
+          (e.type == 'sale' || e.type == 'sale_payment') &&
+          ((invId.isNotEmpty && (e.invoiceId == invId || e.id == invId || e.id.startsWith(invId))) ||
+           (invNum.isNotEmpty && (e.invoiceNumber == invNum || e.id.contains(invNum)))));
+
+      if (!hasSaleEntry) {
+        final saleHist = BalanceHistoryLocal(
+          id: '${inv.id}_sale',
+          parentId: cId,
+          parentType: 'client',
+          enteredBalance: inv.totalSum,
+          balanceBefore: inv.previousBalance,
+          type: 'sale',
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber.toString(),
+          timestamp: inv.date,
+        );
+        upsertLocal(saleHist);
+        list.add(saleHist);
+
+        if (inv.paidAmount > 0) {
+          final payHist = BalanceHistoryLocal(
+            id: '${inv.id}_pay',
+            parentId: cId,
+            parentType: 'client',
+            enteredBalance: inv.paidAmount,
+            balanceBefore: inv.previousBalance + inv.totalSum,
+            type: 'sale_payment',
+            invoiceId: inv.id,
+            invoiceNumber: inv.invoiceNumber.toString(),
+            timestamp: inv.date,
+          );
+          upsertLocal(payHist);
+          list.add(payHist);
+        }
+      }
+    }
+
+    // Auto-populate missing history entries for active local return invoices in Hive
+    for (final ret in activeReturns) {
+      final retId = ret.id.trim();
+      final retNum = ret.invoiceNumber.toString().trim();
+      final hasReturnEntry = list.any((e) =>
+          (e.type == 'return' || e.type == 'return_payment') &&
+          ((retId.isNotEmpty && (e.invoiceId == retId || e.id == retId || e.id.startsWith(retId))) ||
+           (retNum.isNotEmpty && (e.invoiceNumber == retNum || e.id.contains(retNum)))));
+
+      if (!hasReturnEntry) {
+        final returnHist = BalanceHistoryLocal(
+          id: '${ret.id}_return',
+          parentId: cId,
+          parentType: 'client',
+          enteredBalance: ret.totalSum,
+          balanceBefore: ret.previousBalance,
+          type: 'return',
+          invoiceId: ret.id,
+          invoiceNumber: ret.invoiceNumber.toString(),
+          timestamp: ret.date,
+        );
+        upsertLocal(returnHist);
+        list.add(returnHist);
+
+        if (ret.paidAmount > 0) {
+          final payHist = BalanceHistoryLocal(
+            id: '${ret.id}_return_pay',
+            parentId: cId,
+            parentType: 'client',
+            enteredBalance: ret.paidAmount,
+            balanceBefore: ret.previousBalance - ret.totalSum,
+            type: 'return_payment',
+            invoiceId: ret.id,
+            invoiceNumber: ret.invoiceNumber.toString(),
+            timestamp: ret.date,
+          );
+          upsertLocal(payHist);
+          list.add(payHist);
+        }
+      }
+    }
+
     list.sort((a, b) => a.timestamp.compareTo(b.timestamp));
 
-    // Deduplicate by entry ID or invoiceId + type
+    bool isInvoiceActive(BalanceHistoryLocal item) {
+      final type = item.type;
+      if (type == 'sale' || type == 'sale_payment') {
+        if (activeSales.isEmpty) return false;
+        final itemInvId = item.invoiceId.trim();
+        final itemInvNum = item.invoiceNumber.trim();
+        final itemId = item.id.trim();
+        return activeSales.any((inv) {
+          final invId = inv.id.trim();
+          final invNum = inv.invoiceNumber.toString().trim();
+          if (invId.isNotEmpty && (invId == itemInvId || invId == itemId || itemId.startsWith(invId) || itemInvId.startsWith(invId))) {
+            return true;
+          }
+          if (invNum.isNotEmpty && (invNum == itemInvNum || itemInvNum == invNum || itemId.contains(invNum))) {
+            return true;
+          }
+          return false;
+        });
+      } else if (type == 'return' || type == 'return_payment') {
+        if (activeReturns.isEmpty) return false;
+        final itemInvId = item.invoiceId.trim();
+        final itemInvNum = item.invoiceNumber.trim();
+        final itemId = item.id.trim();
+        return activeReturns.any((inv) {
+          final invId = inv.id.trim();
+          final invNum = inv.invoiceNumber.toString().trim();
+          if (invId.isNotEmpty && (invId == itemInvId || invId == itemId || itemId.startsWith(invId) || itemInvId.startsWith(invId))) {
+            return true;
+          }
+          if (invNum.isNotEmpty && (invNum == itemInvNum || itemInvNum == invNum || itemId.contains(invNum))) {
+            return true;
+          }
+          return false;
+        });
+      }
+      return true;
+    }
+
     final seenKeys = <String>{};
     final deduplicated = <BalanceHistoryLocal>[];
+    final keysToPurge = <String>[];
+
     for (final item in list) {
+      if (!isInvoiceActive(item)) {
+        keysToPurge.add(_boxKey(item.parentType, item.parentId, item.id));
+        continue;
+      }
       final key = item.invoiceId.isNotEmpty
           ? '${item.invoiceId}_${item.type}'
-          : item.id;
+          : (item.invoiceNumber.isNotEmpty
+              ? '${item.invoiceNumber}_${item.type}'
+              : item.id);
       if (seenKeys.add(key)) {
         deduplicated.add(item);
       }
     }
+
+    if (keysToPurge.isNotEmpty) {
+      balanceHistoryBox.deleteAll(keysToPurge);
+    }
+
     return deduplicated;
   }
 
@@ -67,16 +206,37 @@ class BalanceHistoryRepository {
     await balanceHistoryBox.delete(key);
   }
 
-  Future<void> deleteByInvoiceId(String parentType, String parentId, String invoiceId) async {
+  Future<void> deleteByInvoiceId(
+    String parentType,
+    String parentId,
+    String invoiceId, {
+    String? invoiceNumber,
+  }) async {
+    final invId = invoiceId.trim();
+    final invNum = (invoiceNumber ?? '').trim();
+
     final keysToDelete = balanceHistoryBox.values
-        .where((e) =>
-            e.parentType == parentType &&
-            e.parentId == parentId &&
-            (e.id == invoiceId ||
-             e.id == '${invoiceId}_sale' ||
-             e.id == '${invoiceId}_pay' ||
-             e.id == '${invoiceId}_return' ||
-             e.id == '${invoiceId}_return_pay'))
+        .where((e) {
+          if (e.parentType != parentType || e.parentId != parentId) return false;
+          if (invId.isNotEmpty && (
+              e.invoiceId == invId ||
+              e.id == invId ||
+              e.id == '${invId}_sale' ||
+              e.id == '${invId}_pay' ||
+              e.id == '${invId}_return' ||
+              e.id == '${invId}_return_pay' ||
+              e.id.startsWith(invId) ||
+              e.invoiceId.startsWith(invId))) {
+            return true;
+          }
+          if (invNum.isNotEmpty && (
+              e.invoiceNumber == invNum ||
+              e.id.contains(invNum) ||
+              e.invoiceId.contains(invNum))) {
+            return true;
+          }
+          return false;
+        })
         .map((e) => _boxKey(e.parentType, e.parentId, e.id))
         .toList();
     await balanceHistoryBox.deleteAll(keysToDelete);
