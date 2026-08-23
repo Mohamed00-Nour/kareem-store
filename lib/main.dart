@@ -11,6 +11,7 @@ import 'local_db/hive_init.dart';
 import 'repositories/data_sync_service.dart';
 import 'sync/connectivity_service.dart';
 import 'sync/realtime_sync_service.dart';
+import 'Services/printer_settings_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
@@ -18,6 +19,8 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
+  // Pre-load cached settings (appbar title/logo) from SharedPreferences
+  await PrinterSettingsService.initLocalCache();
   // Sync startup data & seed invoice counters before launching UI
   await DataSyncService.instance.syncOnStartup();
   // Start connectivity listener — auto-syncs queue when internet returns

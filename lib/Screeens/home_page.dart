@@ -157,11 +157,12 @@ class HomePage extends StatelessWidget {
           ),
         ],
         title: StreamBuilder<PrinterSettings>(
+          initialData: PrinterSettingsService.current,
           stream: PrinterSettingsService.stream(),
           builder: (context, snapshot) {
-            final settings = snapshot.data;
-            final storeName = settings?.receiptStoreName.trim() ?? '';
-            final logoPath = settings?.receiptLogoPath.trim() ?? '';
+            final settings = snapshot.data ?? PrinterSettingsService.current;
+            final storeName = settings.receiptStoreName.trim();
+            final logoPath = settings.receiptLogoPath.trim();
             final hasLogo = logoPath.isNotEmpty && File(logoPath).existsSync();
 
             return Directionality(

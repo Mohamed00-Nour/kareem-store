@@ -10,15 +10,32 @@ class PrinterSettingsService {
   static final _firestoreDoc =
       FirebaseFirestore.instance.collection('settings').doc('printer_settings');
 
+  static PrinterSettings? _cachedSettings;
+
+  /// Returns currently cached PrinterSettings immediately from memory or SharedPreferences.
+  static PrinterSettings get current {
+    return _cachedSettings ?? const PrinterSettings();
+  }
+
   static PrinterSettings _loadFromPrefs(SharedPreferences prefs) {
     var raw = prefs.getString(_storageKeyV2);
     raw ??= prefs.getString(_storageKeyV1);
     if (raw == null) return const PrinterSettings();
     try {
-      return PrinterSettings.fromMap(jsonDecode(raw) as Map<String, dynamic>);
+      final settings = PrinterSettings.fromMap(jsonDecode(raw) as Map<String, dynamic>);
+      _cachedSettings = settings;
+      return settings;
     } catch (_) {
       return const PrinterSettings();
     }
+  }
+
+  /// Initializes local cache from SharedPreferences. Call during app startup.
+  static Future<PrinterSettings> initLocalCache() async {
+    final prefs = await SharedPreferences.getInstance();
+    final settings = _loadFromPrefs(prefs);
+    _cachedSettings = settings;
+    return settings;
   }
 
   static Future<PrinterSettings> load() async {
@@ -29,13 +46,13 @@ class PrinterSettingsService {
       final docSnap = await _firestoreDoc.get().timeout(const Duration(seconds: 3));
       if (docSnap.exists && docSnap.data() != null) {
         final remoteData = Map<String, dynamic>.from(docSnap.data()!);
-        // Merge remote fields into local settings while preserving local device logo path
         final remoteSettings = PrinterSettings.fromMap(remoteData);
         final merged = remoteSettings.copyWith(
           receiptLogoPath: localSettings.receiptLogoPath,
         );
 
-        // Cache merged settings locally
+        // Cache merged settings locally in SharedPreferences and memory
+        _cachedSettings = merged;
         await prefs.setString(_storageKeyV2, jsonEncode(merged.toMap()));
         return merged;
       }
@@ -43,10 +60,12 @@ class PrinterSettingsService {
       // Offline or timeout — return cached local settings
     }
 
+    _cachedSettings = localSettings;
     return localSettings;
   }
 
   static Future<void> save(PrinterSettings settings) async {
+    _cachedSettings = settings;
     final prefs = await SharedPreferences.getInstance();
     await prefs.setString(_storageKeyV2, jsonEncode(settings.toMap()));
 
@@ -60,21 +79,47 @@ class PrinterSettingsService {
     }
   }
 
+  /// Returns a stream that IMMEDIATELY emits cached SharedPreferences settings,
+  /// then updates SharedPreferences and emits new data whenever Firestore changes.
   static Stream<PrinterSettings> stream() {
-    return _firestoreDoc.snapshots().asyncMap((docSnap) async {
-      final prefs = await SharedPreferences.getInstance();
-      final localSettings = _loadFromPrefs(prefs);
+    late StreamController<PrinterSettings> controller;
+    StreamSubscription<DocumentSnapshot<Map<String, dynamic>>>? sub;
 
-      if (docSnap.exists && docSnap.data() != null) {
-        final remoteData = Map<String, dynamic>.from(docSnap.data()!);
-        final remoteSettings = PrinterSettings.fromMap(remoteData);
-        final merged = remoteSettings.copyWith(
-          receiptLogoPath: localSettings.receiptLogoPath,
+    controller = StreamController<PrinterSettings>.broadcast(
+      onListen: () async {
+        final prefs = await SharedPreferences.getInstance();
+        final localSettings = _loadFromPrefs(prefs);
+        _cachedSettings = localSettings;
+        if (!controller.isClosed) {
+          controller.add(localSettings);
+        }
+
+        sub = _firestoreDoc.snapshots().listen(
+          (docSnap) async {
+            if (docSnap.exists && docSnap.data() != null) {
+              final remoteData = Map<String, dynamic>.from(docSnap.data()!);
+              final remoteSettings = PrinterSettings.fromMap(remoteData);
+              final currentLocal = _loadFromPrefs(prefs);
+              final merged = remoteSettings.copyWith(
+                receiptLogoPath: currentLocal.receiptLogoPath,
+              );
+              _cachedSettings = merged;
+              await prefs.setString(_storageKeyV2, jsonEncode(merged.toMap()));
+              if (!controller.isClosed) {
+                controller.add(merged);
+              }
+            }
+          },
+          onError: (_) {
+            // Network error offline — keep local settings in stream
+          },
         );
-        await prefs.setString(_storageKeyV2, jsonEncode(merged.toMap()));
-        return merged;
-      }
-      return localSettings;
-    });
+      },
+      onCancel: () {
+        sub?.cancel();
+      },
+    );
+
+    return controller.stream;
   }
 }
