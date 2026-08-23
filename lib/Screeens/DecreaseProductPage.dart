@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
@@ -717,6 +718,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     _dataModified = true;
   }
 
+  Timer? _productsDebounceTimer;
+
   @override
   void initState() {
     super.initState();
@@ -732,13 +735,17 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   }
 
   void _onProductsBoxChanged() {
-    if (mounted) {
-      _loadProductsFromLocalCache();
-    }
+    _productsDebounceTimer?.cancel();
+    _productsDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _loadProductsFromLocalCache();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _productsDebounceTimer?.cancel();
     productsBox.listenable().removeListener(_onProductsBoxChanged);
     super.dispose();
   }
@@ -860,15 +867,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   }
 
   Future<void> _fetchProducts() async {
-    // 1. Immediately load from Hive primary database (0ms wait)
+    // Load from Hive local cache immediately (0ms wait).
+    // RealtimeSyncService automatically updates local Hive storage in the background.
     _loadProductsFromLocalCache();
-
-    // 2. Background delta-sync if online (never blocks UI or shows spinner)
-    if (ConnectivityService.instance.isOnline) {
-      ProductRepository.instance.deltaSync().then((_) {
-        if (mounted) _loadProductsFromLocalCache();
-      }).catchError((_) {});
-    }
   }
 
   /// Loads products from Hive local cache (used when offline or on error).

@@ -80,6 +80,16 @@ class ProductRepository {
     await productsBox.put(docId, ProductLocal.fromFirestore(docId, data));
   }
 
+  /// Updates multiple products in the local cache in a single batch operation.
+  Future<void> upsertAllLocal(Map<String, Map<String, dynamic>> items) async {
+    if (items.isEmpty) return;
+    final Map<String, ProductLocal> map = {};
+    items.forEach((id, data) {
+      map[id] = ProductLocal.fromFirestore(id, data);
+    });
+    await productsBox.putAll(map);
+  }
+
   /// Removes a single product from local cache.
   Future<void> deleteLocal(String docId) async {
     await productsBox.delete(docId);

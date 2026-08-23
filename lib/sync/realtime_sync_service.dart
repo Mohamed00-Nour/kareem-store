@@ -47,14 +47,18 @@ class RealtimeSyncService {
   void _listenToProducts() {
     final sub = _fs.collection('products').snapshots().listen(
       (snapshot) {
+        final Map<String, Map<String, dynamic>> toUpsert = {};
         for (final change in snapshot.docChanges) {
           final docId = change.doc.id;
           final data = change.doc.data();
           if (change.type == DocumentChangeType.removed) {
             ProductRepository.instance.deleteLocal(docId);
           } else if (data != null) {
-            ProductRepository.instance.upsertLocal(docId, data);
+            toUpsert[docId] = data;
           }
+        }
+        if (toUpsert.isNotEmpty) {
+          ProductRepository.instance.upsertAllLocal(toUpsert);
         }
       },
       onError: (e) {

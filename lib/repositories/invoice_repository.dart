@@ -126,7 +126,6 @@ class InvoiceRepository {
     for (final doc in snap.docs) {
       map[doc.id] = InvoiceLocal.fromFirestore(doc.id, doc.data(), defaultType: 'sale');
     }
-    await invoicesBox.clear();
     await invoicesBox.putAll(map);
     await appMetaBox.put(HiveMetaKeys.lastInvoiceSyncAt, DateTime.now().toIso8601String());
   }
@@ -141,7 +140,6 @@ class InvoiceRepository {
     for (final doc in snap.docs) {
       map[doc.id] = InvoiceLocal.fromFirestore(doc.id, doc.data(), defaultType: 'return');
     }
-    await returnInvoicesBox.clear();
     await returnInvoicesBox.putAll(map);
     await appMetaBox.put(HiveMetaKeys.lastReturnInvoiceSyncAt, DateTime.now().toIso8601String());
   }
@@ -156,7 +154,6 @@ class InvoiceRepository {
     for (final doc in snap.docs) {
       map[doc.id] = InvoiceLocal.fromFirestore(doc.id, doc.data(), defaultType: 'buying');
     }
-    await buyingInvoicesBox.clear();
     await buyingInvoicesBox.putAll(map);
     await appMetaBox.put(HiveMetaKeys.lastBuyingInvoiceSyncAt, DateTime.now().toIso8601String());
   }

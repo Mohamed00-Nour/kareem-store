@@ -18,8 +18,8 @@ Future<void> main() async {
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );
-  // Kick off background cache sync — fails silently if offline
-  DataSyncService.instance.syncOnStartup();
+  // Sync startup data & seed invoice counters before launching UI
+  await DataSyncService.instance.syncOnStartup();
   // Start connectivity listener — auto-syncs queue when internet returns
   ConnectivityService.instance.startListening();
   // Start real-time Firestore stream listener — streams stock & invoice changes to Hive across devices immediately

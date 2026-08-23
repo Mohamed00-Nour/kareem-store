@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -104,6 +105,8 @@ class _AddProductPageState extends State<AddProductPage> {
     _dataModified = true;
   }
 
+  Timer? _productsDebounceTimer;
+
   @override
   void initState() {
     super.initState();
@@ -119,13 +122,17 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   void _onProductsBoxChanged() {
-    if (mounted) {
-      _loadProductsFromLocalCache();
-    }
+    _productsDebounceTimer?.cancel();
+    _productsDebounceTimer = Timer(const Duration(milliseconds: 300), () {
+      if (mounted) {
+        _loadProductsFromLocalCache();
+      }
+    });
   }
 
   @override
   void dispose() {
+    _productsDebounceTimer?.cancel();
     productsBox.listenable().removeListener(_onProductsBoxChanged);
     _dateController.dispose();
     // _productController is managed by Autocomplete's internal state — do not dispose here
@@ -133,15 +140,9 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   Future<void> _fetchProducts() async {
-    // 1. Immediately load from Hive primary database (0ms wait)
+    // Load from Hive local cache immediately (0ms wait).
+    // RealtimeSyncService automatically updates local Hive storage in the background.
     _loadProductsFromLocalCache();
-
-    // 2. Background delta-sync if online
-    if (ConnectivityService.instance.isOnline) {
-      ProductRepository.instance.deltaSync().then((_) {
-        if (mounted) _loadProductsFromLocalCache();
-      }).catchError((_) {});
-    }
   }
 
   void _loadProductsFromLocalCache() {

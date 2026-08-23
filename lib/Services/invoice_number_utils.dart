@@ -221,7 +221,7 @@ class LocalInvoiceCounter {
   /// Zero network latency.
   static int nextNumber(String type) {
     final key = _metaKey(type);
-    final current = (appMetaBox.get(key) as num?)?.toInt() ?? 0;
+    final current = _getCurrentOrLocalMax(key, type);
     final next = current + 1;
     appMetaBox.put(key, next);
     return next;
@@ -230,12 +230,50 @@ class LocalInvoiceCounter {
   /// Peeks the next number without incrementing.
   static int peekNextNumber(String type) {
     final key = _metaKey(type);
-    final current = (appMetaBox.get(key) as num?)?.toInt() ?? 0;
+    final current = _getCurrentOrLocalMax(key, type);
     return current + 1;
+  }
+
+  static int _getCurrentOrLocalMax(String key, String type) {
+    int current = (appMetaBox.get(key) as num?)?.toInt() ?? 0;
+    final localBoxMax = _getMaxFromLocalBoxes(type);
+    if (localBoxMax > current) {
+      current = localBoxMax;
+      appMetaBox.put(key, current);
+    }
+    return current;
+  }
+
+  static int _getMaxFromLocalBoxes(String type) {
+    try {
+      switch (type.toLowerCase()) {
+        case 'return':
+          if (!returnInvoicesBox.isOpen) return 0;
+          return returnInvoicesBox.values
+              .fold<int>(0, (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
+        case 'buying':
+          if (!buyingInvoicesBox.isOpen) return 0;
+          return buyingInvoicesBox.values
+              .fold<int>(0, (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
+        case 'sale':
+        case 'sales':
+        default:
+          if (!invoicesBox.isOpen) return 0;
+          return invoicesBox.values
+              .fold<int>(0, (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
+      }
+    } catch (_) {
+      return 0;
+    }
   }
 
   /// Seeds the local counters from Firestore once on startup or when empty.
   static Future<void> seedFromFirestore() async {
+    // 0. Initial seed from local Hive cache
+    _getCurrentOrLocalMax(HiveMetaKeys.nextSalesInvoiceNumber, 'sale');
+    _getCurrentOrLocalMax(HiveMetaKeys.nextReturnInvoiceNumber, 'return');
+    _getCurrentOrLocalMax(HiveMetaKeys.nextBuyingInvoiceNumber, 'buying');
+
     try {
       final fs = FirebaseFirestore.instance;
 
@@ -247,7 +285,7 @@ class LocalInvoiceCounter {
           .get();
       if (salesQuery.docs.isNotEmpty) {
         final remoteMax = (salesQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
-        final currentLocal = (appMetaBox.get(HiveMetaKeys.nextSalesInvoiceNumber) as num?)?.toInt() ?? 0;
+        final currentLocal = _getCurrentOrLocalMax(HiveMetaKeys.nextSalesInvoiceNumber, 'sale');
         if (remoteMax > currentLocal) {
           await appMetaBox.put(HiveMetaKeys.nextSalesInvoiceNumber, remoteMax);
         }
@@ -261,7 +299,7 @@ class LocalInvoiceCounter {
           .get();
       if (returnQuery.docs.isNotEmpty) {
         final remoteMax = (returnQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
-        final currentLocal = (appMetaBox.get(HiveMetaKeys.nextReturnInvoiceNumber) as num?)?.toInt() ?? 0;
+        final currentLocal = _getCurrentOrLocalMax(HiveMetaKeys.nextReturnInvoiceNumber, 'return');
         if (remoteMax > currentLocal) {
           await appMetaBox.put(HiveMetaKeys.nextReturnInvoiceNumber, remoteMax);
         }
@@ -275,13 +313,13 @@ class LocalInvoiceCounter {
           .get();
       if (buyingQuery.docs.isNotEmpty) {
         final remoteMax = (buyingQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
-        final currentLocal = (appMetaBox.get(HiveMetaKeys.nextBuyingInvoiceNumber) as num?)?.toInt() ?? 0;
+        final currentLocal = _getCurrentOrLocalMax(HiveMetaKeys.nextBuyingInvoiceNumber, 'buying');
         if (remoteMax > currentLocal) {
           await appMetaBox.put(HiveMetaKeys.nextBuyingInvoiceNumber, remoteMax);
         }
       }
     } catch (_) {
-      // Offline on startup — use current local counter safely
+      // Offline on startup — local Hive fallback already applied above
     }
   }
 }

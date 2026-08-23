@@ -91,32 +91,61 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
         .orderBy('date', descending: true)
         .snapshots()
         .listen((querySnapshot) {
-      if (!mounted) return;
-      setState(() {
-        _invoices.clear();
-        _invoices.addAll(querySnapshot.docs.map((doc) {
-          final data = Map<String, dynamic>.from(doc.data() as Map);
-          data['id'] = doc.id;
-          if (widget.collection == 'returnInvoices') {
-            InvoiceRepository.instance.upsertReturnLocal(doc.id, data);
-          } else if (widget.collection == 'buying invoices') {
-            InvoiceRepository.instance.upsertBuyingLocal(doc.id, data);
-          } else {
-            InvoiceRepository.instance.upsertSaleLocal(doc.id, data);
-          }
-          return data;
-        }));
-        _filterInvoices(); // Apply filtering after fetching
-        _isFetching = false;
-      });
+      final docs = querySnapshot.docs.map((doc) {
+        final data = Map<String, dynamic>.from(doc.data() as Map);
+        data['id'] = doc.id;
+        return data;
+      }).toList();
+      _updateInvoicesFromRemote(docs);
     }, onError: (e) {
       print('Error listening to invoices: $e');
       if (mounted) {
+        _loadFromLocalCache();
         setState(() {
           _isFetching = false;
         });
       }
     });
+  }
+
+  void _updateInvoicesFromRemote(List<Map<String, dynamic>> remoteDocs) {
+    // 1. Start with local cache items (preserves offline/unsynced invoices)
+    final Map<String, Map<String, dynamic>> map = {};
+    List<InvoiceLocal> locals;
+    if (widget.collection == 'returnInvoices') {
+      locals = InvoiceRepository.instance.getAllReturns();
+    } else if (widget.collection == 'buying invoices') {
+      locals = InvoiceRepository.instance.getAllBuying();
+    } else {
+      locals = InvoiceRepository.instance.getAllSales();
+    }
+    for (final loc in locals) {
+      map[loc.id] = loc.toMap();
+    }
+
+    // 2. Overlay remote docs and update Hive local cache
+    for (final doc in remoteDocs) {
+      final id = doc['id']?.toString() ?? '';
+      if (id.isNotEmpty) {
+        map[id] = doc;
+        if (widget.collection == 'returnInvoices') {
+          InvoiceRepository.instance.upsertReturnLocal(id, doc);
+        } else if (widget.collection == 'buying invoices') {
+          InvoiceRepository.instance.upsertBuyingLocal(id, doc);
+        } else {
+          InvoiceRepository.instance.upsertSaleLocal(id, doc);
+        }
+      }
+    }
+
+    if (mounted) {
+      setState(() {
+        _invoices.clear();
+        _invoices.addAll(map.values);
+        _filterInvoices();
+        _isFetching = false;
+      });
+    }
   }
 
 
