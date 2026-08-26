@@ -3070,8 +3070,16 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
     return DesktopBackShortcuts(
       confirmBeforePop: () => HomePage.confirmNavigateBack(context),
-      child: WillPopScope(
-        onWillPop: () => HomePage.confirmNavigateBack(context),
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          HomePage.confirmNavigateBack(context).then((shouldPop) {
+            if (shouldPop && context.mounted) {
+              Navigator.of(context).pop();
+            }
+          });
+        },
         child: Directionality(
           textDirection: TextDirection.rtl,
           child: Scaffold(

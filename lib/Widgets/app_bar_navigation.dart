@@ -47,6 +47,13 @@ class AppBarNavLeading extends StatelessWidget {
   }
 }
 
+/// Private intent used exclusively for desktop back-navigation shortcuts.
+/// Using a custom intent avoids conflicts with Flutter's built-in [ActivateIntent]
+/// which is consumed by buttons, checkboxes, and other interactive widgets.
+class _BackNavigationIntent extends Intent {
+  const _BackNavigationIntent();
+}
+
 /// Wraps a screen so Escape / Alt+Left triggers the same back flow on desktop.
 class DesktopBackShortcuts extends StatelessWidget {
   final Widget child;
@@ -62,12 +69,13 @@ class DesktopBackShortcuts extends StatelessWidget {
   Widget build(BuildContext context) {
     return Shortcuts(
       shortcuts: const {
-        SingleActivator(LogicalKeyboardKey.escape): ActivateIntent(),
-        SingleActivator(LogicalKeyboardKey.goBack): ActivateIntent(),
+        SingleActivator(LogicalKeyboardKey.escape): _BackNavigationIntent(),
+        SingleActivator(LogicalKeyboardKey.goBack): _BackNavigationIntent(),
       },
       child: Actions(
         actions: {
-          ActivateIntent: CallbackAction<ActivateIntent>(
+          _BackNavigationIntent:
+              CallbackAction<_BackNavigationIntent>(
             onInvoke: (_) {
               if (!Navigator.canPop(context)) return null;
               if (confirmBeforePop != null) {

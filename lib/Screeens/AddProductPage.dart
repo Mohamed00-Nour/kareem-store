@@ -2447,8 +2447,16 @@ class _AddProductPageState extends State<AddProductPage> {
         _addedProducts.fold(0.0, (s, p) => s + (p['amount'] as num).toDouble());
 
     return DesktopBackShortcuts(
-      child: WillPopScope(
-        onWillPop: () => HomePage.confirmNavigateBack(context),
+      child: PopScope(
+        canPop: false,
+        onPopInvokedWithResult: (didPop, result) {
+          if (didPop) return;
+          HomePage.confirmNavigateBack(context).then((shouldPop) {
+            if (shouldPop && context.mounted) {
+              Navigator.of(context).pop();
+            }
+          });
+        },
         child: Directionality(
           textDirection: TextDirection.rtl,
           child: Scaffold(
@@ -2459,6 +2467,7 @@ class _AddProductPageState extends State<AddProductPage> {
               backgroundColor: Colors.black.withOpacity(0.7),
               leading: AppBarNavLeading(
                 openDrawer: () => _scaffoldKey.currentState?.openEndDrawer(),
+                confirmBeforePop: () => HomePage.confirmNavigateBack(context),
               ),
               automaticallyImplyLeading: false,
               title: Text(_pageTitle,
