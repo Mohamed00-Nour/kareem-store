@@ -1623,6 +1623,7 @@ class _ClientOpeningBalancesPageState
                                           'isAddition': isAddition,
                                           'logEntry': logEntry,
                                           'newBalance': newBalance,
+                                          'historyId': historyId,
                                         },
                                       );
 
@@ -3402,7 +3403,8 @@ class _ClientListPageState extends State<_ClientListPage> {
             .map((c) => <String, dynamic>{
                   'id': c.id,
                   'clientName': c.name,
-                  'balance': c.balance,
+                  'balance': BalanceHistoryRepository.instance
+                      .calculateClientBalance(c.id, fallback: c.balance),
                   'phone': c.phone,
                 })
             .toList();

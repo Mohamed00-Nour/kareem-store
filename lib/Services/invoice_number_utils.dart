@@ -39,6 +39,48 @@ String invoiceAmount(dynamic value, [int maxFractionDigits = 2]) {
 /// Quantity on invoice lines (0 or 1 decimal place).
 String invoiceQty(dynamic value) => invoiceAmount(value, 1);
 
+/// Resolves the selling price stored on an invoice line.
+///
+/// Current invoices use [selectedPrice], while some older/imported rows use
+/// [price] or another unit-price alias. If none contains a positive value, the
+/// original unit price is reconstructed from the stored line total and
+/// quantity. Line-level discounts are reversed because [total] is saved after
+/// applying the discount.
+double invoiceLineUnitPrice(Map<String, dynamic> line) {
+  const priceKeys = <String>[
+    'selectedPrice',
+    'unitPrice',
+    'price',
+    'salePrice',
+    'sellingPrice',
+  ];
+
+  for (final key in priceKeys) {
+    final price = invoiceNum(line[key]);
+    if (price > 0) return price;
+  }
+
+  final quantity = invoiceNum(line['amount'] ?? line['quantity']);
+  if (quantity <= 0) return 0.0;
+
+  var lineTotal = invoiceNum(
+    line['total'] ?? line['lineTotal'] ?? line['totalPrice'],
+  );
+  if (lineTotal <= 0) return 0.0;
+
+  final discount = invoiceNum(line['discount']);
+  if (discount > 0) {
+    if (line['discountIsPercent'] == true) {
+      final remainingRatio = 1 - (discount / 100);
+      if (remainingRatio > 0) lineTotal /= remainingRatio;
+    } else {
+      lineTotal += discount;
+    }
+  }
+
+  return lineTotal / quantity;
+}
+
 /// True for return invoices ([invoiceType] == return).
 bool invoiceIsReturn(Map<String, dynamic> invoice) {
   return invoice['invoiceType']?.toString() == 'return';
@@ -323,4 +365,3 @@ class LocalInvoiceCounter {
     }
   }
 }
-

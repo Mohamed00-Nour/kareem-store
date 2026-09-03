@@ -40,7 +40,7 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
   void initState() {
     super.initState();
     rows = widget.originalProducts.map((p) {
-      final storedPrice = double.tryParse(p['selectedPrice'].toString()) ?? 0.0;
+      final storedPrice = invoiceLineUnitPrice(p);
       _ProdInfo? info = widget.allProds.cast<_ProdInfo?>().firstWhere(
             (pi) => pi!.name == p['product'].toString(),
             orElse: () => null,

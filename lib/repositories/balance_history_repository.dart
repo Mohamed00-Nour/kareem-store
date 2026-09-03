@@ -25,14 +25,30 @@ class BalanceHistoryRepository {
     final activeSales = InvoiceRepository.instance.getSalesByClient(cId);
     final activeReturns = InvoiceRepository.instance.getReturnsByClient(cId);
 
+    bool matchesInvoice(
+      BalanceHistoryLocal entry,
+      String invoiceId,
+      String invoiceNumber,
+    ) {
+      return (invoiceId.isNotEmpty &&
+              (entry.invoiceId == invoiceId ||
+                  entry.id == invoiceId ||
+                  entry.id.startsWith(invoiceId))) ||
+          (invoiceNumber.isNotEmpty &&
+              (entry.invoiceNumber == invoiceNumber ||
+                  entry.id.contains(invoiceNumber)));
+    }
+
     // Auto-populate missing history entries for active local sales invoices in Hive
     for (final inv in activeSales) {
       final invId = inv.id.trim();
       final invNum = inv.invoiceNumber.toString().trim();
-      final hasSaleEntry = list.any((e) =>
-          (e.type == 'sale' || e.type == 'sale_payment') &&
-          ((invId.isNotEmpty && (e.invoiceId == invId || e.id == invId || e.id.startsWith(invId))) ||
-           (invNum.isNotEmpty && (e.invoiceNumber == invNum || e.id.contains(invNum)))));
+      final hasSaleEntry = list.any(
+        (e) => e.type == 'sale' && matchesInvoice(e, invId, invNum),
+      );
+      final hasPaymentEntry = list.any(
+        (e) => e.type == 'sale_payment' && matchesInvoice(e, invId, invNum),
+      );
 
       if (!hasSaleEntry) {
         final saleHist = BalanceHistoryLocal(
@@ -48,22 +64,22 @@ class BalanceHistoryRepository {
         );
         upsertLocal(saleHist);
         list.add(saleHist);
+      }
 
-        if (inv.paidAmount > 0) {
-          final payHist = BalanceHistoryLocal(
-            id: '${inv.id}_pay',
-            parentId: cId,
-            parentType: 'client',
-            enteredBalance: inv.paidAmount,
-            balanceBefore: inv.previousBalance + inv.totalSum,
-            type: 'sale_payment',
-            invoiceId: inv.id,
-            invoiceNumber: inv.invoiceNumber.toString(),
-            timestamp: inv.date,
-          );
-          upsertLocal(payHist);
-          list.add(payHist);
-        }
+      if (inv.paidAmount > 0 && !hasPaymentEntry) {
+        final payHist = BalanceHistoryLocal(
+          id: '${inv.id}_pay',
+          parentId: cId,
+          parentType: 'client',
+          enteredBalance: inv.paidAmount,
+          balanceBefore: inv.previousBalance + inv.totalSum,
+          type: 'sale_payment',
+          invoiceId: inv.id,
+          invoiceNumber: inv.invoiceNumber.toString(),
+          timestamp: inv.date,
+        );
+        upsertLocal(payHist);
+        list.add(payHist);
       }
     }
 
@@ -71,10 +87,12 @@ class BalanceHistoryRepository {
     for (final ret in activeReturns) {
       final retId = ret.id.trim();
       final retNum = ret.invoiceNumber.toString().trim();
-      final hasReturnEntry = list.any((e) =>
-          (e.type == 'return' || e.type == 'return_payment') &&
-          ((retId.isNotEmpty && (e.invoiceId == retId || e.id == retId || e.id.startsWith(retId))) ||
-           (retNum.isNotEmpty && (e.invoiceNumber == retNum || e.id.contains(retNum)))));
+      final hasReturnEntry = list.any(
+        (e) => e.type == 'return' && matchesInvoice(e, retId, retNum),
+      );
+      final hasReturnPaymentEntry = list.any(
+        (e) => e.type == 'return_payment' && matchesInvoice(e, retId, retNum),
+      );
 
       if (!hasReturnEntry) {
         final returnHist = BalanceHistoryLocal(
@@ -90,22 +108,22 @@ class BalanceHistoryRepository {
         );
         upsertLocal(returnHist);
         list.add(returnHist);
+      }
 
-        if (ret.paidAmount > 0) {
-          final payHist = BalanceHistoryLocal(
-            id: '${ret.id}_return_pay',
-            parentId: cId,
-            parentType: 'client',
-            enteredBalance: ret.paidAmount,
-            balanceBefore: ret.previousBalance - ret.totalSum,
-            type: 'return_payment',
-            invoiceId: ret.id,
-            invoiceNumber: ret.invoiceNumber.toString(),
-            timestamp: ret.date,
-          );
-          upsertLocal(payHist);
-          list.add(payHist);
-        }
+      if (ret.paidAmount > 0 && !hasReturnPaymentEntry) {
+        final payHist = BalanceHistoryLocal(
+          id: '${ret.id}_return_pay',
+          parentId: cId,
+          parentType: 'client',
+          enteredBalance: ret.paidAmount,
+          balanceBefore: ret.previousBalance - ret.totalSum,
+          type: 'return_payment',
+          invoiceId: ret.id,
+          invoiceNumber: ret.invoiceNumber.toString(),
+          timestamp: ret.date,
+        );
+        upsertLocal(payHist);
+        list.add(payHist);
       }
     }
 
@@ -158,10 +176,13 @@ class BalanceHistoryRepository {
         keysToPurge.add(_boxKey(item.parentType, item.parentId, item.id));
         continue;
       }
-      final key = item.invoiceId.isNotEmpty
-          ? '${item.invoiceId}_${item.type}'
-          : (item.invoiceNumber.isNotEmpty
-              ? '${item.invoiceNumber}_${item.type}'
+      // Invoice numbers are stable across legacy root/subcollection IDs. Use
+      // them first so the same invoice is shown only once even when older sync
+      // code saved the two history rows with different invoice IDs.
+      final key = item.invoiceNumber.isNotEmpty
+          ? '${item.invoiceNumber}_${item.type}'
+          : (item.invoiceId.isNotEmpty
+              ? '${item.invoiceId}_${item.type}'
               : item.id);
       if (seenKeys.add(key)) {
         deduplicated.add(item);
@@ -194,6 +215,27 @@ class BalanceHistoryRepository {
       }
     }
     return deduplicated;
+  }
+
+  /// Calculates the client balance from the same deduplicated ledger shown in
+  /// balance history. The cached client balance is used only when no ledger is
+  /// available yet (for example, before the first data sync).
+  double calculateClientBalance(
+    String clientId, {
+    double fallback = 0.0,
+  }) {
+    final history = getForClient(clientId);
+    if (history.isEmpty) return fallback;
+
+    var running = 0.0;
+    for (final entry in history) {
+      final isIncrease = entry.type == 'sale' ||
+          entry.type == 'addition' ||
+          entry.type == 'opening' ||
+          entry.type == 'return_payment';
+      running += isIncrease ? entry.enteredBalance : -entry.enteredBalance;
+    }
+    return running;
   }
 
   Future<void> upsertLocal(BalanceHistoryLocal entry) async {

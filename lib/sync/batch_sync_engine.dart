@@ -224,6 +224,20 @@ class BatchSyncEngine {
 
     // 1. Root invoice doc
     final rootRef = _fs.collection('invoices').doc(invoiceId);
+
+    // The queue may retry after Firestore committed the batch but before the
+    // local queue item was removed. In that case increments must not run a
+    // second time. The root invoice is written in the same atomic batch as all
+    // stock, balance, history, and cash-box changes, so its existence is our
+    // idempotency marker.
+    final existingRoot = await rootRef.get();
+    if (existingRoot.exists) {
+      if (clientId.isNotEmpty) {
+        await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+      }
+      return;
+    }
+
     batch.set(rootRef, invoiceData, SetOptions(merge: true));
 
     // 2. Client sub-collection doc
@@ -524,32 +538,48 @@ class BatchSyncEngine {
     final bool isAddition = payload['isAddition'] == true;
     final Map<String, dynamic> logEntry =
         Map<String, dynamic>.from(payload['logEntry']);
+    final timestamp = logEntry['timestamp'];
+    if (timestamp is String) {
+      logEntry['timestamp'] = DateTime.tryParse(timestamp) ?? DateTime.now();
+    }
 
-    final batch = _fs.batch();
+    // New callers provide the local history ID. The deterministic fallback
+    // also makes queue items created by older app versions safe to retry.
+    final historyId = payload['historyId']?.toString().trim().isNotEmpty == true
+        ? payload['historyId'].toString().trim()
+        : 'adjust_${logEntry['type']}_${timestamp}_${amount.toStringAsFixed(4)}'
+            .replaceAll('/', '-');
+    final clientRef = _fs.collection('clients').doc(clientId);
+    final historyRef = clientRef.collection('balanceHistory').doc(historyId);
+    final boxRef = _fs.collection('box').doc('mainBox');
+    final boxChangeRef = boxRef.collection('changes').doc(historyId);
 
-    // 1. Update client balance.
-    batch.update(
-      _fs.collection('clients').doc(clientId),
-      {
-        'balance': FieldValue.increment(isAddition ? -amount : amount),
-      },
-    );
+    // Only apply the financial effect when its matching history record does
+    // not exist. This prevents retrying one queue item from changing balances
+    // or the cash box twice.
+    await _fs.runTransaction((transaction) async {
+      final existingHistory = await transaction.get(historyRef);
+      if (existingHistory.exists) return;
 
-    // 2. Write balance history log entry.
-    batch.set(
-      _fs
-          .collection('clients')
-          .doc(clientId)
-          .collection('balanceHistory')
-          .doc(),
-      logEntry,
-    );
+      transaction.update(clientRef, {
+        'balance': FieldValue.increment(isAddition ? amount : -amount),
+      });
+      transaction.set(historyRef, logEntry);
+      transaction.set(
+        boxRef,
+        {'value': FieldValue.increment(isAddition ? -amount : amount)},
+        SetOptions(merge: true),
+      );
+      transaction.set(boxChangeRef, {
+        'date': logEntry['timestamp'],
+        'value': amount,
+        'type': isAddition ? 'decrement' : 'addition',
+        'notes': logEntry['notes']?.toString() ?? '',
+        'invoiceNumber': null,
+      });
+    });
 
-    await batch.commit();
-    await ClientRepository.instance.updateLocalBalance(
-      clientId,
-      (payload['newBalance'] as num).toDouble(),
-    );
+    await ClientInvoiceBalanceSyncService.syncForClient(clientId);
   }
 
   Future<void> _syncAdjustSupplierBalance(Map<String, dynamic> payload) async {

@@ -91,12 +91,69 @@ class ClientInvoiceBalanceSyncService {
     final returnDocs = results[1].docs;
     var historyDocs = results[2].docs;
 
-    final Map<String, DocumentSnapshot> salesMap = {
-      for (var doc in saleDocs) doc.id: doc
-    };
-    final Map<String, DocumentSnapshot> returnsMap = {
-      for (var doc in returnDocs) doc.id: doc
-    };
+    String canonicalInvoiceId(QueryDocumentSnapshot doc) {
+      final data = doc.data() as Map<String, dynamic>? ?? {};
+      final linkedId = data['invoiceId']?.toString().trim() ?? '';
+      if (linkedId.isNotEmpty) return linkedId;
+      final storedId = data['id']?.toString().trim() ?? '';
+      return storedId.isNotEmpty ? storedId : doc.id;
+    }
+
+    String? resolveInvoiceId(
+      Iterable<QueryDocumentSnapshot> invoices,
+      String historyInvoiceId,
+      String historyInvoiceNumber,
+    ) {
+      for (final invoice in invoices) {
+        final data = invoice.data() as Map<String, dynamic>? ?? {};
+        final canonicalId = canonicalInvoiceId(invoice);
+        final linkedId = data['invoiceId']?.toString().trim() ?? '';
+        final storedId = data['id']?.toString().trim() ?? '';
+        final invoiceNumber = data['invoiceNumber']?.toString().trim() ?? '';
+
+        if (historyInvoiceId.isNotEmpty &&
+            (historyInvoiceId == canonicalId ||
+                historyInvoiceId == invoice.id ||
+                historyInvoiceId == linkedId ||
+                historyInvoiceId == storedId)) {
+          return canonicalId;
+        }
+        if (historyInvoiceNumber.isNotEmpty &&
+            invoiceNumber.isNotEmpty &&
+            historyInvoiceNumber == invoiceNumber) {
+          return canonicalId;
+        }
+      }
+      return null;
+    }
+
+    List<QueryDocumentSnapshot> sortAndDeduplicateHistory(
+      List<QueryDocumentSnapshot> docs,
+    ) {
+      final sortedDocs = _sortDocsAscending(docs);
+      final seenInvoiceEntries = <String>{};
+      return sortedDocs.where((doc) {
+        final data = doc.data() as Map<String, dynamic>? ?? {};
+        final type = data['type']?.toString() ?? '';
+        final invId = data['invoiceId']?.toString().trim() ?? '';
+        final invNum = data['invoiceNumber']?.toString().trim() ?? '';
+
+        String? resolvedId;
+        if (type == 'sale' || type == 'sale_payment') {
+          resolvedId = resolveInvoiceId(saleDocs, invId, invNum);
+        } else if (type == 'return' || type == 'return_payment') {
+          resolvedId = resolveInvoiceId(returnDocs, invId, invNum);
+        } else {
+          return true;
+        }
+
+        final identity = resolvedId ??
+            (invNum.isNotEmpty
+                ? 'number:$invNum'
+                : (invId.isNotEmpty ? 'id:$invId' : 'doc:${doc.id}'));
+        return seenInvoiceEntries.add('$identity:$type');
+      }).toList();
+    }
 
     WriteBatch batch = _firestore.batch();
     var opCount = 0;
@@ -115,29 +172,11 @@ class ClientInvoiceBalanceSyncService {
     final Map<String, QueryDocumentSnapshot> historyReturnPaymentDocs = {};
 
     bool matchesSalesMap(String invId, String invNum) {
-      if (invId.isNotEmpty && salesMap.containsKey(invId)) return true;
-      for (final sDoc in salesMap.values) {
-        if (invId.isNotEmpty && sDoc.id == invId) return true;
-        final sData = sDoc.data() as Map<String, dynamic>? ?? {};
-        final rootId = sData['invoiceId']?.toString() ?? '';
-        final rootNum = sData['invoiceNumber']?.toString() ?? '';
-        if (invId.isNotEmpty && rootId.isNotEmpty && (rootId == invId || invId.contains(rootId))) return true;
-        if (invNum.isNotEmpty && rootNum.isNotEmpty && rootNum == invNum) return true;
-      }
-      return false;
+      return resolveInvoiceId(saleDocs, invId, invNum) != null;
     }
 
     bool matchesReturnsMap(String invId, String invNum) {
-      if (invId.isNotEmpty && returnsMap.containsKey(invId)) return true;
-      for (final rDoc in returnsMap.values) {
-        if (invId.isNotEmpty && rDoc.id == invId) return true;
-        final rData = rDoc.data() as Map<String, dynamic>? ?? {};
-        final rootId = rData['invoiceId']?.toString() ?? '';
-        final rootNum = rData['invoiceNumber']?.toString() ?? '';
-        if (invId.isNotEmpty && rootId.isNotEmpty && (rootId == invId || invId.contains(rootId))) return true;
-        if (invNum.isNotEmpty && rootNum.isNotEmpty && rootNum == invNum) return true;
-      }
-      return false;
+      return resolveInvoiceId(returnDocs, invId, invNum) != null;
     }
 
     for (final doc in historyDocs) {
@@ -152,7 +191,8 @@ class ClientInvoiceBalanceSyncService {
           opCount++;
           await commitBatchIfNeeded();
         } else {
-          historySaleDocs[invId] = doc;
+          final resolvedId = resolveInvoiceId(saleDocs, invId, invNum)!;
+          historySaleDocs.putIfAbsent(resolvedId, () => doc);
         }
       } else if (type == 'sale_payment') {
         if (!matchesSalesMap(invId, invNum)) {
@@ -160,7 +200,8 @@ class ClientInvoiceBalanceSyncService {
           opCount++;
           await commitBatchIfNeeded();
         } else {
-          historySalePaymentDocs[invId] = doc;
+          final resolvedId = resolveInvoiceId(saleDocs, invId, invNum)!;
+          historySalePaymentDocs.putIfAbsent(resolvedId, () => doc);
         }
       } else if (type == 'return') {
         if (!matchesReturnsMap(invId, invNum)) {
@@ -168,7 +209,8 @@ class ClientInvoiceBalanceSyncService {
           opCount++;
           await commitBatchIfNeeded();
         } else {
-          historyReturnDocs[invId] = doc;
+          final resolvedId = resolveInvoiceId(returnDocs, invId, invNum)!;
+          historyReturnDocs.putIfAbsent(resolvedId, () => doc);
         }
       } else if (type == 'return_payment') {
         if (!matchesReturnsMap(invId, invNum)) {
@@ -176,14 +218,15 @@ class ClientInvoiceBalanceSyncService {
           opCount++;
           await commitBatchIfNeeded();
         } else {
-          historyReturnPaymentDocs[invId] = doc;
+          final resolvedId = resolveInvoiceId(returnDocs, invId, invNum)!;
+          historyReturnPaymentDocs.putIfAbsent(resolvedId, () => doc);
         }
       }
     }
 
     // Align sales invoice records
     for (final doc in saleDocs) {
-      final invoiceId = doc.id;
+      final invoiceId = canonicalInvoiceId(doc);
       final data = doc.data();
       final totalSum = invoiceNum(data['totalSum']);
       final paidAmount = invoiceNum(data['paidAmount']);
@@ -247,7 +290,7 @@ class ClientInvoiceBalanceSyncService {
 
     // Align return invoice records
     for (final doc in returnDocs) {
-      final invoiceId = doc.id;
+      final invoiceId = canonicalInvoiceId(doc);
       final data = doc.data();
       final totalSum = invoiceNum(data['totalSum']);
       final paidAmount = invoiceNum(data['paidAmount']);
@@ -315,7 +358,7 @@ class ClientInvoiceBalanceSyncService {
 
     // Refresh history documents to get the final aligned state
     final finalHistoryDocs = (await clientRef.collection('balanceHistory').get()).docs;
-    var sorted = _sortDocsAscending(finalHistoryDocs);
+    var sorted = sortAndDeduplicateHistory(finalHistoryDocs);
 
     // If client has an openingBalance field not yet recorded in balanceHistory, create it once
     final double rawOpeningBalance = (clientData['openingBalance'] as num?)?.toDouble() ?? 0.0;
@@ -328,7 +371,7 @@ class ClientInvoiceBalanceSyncService {
         'type': 'opening',
       });
       final refreshed = (await clientRef.collection('balanceHistory').get()).docs;
-      sorted = _sortDocsAscending(refreshed);
+      sorted = sortAndDeduplicateHistory(refreshed);
     }
 
     var running = 0.0;
@@ -396,7 +439,7 @@ class ClientInvoiceBalanceSyncService {
     }
 
     for (final doc in saleDocs) {
-      final invoiceId = doc.id;
+      final invoiceId = canonicalInvoiceId(doc);
       final prevBal = invPreviousBalances[invoiceId] ?? 0.0;
       final afterBal = invAfterBalances[invoiceId] ?? 0.0;
 
@@ -410,8 +453,8 @@ class ClientInvoiceBalanceSyncService {
       finalOpCount++;
       await commitFinalBatchIfNeeded();
 
-      final rootId = doc.data()['invoiceId']?.toString();
-      if (rootId != null && rootId.isNotEmpty) {
+      final rootId = canonicalInvoiceId(doc);
+      if (rootId.isNotEmpty) {
         final rootRef = _firestore.collection('invoices').doc(rootId);
         final rootSnap = await rootRef.get();
         if (rootSnap.exists) {
@@ -423,7 +466,7 @@ class ClientInvoiceBalanceSyncService {
     }
 
     for (final doc in returnDocs) {
-      final invoiceId = doc.id;
+      final invoiceId = canonicalInvoiceId(doc);
       final prevBal = invPreviousBalances[invoiceId] ?? 0.0;
       final afterBal = invAfterBalances[invoiceId] ?? 0.0;
 
@@ -437,8 +480,8 @@ class ClientInvoiceBalanceSyncService {
       finalOpCount++;
       await commitFinalBatchIfNeeded();
 
-      final rootId = doc.data()['invoiceId']?.toString();
-      if (rootId != null && rootId.isNotEmpty) {
+      final rootId = canonicalInvoiceId(doc);
+      if (rootId.isNotEmpty) {
         final rootRef = _firestore.collection('returnInvoices').doc(rootId);
         final rootSnap = await rootRef.get();
         if (rootSnap.exists) {

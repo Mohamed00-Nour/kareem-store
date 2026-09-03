@@ -250,13 +250,16 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   Future<void> _backgroundSyncInvoices() async {
     try {
+      // Rebuild the balance from one logical entry per invoice before reading
+      // any of the three screens' data sources.
+      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
       await ClientRepository.instance.deltaSync();
       await BalanceHistoryRepository.instance
           .fullSyncForClient(widget.clientId);
       await InvoiceRepository.instance.deltaSyncSales();
       await InvoiceRepository.instance.deltaSyncReturns();
 
-      _fetchClientName();
+      await _fetchClientName();
 
       final localSales = InvoiceRepository.instance.getSalesByClient(
         widget.clientId,
@@ -271,7 +274,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       );
 
       if (mounted) {
+        final localClient =
+            ClientRepository.instance.getById(widget.clientId) ??
+                ClientRepository.instance.findByName(
+                  _clientName ?? widget.clientId,
+                );
         setState(() {
+          _currentClientBalance = localClient?.balance ?? 0.0;
           _invoices = localSales
               .map((inv) => _ItemDoc(id: inv.id, data: inv.toMap()))
               .toList();
@@ -389,7 +398,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       // 3. Sync to Firestore asynchronously in background (non-blocking)
       _syncClientBalanceToFirestoreInBackground(
         clientId: widget.clientId,
-        clientName: _clientName ?? widget.clientId,
         newBalance: newBalance,
         currentBalance: currentBalance,
         enteredBalance: enteredBalance,
@@ -408,7 +416,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   void _syncClientBalanceToFirestoreInBackground({
     required String clientId,
-    required String clientName,
     required double newBalance,
     required double currentBalance,
     required double enteredBalance,
@@ -425,58 +432,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     };
 
     try {
-      final bool isOnline = ConnectivityService.instance.isOnline;
-      if (isOnline) {
-        await FirebaseFirestore.instance
-            .collection('clients')
-            .doc(clientId)
-            .update({'balance': newBalance});
-
-        await FirebaseFirestore.instance
-            .collection('clients')
-            .doc(clientId)
-            .collection('balanceHistory')
-            .doc(historyId)
-            .set({
-          'enteredBalance': enteredBalance,
-          'balanceBefore': currentBalance,
-          'type': isAddition ? 'addition' : 'deduction',
-          'notes': notesText,
-          'timestamp': FieldValue.serverTimestamp(),
-        });
-
-        DocumentReference boxDocRef =
-            FirebaseFirestore.instance.collection('box').doc('mainBox');
-
-        await boxDocRef.set(
-          {
-            'value': FieldValue.increment(
-                isAddition ? -enteredBalance : enteredBalance)
-          },
-          SetOptions(merge: true),
-        );
-
-        await boxDocRef.collection('changes').add({
-          'date': FieldValue.serverTimestamp(),
-          'value': enteredBalance,
-          'type': isAddition ? 'decrement' : 'addition',
-          'name': clientName,
-          'notes': notesText,
-          'invoiceNumber': null,
-        });
-      } else {
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'adjustClientBalance',
-          payload: {
-            'clientId': clientId,
-            'amount': enteredBalance,
-            'isAddition': isAddition,
-            'logEntry': logEntry,
-            'newBalance': newBalance,
-          },
-        );
-      }
-    } catch (_) {
+      // Always use the queue, even while online, so this operation follows one
+      // idempotent path and cannot be partly written then applied again.
       await SyncQueueManager.instance.enqueue(
         operationType: 'adjustClientBalance',
         payload: {
@@ -485,16 +442,17 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
           'isAddition': isAddition,
           'logEntry': logEntry,
           'newBalance': newBalance,
+          'historyId': historyId,
         },
       );
-    }
+      ConnectivityService.instance.forceSync();
+    } catch (_) {}
   }
 
   Future<void> _editProduct(
       String invoiceId, int productIndex, Map<String, dynamic> product) async {
     // Resolve product info from loaded list, fall back to stored prices
-    final double storedPrice =
-        double.tryParse(product['selectedPrice'].toString()) ?? 0.0;
+    final double storedPrice = invoiceLineUnitPrice(product);
     _ProdInfo? prodInfo = _allProds.cast<_ProdInfo?>().firstWhere(
           (p) => p!.name == product['product'].toString(),
           orElse: () => null,
@@ -1740,7 +1698,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
               children: [
                 cell(invoiceProductName(p), align: TextAlign.right),
                 cell(invoiceQty(p['amount'])),
-                cell(invoiceAmount(p['selectedPrice'])),
+                cell(invoiceAmount(invoiceLineUnitPrice(p))),
                 cell(invoiceAmount(p['total'])),
               ],
             ),
@@ -1797,7 +1755,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
               children: [
                 cell(invoiceProductName(p), align: TextAlign.right),
                 cell(invoiceQty(p['amount'])),
-                cell(invoiceAmount(p['selectedPrice'])),
+                cell(invoiceAmount(invoiceLineUnitPrice(p))),
                 Padding(
                   padding: EdgeInsets.symmetric(horizontal: 4.w, vertical: 8.h),
                   child: Text(
@@ -2054,9 +2012,11 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     final local = ClientRepository.instance.getById(widget.clientId) ??
         ClientRepository.instance.findByName(widget.clientId);
     if (local != null && mounted) {
+      final ledgerBalance = BalanceHistoryRepository.instance
+          .calculateClientBalance(local.id, fallback: local.balance);
       setState(() {
         _clientName = local.name;
-        _currentClientBalance = local.balance;
+        _currentClientBalance = ledgerBalance;
       });
     }
 

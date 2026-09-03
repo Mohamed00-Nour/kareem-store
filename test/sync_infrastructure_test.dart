@@ -218,6 +218,18 @@ void main() {
 
   group('BalanceHistoryRepository', () {
     test('Stores and retrieves balance history entries ordered by date', () async {
+      final invoice = InvoiceLocal(
+        id: 'invoice_history_1',
+        invoiceNumber: 401,
+        clientId: 'client_hist_1',
+        clientName: 'History test client',
+        date: DateTime(2026, 8, 1, 10, 0),
+        totalSum: 500.0,
+        paidAmount: 200.0,
+        updatedAt: DateTime.now(),
+      );
+      await invoicesBox.put(invoice.id, invoice);
+
       final entry1 = BalanceHistoryLocal(
         id: 'h1',
         parentId: 'client_hist_1',
@@ -225,6 +237,8 @@ void main() {
         enteredBalance: 500.0,
         balanceBefore: 0.0,
         type: 'sale',
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber.toString(),
         timestamp: DateTime(2026, 8, 1, 10, 0),
       );
 
@@ -235,6 +249,8 @@ void main() {
         enteredBalance: 200.0,
         balanceBefore: 500.0,
         type: 'sale_payment',
+        invoiceId: invoice.id,
+        invoiceNumber: invoice.invoiceNumber.toString(),
         timestamp: DateTime(2026, 8, 1, 10, 30),
       );
 
@@ -245,6 +261,78 @@ void main() {
       expect(history.length, 2);
       expect(history[0].type, 'sale');
       expect(history[1].type, 'sale_payment');
+    });
+
+    test('deduplicates legacy history IDs for the same invoice number', () async {
+      const clientId = 'client_duplicate_history';
+      final invoice = InvoiceLocal(
+        id: 'invoice_502',
+        invoiceNumber: 502,
+        clientId: clientId,
+        clientName: 'Duplicate test client',
+        date: DateTime(2026, 8, 29),
+        totalSum: 1660.0,
+        paidAmount: 900.0,
+        updatedAt: DateTime.now(),
+      );
+      await invoicesBox.put(invoice.id, invoice);
+
+      for (final entry in [
+        BalanceHistoryLocal(
+          id: 'root_sale',
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: 1660.0,
+          type: 'sale',
+          invoiceId: 'root_invoice_502',
+          invoiceNumber: '502',
+          timestamp: DateTime(2026, 8, 29, 12, 28),
+        ),
+        BalanceHistoryLocal(
+          id: 'sub_sale',
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: 1660.0,
+          type: 'sale',
+          invoiceId: 'client_sub_invoice_502',
+          invoiceNumber: '502',
+          timestamp: DateTime(2026, 8, 29, 12, 28),
+        ),
+        BalanceHistoryLocal(
+          id: 'root_pay',
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: 900.0,
+          type: 'sale_payment',
+          invoiceId: 'root_invoice_502',
+          invoiceNumber: '502',
+          timestamp: DateTime(2026, 8, 29, 12, 28),
+        ),
+        BalanceHistoryLocal(
+          id: 'sub_pay',
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: 900.0,
+          type: 'sale_payment',
+          invoiceId: 'client_sub_invoice_502',
+          invoiceNumber: '502',
+          timestamp: DateTime(2026, 8, 29, 12, 28),
+        ),
+      ]) {
+        await BalanceHistoryRepository.instance.upsertLocal(entry);
+      }
+
+      final history =
+          BalanceHistoryRepository.instance.getForClient(clientId);
+      expect(history.where((entry) => entry.type == 'sale'), hasLength(1));
+      expect(
+        history.where((entry) => entry.type == 'sale_payment'),
+        hasLength(1),
+      );
+      expect(
+        BalanceHistoryRepository.instance.calculateClientBalance(clientId),
+        760.0,
+      );
     });
   });
 
