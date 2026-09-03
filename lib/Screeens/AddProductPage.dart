@@ -453,10 +453,10 @@ class _AddProductPageState extends State<AddProductPage> {
         await SupplierRepository.instance.updateLocalBalance(workingSupplier.id, updatedBal);
         await BalanceHistoryRepository.instance.upsertLocal(
           BalanceHistoryLocal(
-            id: docId,
+            id: '${docId}_buying',
             parentId: workingSupplier.id,
             parentType: 'supplier',
-            enteredBalance: effectivePaid,
+            enteredBalance: totalSum,
             balanceBefore: existingBal,
             type: 'buying',
             invoiceId: docId,
@@ -464,6 +464,21 @@ class _AddProductPageState extends State<AddProductPage> {
             timestamp: _selectedDate ?? DateTime.now(),
           ),
         );
+        if (effectivePaid > 0) {
+          await BalanceHistoryRepository.instance.upsertLocal(
+            BalanceHistoryLocal(
+              id: '${docId}_pay',
+              parentId: workingSupplier.id,
+              parentType: 'supplier',
+              enteredBalance: effectivePaid,
+              balanceBefore: existingBal + totalSum,
+              type: 'buying_payment',
+              invoiceId: docId,
+              invoiceNumber: newInvoiceNumber.toString(),
+              timestamp: _selectedDate ?? DateTime.now(),
+            ),
+          );
+        }
 
       }
 

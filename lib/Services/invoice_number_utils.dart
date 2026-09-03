@@ -3,9 +3,71 @@ import 'package:intl/intl.dart';
 import '../local_db/hive_init.dart';
 
 /// Parses invoice / product numeric fields stored as [num] or [String] in Firestore.
-double invoiceNum(dynamic value) {
-  if (value is num) return value.toDouble();
-  return double.tryParse(value?.toString() ?? '') ?? 0.0;
+double invoiceNum(dynamic value) => invoiceTryParseAmount(value) ?? 0.0;
+
+/// Parses user-entered and stored money values without silently turning valid
+/// localized input such as `900,50` or Arabic digits into zero.
+double? invoiceTryParseAmount(dynamic value) {
+  if (value is num) {
+    final number = value.toDouble();
+    return number.isFinite ? number : null;
+  }
+
+  final normalized = _normalizeInvoiceNumberText(value?.toString() ?? '');
+  if (normalized.isEmpty) return null;
+  final parsed = double.tryParse(normalized);
+  return parsed != null && parsed.isFinite ? parsed : null;
+}
+
+String _normalizeInvoiceNumberText(String raw) {
+  var text = raw.trim();
+  if (text.isEmpty) return '';
+
+  const arabicIndic = '٠١٢٣٤٥٦٧٨٩';
+  const easternArabicIndic = '۰۱۲۳۴۵۶۷۸۹';
+  for (var i = 0; i < 10; i++) {
+    text = text
+        .replaceAll(arabicIndic[i], '$i')
+        .replaceAll(easternArabicIndic[i], '$i');
+  }
+
+  text = text
+      .replaceAll('\u066b', '.')
+      .replaceAll('\u066c', ',')
+      .replaceAll(RegExp(r'\s+'), '')
+      .replaceAll(RegExp(r'[^0-9,.\-+]'), '');
+  if (text.isEmpty) return '';
+
+  var sign = '';
+  if (text.startsWith('-') || text.startsWith('+')) {
+    sign = text[0] == '-' ? '-' : '';
+    text = text.substring(1);
+  }
+  if (text.contains('-') || text.contains('+')) return '';
+
+  final hasComma = text.contains(',');
+  final hasDot = text.contains('.');
+  if (hasComma && hasDot) {
+    if (text.lastIndexOf(',') > text.lastIndexOf('.')) {
+      text = text.replaceAll('.', '').replaceAll(',', '.');
+    } else {
+      text = text.replaceAll(',', '');
+    }
+  } else if (hasComma) {
+    final firstComma = text.indexOf(',');
+    final lastComma = text.lastIndexOf(',');
+    if (firstComma != lastComma) {
+      text = text.replaceAll(',', '');
+    } else {
+      final before = text.substring(0, firstComma);
+      final after = text.substring(firstComma + 1);
+      text = after.length == 3 && before.isNotEmpty
+          ? text.replaceAll(',', '')
+          : text.replaceAll(',', '.');
+    }
+  }
+
+  return '$sign$text';
 }
 
 final _moneyFull = NumberFormat('#,##0.00', 'en_US');
@@ -116,15 +178,19 @@ double invoiceResolveDiscount(Map<String, dynamic> invoice) {
   if (diff > 0.01) return diff;
   return 0.0;
 }
+
 /// Synced client total owed — same [balance] on all invoices (المتبقي عليكم).
 double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
-  if (invoice.containsKey('_computedRemainingOwed') && invoice['_computedRemainingOwed'] != null) {
+  if (invoice.containsKey('_computedRemainingOwed') &&
+      invoice['_computedRemainingOwed'] != null) {
     return invoiceNum(invoice['_computedRemainingOwed']);
   }
-  if (invoice.containsKey('currentClientBalance') && invoice['currentClientBalance'] != null) {
+  if (invoice.containsKey('currentClientBalance') &&
+      invoice['currentClientBalance'] != null) {
     return invoiceNum(invoice['currentClientBalance']);
   }
-  if (invoice.containsKey('previousBalance') && invoice['previousBalance'] != null) {
+  if (invoice.containsKey('previousBalance') &&
+      invoice['previousBalance'] != null) {
     final prev = invoiceNum(invoice['previousBalance']);
     final unpaid = invoiceUnpaidAmount(invoice);
     final isReturn = invoiceIsReturn(invoice);
@@ -135,13 +201,16 @@ double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
 
 /// Synced supplier running balance — same [balance] on all buying invoices.
 double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
-  if (invoice.containsKey('_computedRemainingOwed') && invoice['_computedRemainingOwed'] != null) {
+  if (invoice.containsKey('_computedRemainingOwed') &&
+      invoice['_computedRemainingOwed'] != null) {
     return invoiceNum(invoice['_computedRemainingOwed']);
   }
-  if (invoice.containsKey('currentSupplierBalance') && invoice['currentSupplierBalance'] != null) {
+  if (invoice.containsKey('currentSupplierBalance') &&
+      invoice['currentSupplierBalance'] != null) {
     return invoiceNum(invoice['currentSupplierBalance']);
   }
-  if (invoice.containsKey('previousBalance') && invoice['previousBalance'] != null) {
+  if (invoice.containsKey('previousBalance') &&
+      invoice['previousBalance'] != null) {
     final prev = invoiceNum(invoice['previousBalance']);
     final unpaid = invoiceUnpaidAmount(invoice);
     final isReturn = invoiceIsReturn(invoice);
@@ -152,10 +221,12 @@ double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
 
 /// Calculates previous balance based on stored historical previousBalance or dynamic calculation fallback.
 double invoiceDynamicPreviousBalance(Map<String, dynamic> invoice) {
-  if (invoice.containsKey('_computedPrevBalance') && invoice['_computedPrevBalance'] != null) {
+  if (invoice.containsKey('_computedPrevBalance') &&
+      invoice['_computedPrevBalance'] != null) {
     return invoiceNum(invoice['_computedPrevBalance']);
   }
-  if (invoice.containsKey('previousBalance') && invoice['previousBalance'] != null) {
+  if (invoice.containsKey('previousBalance') &&
+      invoice['previousBalance'] != null) {
     return invoiceNum(invoice['previousBalance']);
   }
   final isSupplier = invoiceIsSupplierPurchase(invoice);
@@ -235,8 +306,7 @@ double invoiceLineTotalCost(
 }) {
   final qty = invoiceNum(line['amount']);
   if (qty <= 0) return 0.0;
-  return invoiceLineUnitCost(line, catalogUnitCost: catalogUnitCost) *
-      qty;
+  return invoiceLineUnitCost(line, catalogUnitCost: catalogUnitCost) * qty;
 }
 
 /// Local sequential invoice number manager.
@@ -291,18 +361,18 @@ class LocalInvoiceCounter {
       switch (type.toLowerCase()) {
         case 'return':
           if (!returnInvoicesBox.isOpen) return 0;
-          return returnInvoicesBox.values
-              .fold<int>(0, (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
+          return returnInvoicesBox.values.fold<int>(0,
+              (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
         case 'buying':
           if (!buyingInvoicesBox.isOpen) return 0;
-          return buyingInvoicesBox.values
-              .fold<int>(0, (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
+          return buyingInvoicesBox.values.fold<int>(0,
+              (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
         case 'sale':
         case 'sales':
         default:
           if (!invoicesBox.isOpen) return 0;
-          return invoicesBox.values
-              .fold<int>(0, (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
+          return invoicesBox.values.fold<int>(0,
+              (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
       }
     } catch (_) {
       return 0;
@@ -326,8 +396,10 @@ class LocalInvoiceCounter {
           .limit(1)
           .get();
       if (salesQuery.docs.isNotEmpty) {
-        final remoteMax = (salesQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
-        final currentLocal = _getCurrentOrLocalMax(HiveMetaKeys.nextSalesInvoiceNumber, 'sale');
+        final remoteMax =
+            (salesQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
+        final currentLocal =
+            _getCurrentOrLocalMax(HiveMetaKeys.nextSalesInvoiceNumber, 'sale');
         if (remoteMax > currentLocal) {
           await appMetaBox.put(HiveMetaKeys.nextSalesInvoiceNumber, remoteMax);
         }
@@ -340,8 +412,10 @@ class LocalInvoiceCounter {
           .limit(1)
           .get();
       if (returnQuery.docs.isNotEmpty) {
-        final remoteMax = (returnQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
-        final currentLocal = _getCurrentOrLocalMax(HiveMetaKeys.nextReturnInvoiceNumber, 'return');
+        final remoteMax =
+            (returnQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
+        final currentLocal = _getCurrentOrLocalMax(
+            HiveMetaKeys.nextReturnInvoiceNumber, 'return');
         if (remoteMax > currentLocal) {
           await appMetaBox.put(HiveMetaKeys.nextReturnInvoiceNumber, remoteMax);
         }
@@ -354,8 +428,10 @@ class LocalInvoiceCounter {
           .limit(1)
           .get();
       if (buyingQuery.docs.isNotEmpty) {
-        final remoteMax = (buyingQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
-        final currentLocal = _getCurrentOrLocalMax(HiveMetaKeys.nextBuyingInvoiceNumber, 'buying');
+        final remoteMax =
+            (buyingQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
+        final currentLocal = _getCurrentOrLocalMax(
+            HiveMetaKeys.nextBuyingInvoiceNumber, 'buying');
         if (remoteMax > currentLocal) {
           await appMetaBox.put(HiveMetaKeys.nextBuyingInvoiceNumber, remoteMax);
         }

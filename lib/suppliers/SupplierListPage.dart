@@ -3,6 +3,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import '../Services/party_rename_service.dart';
+import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Widgets/app_responsive.dart';
 import 'DeletedSuppliersPage.dart';
 import 'SupplierInvoicesPage.dart';
@@ -130,6 +131,21 @@ class _SupplierListPageState extends State<SupplierListPage> {
   void initState() {
     super.initState();
     _initializeHive();
+    _reconcileSupplierBalances();
+  }
+
+  Future<void> _reconcileSupplierBalances() async {
+    try {
+      final suppliers =
+          await FirebaseFirestore.instance.collection('suppliers').get();
+      for (final supplier in suppliers.docs) {
+        try {
+          await SupplierInvoiceBalanceSyncService.syncForSupplier(supplier.id);
+        } catch (_) {
+          // Keep checking the remaining suppliers if one legacy record is bad.
+        }
+      }
+    } catch (_) {}
   }
 
   Future<void> _initializeHive() async {

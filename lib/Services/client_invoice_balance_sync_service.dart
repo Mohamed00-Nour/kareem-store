@@ -28,7 +28,22 @@ class ClientInvoiceBalanceSyncService {
     }
   }
 
-  static List<QueryDocumentSnapshot> _sortDocsAscending(List<QueryDocumentSnapshot> docs) {
+  static int _invoiceNumber(Map<String, dynamic> data) =>
+      int.tryParse(data['invoiceNumber']?.toString().trim() ?? '') ?? 0;
+
+  static DateTime _dateOnly(DateTime value) =>
+      DateTime(value.year, value.month, value.day);
+
+  static DateTime? _parseHistoryDate(dynamic raw) {
+    if (raw is Timestamp) return raw.toDate();
+    if (raw is DateTime) return raw;
+    if (raw is String) return DateTime.tryParse(raw);
+    if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
+    return null;
+  }
+
+  static List<QueryDocumentSnapshot> _sortDocsAscending(
+      List<QueryDocumentSnapshot> docs) {
     final sorted = List<QueryDocumentSnapshot>.from(docs);
     sorted.sort((a, b) {
       final dataA = a.data() as Map<String, dynamic>;
@@ -40,30 +55,33 @@ class ClientInvoiceBalanceSyncService {
       if (typeA == 'opening' && typeB != 'opening') return -1;
       if (typeB == 'opening' && typeA != 'opening') return 1;
 
-      // Group by same invoiceId
-      final invA = dataA['invoiceId']?.toString() ?? '';
-      final invB = dataB['invoiceId']?.toString() ?? '';
-      if (invA.isNotEmpty && invA == invB) {
-        return _typePriority(typeA).compareTo(_typePriority(typeB));
-      }
-
-      // Then by timestamp ascending (oldest first)
-      final tsA = dataA['timestamp'];
-      final tsB = dataB['timestamp'];
-      DateTime? dateA, dateB;
-      if (tsA is Timestamp) dateA = tsA.toDate();
-      if (tsB is Timestamp) dateB = tsB.toDate();
+      final dateA = _parseHistoryDate(dataA['timestamp'] ?? dataA['date']);
+      final dateB = _parseHistoryDate(dataB['timestamp'] ?? dataB['date']);
 
       if (dateA != null && dateB != null) {
-        final cmp = dateA.compareTo(dateB);
-        if (cmp != 0) return cmp;
+        final dayCmp = _dateOnly(dateA).compareTo(_dateOnly(dateB));
+        if (dayCmp != 0) return dayCmp;
       } else if (dateA != null) {
         return -1;
       } else if (dateB != null) {
         return 1;
       }
 
-      return _typePriority(typeA).compareTo(_typePriority(typeB));
+      final invA = _invoiceNumber(dataA);
+      final invB = _invoiceNumber(dataB);
+      if (invA > 0 && invB > 0 && invA != invB) {
+        return invA.compareTo(invB);
+      }
+
+      if (dateA != null && dateB != null) {
+        final timeCmp = dateA.compareTo(dateB);
+        if (timeCmp != 0) return timeCmp;
+      }
+
+      final priorityCmp = _typePriority(typeA).compareTo(_typePriority(typeB));
+      if (priorityCmp != 0) return priorityCmp;
+
+      return a.id.compareTo(b.id);
     });
     return sorted;
   }
@@ -243,7 +261,8 @@ class ClientInvoiceBalanceSyncService {
           await commitBatchIfNeeded();
         }
       } else {
-        final newDocRef = clientRef.collection('balanceHistory').doc('${invoiceId}_sale');
+        final newDocRef =
+            clientRef.collection('balanceHistory').doc('${invoiceId}_sale');
         batch.set(newDocRef, {
           'enteredBalance': totalSum,
           'balanceBefore': 0.0,
@@ -267,7 +286,8 @@ class ClientInvoiceBalanceSyncService {
             await commitBatchIfNeeded();
           }
         } else {
-          final newDocRef = clientRef.collection('balanceHistory').doc('${invoiceId}_pay');
+          final newDocRef =
+              clientRef.collection('balanceHistory').doc('${invoiceId}_pay');
           batch.set(newDocRef, {
             'enteredBalance': paidAmount,
             'balanceBefore': 0.0,
@@ -357,20 +377,25 @@ class ClientInvoiceBalanceSyncService {
     }
 
     // Refresh history documents to get the final aligned state
-    final finalHistoryDocs = (await clientRef.collection('balanceHistory').get()).docs;
+    final finalHistoryDocs =
+        (await clientRef.collection('balanceHistory').get()).docs;
     var sorted = sortAndDeduplicateHistory(finalHistoryDocs);
 
     // If client has an openingBalance field not yet recorded in balanceHistory, create it once
-    final double rawOpeningBalance = (clientData['openingBalance'] as num?)?.toDouble() ?? 0.0;
-    if (rawOpeningBalance != 0.0 && !sorted.any((d) => (d.data() as Map)['type'] == 'opening')) {
-      final openingRef = clientRef.collection('balanceHistory').doc('${trimmed}_opening');
+    final double rawOpeningBalance =
+        (clientData['openingBalance'] as num?)?.toDouble() ?? 0.0;
+    if (rawOpeningBalance != 0.0 &&
+        !sorted.any((d) => (d.data() as Map)['type'] == 'opening')) {
+      final openingRef =
+          clientRef.collection('balanceHistory').doc('${trimmed}_opening');
       await openingRef.set({
         'enteredBalance': rawOpeningBalance,
         'balanceBefore': 0.0,
         'timestamp': FieldValue.serverTimestamp(),
         'type': 'opening',
       });
-      final refreshed = (await clientRef.collection('balanceHistory').get()).docs;
+      final refreshed =
+          (await clientRef.collection('balanceHistory').get()).docs;
       sorted = sortAndDeduplicateHistory(refreshed);
     }
 

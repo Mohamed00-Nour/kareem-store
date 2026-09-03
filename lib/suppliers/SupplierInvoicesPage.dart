@@ -101,15 +101,20 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     // 1. Read directly from local Hive (0ms)
     final local = SupplierRepository.instance.getById(widget.supplierId);
     if (local != null && mounted) {
+      final ledgerBalance = BalanceHistoryRepository.instance
+          .calculateSupplierBalance(widget.supplierId, fallback: local.balance);
       setState(() {
         _supplierName = local.name;
-        _currentSupplierBalance = local.balance;
+        _currentSupplierBalance = ledgerBalance;
       });
     }
 
     // 2. Background refresh & history sync if online
     try {
       if (ConnectivityService.instance.isOnline) {
+        await SupplierInvoiceBalanceSyncService.syncForSupplier(
+          widget.supplierId,
+        );
         await BalanceHistoryRepository.instance
             .fullSyncForSupplier(widget.supplierId);
 
@@ -164,6 +169,22 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       .collection('balanceHistory')
       .orderBy('timestamp', descending: true);
 
+  List<QueryDocumentSnapshot> _deduplicateInvoiceDocs(
+    Iterable<QueryDocumentSnapshot> docs,
+  ) {
+    final seen = <String>{};
+    return docs.where((doc) {
+      final data = doc.data() as Map<String, dynamic>? ?? {};
+      final number = data['invoiceNumber']?.toString().trim() ?? '';
+      final linkedId = data['invoiceId']?.toString().trim() ?? '';
+      final storedId = data['id']?.toString().trim() ?? '';
+      final key = number.isNotEmpty
+          ? 'number:$number'
+          : 'id:${linkedId.isNotEmpty ? linkedId : (storedId.isNotEmpty ? storedId : doc.id)}';
+      return seen.add(key);
+    }).toList();
+  }
+
   Future<void> _fetchInvoices({bool reset = false}) async {
     if (reset) {
       if (!mounted) return;
@@ -207,7 +228,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
 
       setState(() {
         if (reset) {
-          _invoices = snap.docs;
+          _invoices = _deduplicateInvoiceDocs(snap.docs);
           _returnInvoices = retSnap?.docs ?? [];
           _payments = (paySnap?.docs ?? []).where((doc) {
             final t =
@@ -215,7 +236,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
             return t != 'buying' && t != 'return';
           }).toList();
         } else {
-          _invoices.addAll(snap.docs);
+          _invoices = _deduplicateInvoiceDocs([..._invoices, ...snap.docs]);
         }
         if (snap.docs.isNotEmpty) {
           _lastInvoiceDoc = snap.docs.last;
@@ -236,7 +257,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
   Future<void> _loadMoreInvoices() => _fetchInvoices(reset: false);
 
   Future<void> _refreshInvoices() async {
-    _fetchSupplierName();
+    await _fetchSupplierName();
     await _fetchInvoices(reset: true);
   }
 
@@ -297,6 +318,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
           enteredBalance: enteredBalance,
           balanceBefore: currentBalance,
           type: isAddition ? 'addition' : 'voucher',
+          direction: isAddition ? '\u0644\u0647' : '\u0639\u0644\u064a\u0647',
           notes: notesText,
           timestamp: DateTime.now(),
         ),
@@ -314,7 +336,6 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
         setState(() {
           _currentSupplierBalance = newBalance;
         });
-        _fetchSupplierName();
         _refreshInvoices();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
@@ -351,73 +372,31 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     required String notesText,
     required String historyId,
   }) async {
+    final logEntry = <String, dynamic>{
+      'enteredBalance': enteredBalance,
+      'balanceBefore': currentBalance,
+      'type': isAddition ? 'addition' : 'voucher',
+      'direction': isAddition ? '\u0644\u0647' : '\u0639\u0644\u064a\u0647',
+      'notes': notesText,
+      'timestamp': DateTime.now().toIso8601String(),
+    };
+
     try {
-      final bool isOnline = ConnectivityService.instance.isOnline;
-      if (isOnline) {
-        final supplierRef =
-            FirebaseFirestore.instance.collection('suppliers').doc(supplierId);
-
-        await supplierRef
-            .update({'totalBalance': newBalance, 'balance': newBalance});
-
-        if (!isAddition) {
-          final voucherSnap = await FirebaseFirestore.instance
-              .collection('supplier_vouchers')
-              .orderBy('voucherNumber', descending: true)
-              .limit(1)
-              .get();
-          final nextVoucher = voucherSnap.docs.isNotEmpty
-              ? (voucherSnap.docs.first['voucherNumber'] as int) + 1
-              : 1;
-
-          final voucherRef = await FirebaseFirestore.instance
-              .collection('supplier_vouchers')
-              .add({
-            'supplierId': supplierId,
-            'supplierName': supplierName,
-            'direction': 'عليه',
-            'amount': enteredBalance,
-            'description':
-                notesText.isNotEmpty ? notesText : 'سداد نقدي للمورد',
-            'date': Timestamp.now(),
-            'timestamp': DateTime.now(),
-            'voucherNumber': nextVoucher,
-          });
-
-          await supplierRef.collection('balanceHistory').doc(historyId).set({
-            'enteredBalance': enteredBalance,
-            'balanceBefore': currentBalance,
-            'type': 'voucher',
-            'voucherId': voucherRef.id,
-            'notes': notesText.isNotEmpty ? notesText : 'سداد نقدي للمورد',
-            'timestamp': DateTime.now(),
-          });
-
-          DocumentReference boxDocRef =
-              FirebaseFirestore.instance.collection('box').doc('mainBox');
-          await boxDocRef.set(
-            {'value': FieldValue.increment(-enteredBalance)},
-            SetOptions(merge: true),
-          );
-
-          await boxDocRef.collection('changes').add({
-            'date': FieldValue.serverTimestamp(),
-            'value': enteredBalance,
-            'type': 'decrement',
-            'name': supplierName,
-            'notes': notesText,
-            'invoiceNumber': null,
-          });
-        } else {
-          await supplierRef.collection('balanceHistory').doc(historyId).set({
-            'enteredBalance': enteredBalance,
-            'balanceBefore': currentBalance,
-            'type': 'addition',
-            'notes': notesText.isNotEmpty ? notesText : 'إضافة رصيد للمورد',
-            'timestamp': DateTime.now(),
-          });
-        }
-      }
+      // Use one queued, idempotent write path online and offline. This avoids
+      // partially saving the supplier, voucher, history, or cash-box change.
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'adjustSupplierBalance',
+        payload: {
+          'supplierId': supplierId,
+          'supplierName': supplierName,
+          'amount': enteredBalance,
+          'isAddition': isAddition,
+          'logEntry': logEntry,
+          'newBalance': newBalance,
+          'historyId': historyId,
+        },
+      );
+      ConnectivityService.instance.forceSync();
     } catch (_) {}
   }
 
@@ -976,10 +955,16 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
 
         final entered = invoiceNum(
             data['enteredBalance'] ?? data['amount'] ?? data['value']);
-        if (type == 'opening' || type == 'addition' || type == 'buying') {
+        if (type == 'addition' || type == 'buying') {
           running += entered;
         } else if (type == 'deduction' || type == 'return') {
           running -= entered;
+        } else if (type == 'opening' || type == 'voucher') {
+          final direction = data['direction']?.toString().trim() ?? '';
+          final isIncrease = type == 'opening'
+              ? direction != '\u0639\u0644\u064a\u0647'
+              : direction == '\u0644\u0647';
+          running += isIncrease ? entered : -entered;
         }
       }
       data['_computedRemainingOwed'] = running;

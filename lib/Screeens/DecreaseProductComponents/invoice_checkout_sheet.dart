@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../../Services/invoice_number_utils.dart';
 
 class CheckoutSelectionResult {
   final String clientName;
@@ -48,7 +49,8 @@ Future<CheckoutSelectionResult?> showInvoiceCheckoutSheet({
     context: context,
     isScrollControlled: true,
     backgroundColor: Colors.white,
-    shape: RoundedRectangleBorder(borderRadius: BorderRadius.vertical(top: Radius.circular(20.r))),
+    shape: RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20.r))),
     builder: (ctx) {
       return _InvoiceCheckoutSheetContent(
         isEditing: isEditing,
@@ -104,10 +106,12 @@ class _InvoiceCheckoutSheetContent extends StatefulWidget {
   });
 
   @override
-  State<_InvoiceCheckoutSheetContent> createState() => _InvoiceCheckoutSheetContentState();
+  State<_InvoiceCheckoutSheetContent> createState() =>
+      _InvoiceCheckoutSheetContentState();
 }
 
-class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetContent> {
+class _InvoiceCheckoutSheetContentState
+    extends State<_InvoiceCheckoutSheetContent> {
   late String paymentMethod;
   late double invoiceDiscount;
   late bool discountIsPercent;
@@ -133,16 +137,27 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
     discountIsPercent = !widget.isEditing;
     checkoutClient = widget.clientName;
     notes = widget.isEditing ? widget.notes : '';
-    checkoutClientBalance = checkoutClient.trim().isNotEmpty && checkoutClient.trim() == widget.clientName.trim() ? widget.clientBalance : null;
-    
-    paidCtrl = TextEditingController(text: widget.isEditing && widget.originalPaidAmount > 0 ? widget.originalPaidAmount.toStringAsFixed(2) : '');
-    discountCtrl = TextEditingController(text: widget.isEditing && widget.invoiceDiscount > 0 ? widget.invoiceDiscount.toStringAsFixed(2) : '');
+    checkoutClientBalance = checkoutClient.trim().isNotEmpty &&
+            checkoutClient.trim() == widget.clientName.trim()
+        ? widget.clientBalance
+        : null;
+
+    paidCtrl = TextEditingController(
+        text: widget.isEditing && widget.originalPaidAmount > 0
+            ? widget.originalPaidAmount.toStringAsFixed(2)
+            : '');
+    discountCtrl = TextEditingController(
+        text: widget.isEditing && widget.invoiceDiscount > 0
+            ? widget.invoiceDiscount.toStringAsFixed(2)
+            : '');
     notesCtrl = TextEditingController(text: notes);
     walletCtrl = TextEditingController();
     cashCtrl = TextEditingController();
     instapayCtrl = TextEditingController();
     bankTransferCtrl = TextEditingController();
-    lastManualPaid = widget.isEditing && widget.originalPaidAmount > 0 ? widget.originalPaidAmount.toStringAsFixed(2) : '';
+    lastManualPaid = widget.isEditing && widget.originalPaidAmount > 0
+        ? widget.originalPaidAmount.toStringAsFixed(2)
+        : '';
   }
 
   @override
@@ -160,7 +175,8 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
   void _selectAllField(TextEditingController controller) {
     final text = controller.text;
     if (text.isEmpty) return;
-    controller.selection = TextSelection(baseOffset: 0, extentOffset: text.length);
+    controller.selection =
+        TextSelection(baseOffset: 0, extentOffset: text.length);
   }
 
   String invoiceAmount(double amount) => amount.toStringAsFixed(2);
@@ -207,7 +223,7 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
               ? totalSum * invoiceDiscount / 100
               : invoiceDiscount;
           double totalAfterDiscount = totalSum - effectiveDiscountAmt;
-          double paid = double.tryParse(paidCtrl.text) ?? 0.0;
+          double paid = invoiceTryParseAmount(paidCtrl.text) ?? 0.0;
           double remaining = paid - totalAfterDiscount;
           final bool isCash = paymentMethod == 'نقداً';
           final bool paidLessThanTotal =
@@ -604,20 +620,27 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                         Expanded(
                           child: TextField(
                             controller: walletCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             textAlign: TextAlign.right,
                             onTap: () => _selectAllField(walletCtrl),
                             decoration: InputDecoration(
                               labelText: 'محفظة',
-                              labelStyle: TextStyle(fontSize: 12.sp, color: Colors.orange.shade800),
+                              labelStyle: TextStyle(
+                                  fontSize: 12.sp,
+                                  color: Colors.orange.shade800),
                               hintText: '0.0',
-                              hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.r)),
+                              hintStyle: TextStyle(
+                                  fontSize: 12.sp, color: Colors.grey),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8.r)),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8.r),
-                                borderSide: BorderSide(color: Colors.orange.shade800, width: 1.5),
+                                borderSide: BorderSide(
+                                    color: Colors.orange.shade800, width: 1.5),
                               ),
-                              contentPadding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
+                              contentPadding: EdgeInsets.symmetric(
+                                  vertical: 8.h, horizontal: 10.w),
                             ),
                           ),
                         ),
@@ -625,20 +648,27 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                         Expanded(
                           child: TextField(
                             controller: cashCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             textAlign: TextAlign.right,
                             onTap: () => _selectAllField(cashCtrl),
                             decoration: InputDecoration(
                               labelText: 'نقدي',
-                              labelStyle: TextStyle(fontSize: 12.sp, color: Colors.green.shade800),
+                              labelStyle: TextStyle(
+                                  fontSize: 12.sp,
+                                  color: Colors.green.shade800),
                               hintText: '0.0',
-                              hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.r)),
+                              hintStyle: TextStyle(
+                                  fontSize: 12.sp, color: Colors.grey),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8.r)),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8.r),
-                                borderSide: BorderSide(color: Colors.green.shade800, width: 1.5),
+                                borderSide: BorderSide(
+                                    color: Colors.green.shade800, width: 1.5),
                               ),
-                              contentPadding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
+                              contentPadding: EdgeInsets.symmetric(
+                                  vertical: 8.h, horizontal: 10.w),
                             ),
                           ),
                         ),
@@ -650,20 +680,27 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                         Expanded(
                           child: TextField(
                             controller: instapayCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             textAlign: TextAlign.right,
                             onTap: () => _selectAllField(instapayCtrl),
                             decoration: InputDecoration(
                               labelText: 'أنستاباي',
-                              labelStyle: TextStyle(fontSize: 12.sp, color: Colors.purple.shade800),
+                              labelStyle: TextStyle(
+                                  fontSize: 12.sp,
+                                  color: Colors.purple.shade800),
                               hintText: '0.0',
-                              hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.r)),
+                              hintStyle: TextStyle(
+                                  fontSize: 12.sp, color: Colors.grey),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8.r)),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8.r),
-                                borderSide: BorderSide(color: Colors.purple.shade800, width: 1.5),
+                                borderSide: BorderSide(
+                                    color: Colors.purple.shade800, width: 1.5),
                               ),
-                              contentPadding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
+                              contentPadding: EdgeInsets.symmetric(
+                                  vertical: 8.h, horizontal: 10.w),
                             ),
                           ),
                         ),
@@ -671,20 +708,26 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                         Expanded(
                           child: TextField(
                             controller: bankTransferCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(decimal: true),
+                            keyboardType: const TextInputType.numberWithOptions(
+                                decimal: true),
                             textAlign: TextAlign.right,
                             onTap: () => _selectAllField(bankTransferCtrl),
                             decoration: InputDecoration(
                               labelText: 'تحويل بنكي',
-                              labelStyle: TextStyle(fontSize: 12.sp, color: Colors.blue.shade800),
+                              labelStyle: TextStyle(
+                                  fontSize: 12.sp, color: Colors.blue.shade800),
                               hintText: '0.0',
-                              hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
-                              border: OutlineInputBorder(borderRadius: BorderRadius.circular(8.r)),
+                              hintStyle: TextStyle(
+                                  fontSize: 12.sp, color: Colors.grey),
+                              border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(8.r)),
                               focusedBorder: OutlineInputBorder(
                                 borderRadius: BorderRadius.circular(8.r),
-                                borderSide: BorderSide(color: Colors.blue.shade800, width: 1.5),
+                                borderSide: BorderSide(
+                                    color: Colors.blue.shade800, width: 1.5),
                               ),
-                              contentPadding: EdgeInsets.symmetric(vertical: 8.h, horizontal: 10.w),
+                              contentPadding: EdgeInsets.symmetric(
+                                  vertical: 8.h, horizontal: 10.w),
                             ),
                           ),
                         ),
@@ -721,9 +764,10 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                                                 Text('يجب ادخال اسم العميل')));
                                     return;
                                   }
-                                  if (!await widget.clientExists(
-                                      checkoutClient.trim())) {
-                                    setSheet(() => checkoutClientNotFound = true);
+                                  if (!await widget
+                                      .clientExists(checkoutClient.trim())) {
+                                    setSheet(
+                                        () => checkoutClientNotFound = true);
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text('هذا العميل غير موجود'),
@@ -731,8 +775,38 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                                     );
                                     return;
                                   }
-                                  final paidAmount =
-                                      double.tryParse(paidCtrl.text) ?? 0.0;
+                                  final paidInput = paidCtrl.text.trim();
+                                  final parsedPaid =
+                                      invoiceTryParseAmount(paidInput);
+                                  if (paidInput.isNotEmpty &&
+                                      parsedPaid == null) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content:
+                                            Text('المبلغ المدفوع غير صحيح'),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  final paidAmount = parsedPaid ?? 0.0;
+                                  if (paidAmount < -0.001) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            'المبلغ المدفوع لا يمكن أن يكون سالب'),
+                                      ),
+                                    );
+                                    return;
+                                  }
+                                  if (paidAmount - totalAfterDiscount > 0.001) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            'المبلغ المدفوع أكبر من الإجمالي'),
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   if (paymentMethod == 'نقداً' &&
                                       paidAmount + 0.001 < totalAfterDiscount) {
                                     ScaffoldMessenger.of(context).showSnackBar(
@@ -744,23 +818,51 @@ class _InvoiceCheckoutSheetContentState extends State<_InvoiceCheckoutSheetConte
                                     return;
                                   }
 
-                                  final wallet = double.tryParse(walletCtrl.text.trim()) ?? 0.0;
-                                  final cash = double.tryParse(cashCtrl.text.trim()) ?? 0.0;
-                                  final instapay = double.tryParse(instapayCtrl.text.trim()) ?? 0.0;
-                                  final bankTransfer = double.tryParse(bankTransferCtrl.text.trim()) ?? 0.0;
+                                  double? parseBreakdownAmount(
+                                      TextEditingController controller) {
+                                    final text = controller.text.trim();
+                                    if (text.isEmpty) return 0.0;
+                                    final value = invoiceTryParseAmount(text);
+                                    if (value == null || value < -0.001) {
+                                      return null;
+                                    }
+                                    return value;
+                                  }
 
-                                  Navigator.pop(context, CheckoutSelectionResult(
-                                    clientName: checkoutClient.trim(),
-                                    paidAmount: paidAmount,
-                                    paymentMethod: paymentMethod,
-                                    notes: notes,
-                                    invoiceDiscount: invoiceDiscount,
-                                    discountIsPercent: discountIsPercent,
-                                    walletAmount: wallet,
-                                    cashAmount: cash,
-                                    instapayAmount: instapay,
-                                    bankTransferAmount: bankTransfer,
-                                  ));
+                                  final wallet =
+                                      parseBreakdownAmount(walletCtrl);
+                                  final cash = parseBreakdownAmount(cashCtrl);
+                                  final instapay =
+                                      parseBreakdownAmount(instapayCtrl);
+                                  final bankTransfer =
+                                      parseBreakdownAmount(bankTransferCtrl);
+                                  if (wallet == null ||
+                                      cash == null ||
+                                      instapay == null ||
+                                      bankTransfer == null) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            'تفاصيل الدفع تحتوي على مبلغ غير صحيح'),
+                                      ),
+                                    );
+                                    return;
+                                  }
+
+                                  Navigator.pop(
+                                      context,
+                                      CheckoutSelectionResult(
+                                        clientName: checkoutClient.trim(),
+                                        paidAmount: paidAmount,
+                                        paymentMethod: paymentMethod,
+                                        notes: notes,
+                                        invoiceDiscount: invoiceDiscount,
+                                        discountIsPercent: discountIsPercent,
+                                        walletAmount: wallet,
+                                        cashAmount: cash,
+                                        instapayAmount: instapay,
+                                        bankTransferAmount: bankTransfer,
+                                      ));
                                 },
                           child: widget.isSaving
                               ? SizedBox(

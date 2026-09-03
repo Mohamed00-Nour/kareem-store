@@ -58,4 +58,19 @@ void main() {
       expect(invoiceLineUnitPrice({'amount': 0, 'total': 100}), 0);
     });
   });
+
+  group('invoiceTryParseAmount', () {
+    test('parses common localized money input', () {
+      expect(invoiceTryParseAmount('900,50'), 900.50);
+      expect(invoiceTryParseAmount('1,660'), 1660);
+      expect(invoiceTryParseAmount('1,660.75'), 1660.75);
+      expect(invoiceTryParseAmount('1.660,75'), 1660.75);
+      expect(invoiceTryParseAmount('٩٠٠٫٥٠'), 900.50);
+    });
+
+    test('rejects malformed values instead of treating them as zero', () {
+      expect(invoiceTryParseAmount('12-3'), isNull);
+      expect(invoiceTryParseAmount('--5'), isNull);
+    });
+  });
 }

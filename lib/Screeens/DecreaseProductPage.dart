@@ -1011,8 +1011,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     if (_isSaving) return;
     final String effectiveClient =
         (clientName ?? _clientNameController.text).trim();
-    final double effectivePaid =
-        paidAmount ?? (double.tryParse(_paidAmountController.text) ?? 0.0);
+    final double? parsedPaid =
+        paidAmount ?? invoiceTryParseAmount(_paidAmountController.text);
+    if (parsedPaid == null) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('المبلغ المدفوع غير صحيح')),
+      );
+      return;
+    }
+    final double effectivePaid = parsedPaid;
 
     if (effectiveClient.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -1024,6 +1031,25 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     if (_addedProducts.isEmpty) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('يرجى إضافة منتجات إلى الفاتورة')),
+      );
+      return;
+    }
+
+    final totalBeforePaymentValidation = _calculateTotalSum();
+    final discountForPaymentValidation = discountIsPercent
+        ? totalBeforePaymentValidation * invoiceDiscount / 100
+        : invoiceDiscount;
+    final totalAfterPaymentValidation =
+        totalBeforePaymentValidation - discountForPaymentValidation;
+    if (effectivePaid < -0.001) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('المبلغ المدفوع لا يمكن أن يكون سالب')),
+      );
+      return;
+    }
+    if (effectivePaid - totalAfterPaymentValidation > 0.001) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('المبلغ المدفوع أكبر من الإجمالي')),
       );
       return;
     }
@@ -1124,7 +1150,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         final totalSumBeforeDiscount = _calculateTotalSum();
         // Run in background — updateSalesInvoice writes Hive first then enqueues.
         // UI is unblocked immediately regardless of connectivity.
-        SalesInvoiceUpdateService.updateSalesInvoice(
+        await SalesInvoiceUpdateService.updateSalesInvoice(
           rootInvoiceId: _editingRootInvoiceId!,
           clientSubInvoiceDocId: _editingClientSubDocId,
           originalInvoice: _originalInvoice!,
@@ -1138,7 +1164,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           discountIsPercent: discountIsPercent,
           totalSumBeforeDiscount: totalSumBeforeDiscount,
           sourceCollection: _editingSourceCollection,
-        ).catchError((_) {});
+        );
 
         final effectiveDiscountAmt = discountIsPercent
             ? totalSumBeforeDiscount * invoiceDiscount / 100
@@ -1212,7 +1238,8 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'totalSum': totalSumFinal,
           'profitMargin': profitMargin,
           'paidAmount': effectivePaid,
-          'balance': balance,
+          'balance': updatedBalance,
+          'invoiceRemaining': balance,
           'previousBalance': existingBalance,
           'paymentMethod': paymentMethod,
           'notes': notes,

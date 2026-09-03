@@ -6,12 +6,9 @@ import '../sync/sync_queue_manager.dart';
 import '../sync/connectivity_service.dart';
 import 'invoice_number_utils.dart';
 import 'invoice_stock_service.dart';
-import 'supplier_invoice_balance_sync_service.dart';
 
 /// Updates an existing buying invoice locally in Hive first, then pushes to Firestore.
 class BuyingInvoiceUpdateService {
-  static final _db = FirebaseFirestore.instance;
-
   static Future<void> updateBuyingInvoice({
     required String rootInvoiceId,
     required Map<String, dynamic> originalInvoice,
@@ -69,12 +66,7 @@ class BuyingInvoiceUpdateService {
       'paymentMethod': balance == 0 ? 'نقد' : 'آجل',
       'invoiceType': 'buying',
       'products': newProducts
-          .map((p) => {
-                'product': p['product'],
-                'amount': (p['amount'] as num).toDouble(),
-                'cost': (p['cost'] as num).toDouble(),
-                'totalCost': (p['totalCost'] as num).toDouble(),
-              })
+          .map((p) => Map<String, dynamic>.from(p))
           .toList(),
     };
 
@@ -100,61 +92,22 @@ class BuyingInvoiceUpdateService {
     }
 
     // ── 4. Enqueue to SyncQueue ──
+    final syncOperationId =
+        FirebaseFirestore.instance.collection('_sync_operations').doc().id;
     await SyncQueueManager.instance.enqueue(
-      operationType: 'createBuyingInvoice',
+      operationType: 'editBuyingInvoice',
       payload: {
         'supplierId': supplierId,
         'supplierName': supplierName,
         'invoiceId': rootInvoiceId,
         'invoiceData': rootUpdate,
+        'oldProducts': oldProducts,
         'products': newProducts,
+        'oldPaidAmount': oldPaid,
         'paidAmount': paidAmount,
+        'syncOperationId': syncOperationId,
       },
     );
-
-    // ── 5. Direct Firestore update if online (fails silently if offline) ──
-    try {
-      final rootRef = _db.collection('buying invoices').doc(rootInvoiceId);
-      await rootRef.update(rootUpdate);
-
-      if (supplierId.isNotEmpty) {
-        final supplierRef = _db.collection('suppliers').doc(supplierId);
-        final subQuery = await supplierRef
-            .collection('buying invoices')
-            .where('invoiceId', isEqualTo: rootInvoiceId)
-            .limit(1)
-            .get();
-
-        final subUpdate = <String, dynamic>{
-          ...rootUpdate,
-          'invoiceId': rootInvoiceId,
-          'invoiceNumber': invoiceNumber,
-        };
-
-        if (subQuery.docs.isNotEmpty) {
-          await subQuery.docs.first.reference.update(subUpdate);
-        } else {
-          await supplierRef.collection('buying invoices').add(subUpdate);
-        }
-
-        await SupplierInvoiceBalanceSyncService.syncForSupplier(supplierId);
-      }
-
-      if (paidDelta.abs() > 0.001) {
-        final boxDocRef = _db.collection('box').doc('mainBox');
-        await boxDocRef.set(
-          {'value': FieldValue.increment(-paidDelta)},
-          SetOptions(merge: true),
-        );
-        await boxDocRef.collection('changes').add({
-          'date': FieldValue.serverTimestamp(),
-          'value': paidDelta.abs(),
-          'type': paidDelta > 0 ? 'decrement' : 'addition',
-          'name': supplierName,
-          'invoiceNumber': invoiceNumber,
-        });
-      }
-    } catch (_) {}
 
     ConnectivityService.instance.forceSync();
   }

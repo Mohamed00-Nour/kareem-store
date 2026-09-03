@@ -18,6 +18,7 @@ import 'package:kareem_store/repositories/invoice_repository.dart';
 import 'package:kareem_store/repositories/box_repository.dart';
 import 'package:kareem_store/repositories/balance_history_repository.dart';
 import 'package:kareem_store/Services/invoice_number_utils.dart';
+import 'package:kareem_store/sync/batch_sync_engine.dart';
 
 /// Helper: initialise Hive in a temp directory for tests.
 Future<void> initTestHive() async {
@@ -25,14 +26,18 @@ Future<void> initTestHive() async {
   Hive.init(dir.path);
   if (!Hive.isAdapterRegistered(0)) Hive.registerAdapter(ProductLocalAdapter());
   if (!Hive.isAdapterRegistered(1)) Hive.registerAdapter(ClientLocalAdapter());
-  if (!Hive.isAdapterRegistered(2)) Hive.registerAdapter(SupplierLocalAdapter());
-  if (!Hive.isAdapterRegistered(3)) Hive.registerAdapter(SyncQueueItemAdapter());
+  if (!Hive.isAdapterRegistered(2))
+    Hive.registerAdapter(SupplierLocalAdapter());
+  if (!Hive.isAdapterRegistered(3))
+    Hive.registerAdapter(SyncQueueItemAdapter());
   if (!Hive.isAdapterRegistered(4)) Hive.registerAdapter(InvoiceLocalAdapter());
   if (!Hive.isAdapterRegistered(5)) Hive.registerAdapter(ExpenseLocalAdapter());
   if (!Hive.isAdapterRegistered(6)) Hive.registerAdapter(QuoteLocalAdapter());
   if (!Hive.isAdapterRegistered(7)) Hive.registerAdapter(BoxLocalAdapter());
-  if (!Hive.isAdapterRegistered(8)) Hive.registerAdapter(BalanceHistoryLocalAdapter());
-  if (!Hive.isAdapterRegistered(9)) Hive.registerAdapter(DepartmentLocalAdapter());
+  if (!Hive.isAdapterRegistered(8))
+    Hive.registerAdapter(BalanceHistoryLocalAdapter());
+  if (!Hive.isAdapterRegistered(9))
+    Hive.registerAdapter(DepartmentLocalAdapter());
 
   await Hive.openBox<ProductLocal>(HiveBoxNames.products);
   await Hive.openBox<ClientLocal>(HiveBoxNames.clients);
@@ -217,7 +222,8 @@ void main() {
   // ── BalanceHistoryRepository ────────────────────────────────────────────
 
   group('BalanceHistoryRepository', () {
-    test('Stores and retrieves balance history entries ordered by date', () async {
+    test('Stores and retrieves balance history entries ordered by date',
+        () async {
       final invoice = InvoiceLocal(
         id: 'invoice_history_1',
         invoiceNumber: 401,
@@ -257,13 +263,15 @@ void main() {
       await BalanceHistoryRepository.instance.upsertLocal(entry1);
       await BalanceHistoryRepository.instance.upsertLocal(entry2);
 
-      final history = BalanceHistoryRepository.instance.getForClient('client_hist_1');
+      final history =
+          BalanceHistoryRepository.instance.getForClient('client_hist_1');
       expect(history.length, 2);
       expect(history[0].type, 'sale');
       expect(history[1].type, 'sale_payment');
     });
 
-    test('deduplicates legacy history IDs for the same invoice number', () async {
+    test('deduplicates legacy history IDs for the same invoice number',
+        () async {
       const clientId = 'client_duplicate_history';
       final invoice = InvoiceLocal(
         id: 'invoice_502',
@@ -322,8 +330,7 @@ void main() {
         await BalanceHistoryRepository.instance.upsertLocal(entry);
       }
 
-      final history =
-          BalanceHistoryRepository.instance.getForClient(clientId);
+      final history = BalanceHistoryRepository.instance.getForClient(clientId);
       expect(history.where((entry) => entry.type == 'sale'), hasLength(1));
       expect(
         history.where((entry) => entry.type == 'sale_payment'),
@@ -332,6 +339,176 @@ void main() {
       expect(
         BalanceHistoryRepository.instance.calculateClientBalance(clientId),
         760.0,
+      );
+    });
+
+    test('repairs local client payment history after editing paid amount',
+        () async {
+      const clientId = 'client_edit_payment_history';
+      final invoice = InvoiceLocal(
+        id: 'invoice_edit_paid_1',
+        invoiceNumber: 612,
+        clientId: clientId,
+        clientName: 'Edited payment test client',
+        date: DateTime(2026, 9, 3),
+        totalSum: 1000.0,
+        paidAmount: 200.0,
+        updatedAt: DateTime.now(),
+      );
+      await invoicesBox.put(invoice.id, invoice);
+
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: '${invoice.id}_sale',
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: 1000.0,
+          type: 'sale',
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber.toString(),
+          timestamp: invoice.date,
+        ),
+      );
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: '${invoice.id}_pay',
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: 200.0,
+          type: 'sale_payment',
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber.toString(),
+          timestamp: invoice.date,
+        ),
+      );
+
+      invoice.paidAmount = 600.0;
+      await invoicesBox.put(invoice.id, invoice);
+
+      var history = BalanceHistoryRepository.instance.getForClient(clientId);
+      expect(
+        history
+            .firstWhere((entry) => entry.type == 'sale_payment')
+            .enteredBalance,
+        600.0,
+      );
+      expect(
+        BalanceHistoryRepository.instance.calculateClientBalance(clientId),
+        400.0,
+      );
+
+      invoice.paidAmount = 0.0;
+      await invoicesBox.put(invoice.id, invoice);
+
+      history = BalanceHistoryRepository.instance.getForClient(clientId);
+      expect(history.where((entry) => entry.type == 'sale_payment'), isEmpty);
+      expect(
+        BalanceHistoryRepository.instance.calculateClientBalance(clientId),
+        1000.0,
+      );
+    });
+
+    test('deduplicates supplier invoice history and calculates one balance',
+        () async {
+      const supplierId = 'supplier_duplicate_history';
+      final invoice = InvoiceLocal(
+        id: 'buying_invoice_702',
+        invoiceNumber: 702,
+        supplierId: supplierId,
+        supplierName: 'Supplier balance test',
+        date: DateTime(2026, 9, 1),
+        totalSum: 1660.0,
+        paidAmount: 900.0,
+        invoiceType: 'buying',
+        updatedAt: DateTime.now(),
+      );
+      await buyingInvoicesBox.put(invoice.id, invoice);
+
+      for (final entry in [
+        BalanceHistoryLocal(
+          id: 'supplier_root_buying',
+          parentId: supplierId,
+          parentType: 'supplier',
+          enteredBalance: 1660.0,
+          type: 'buying',
+          invoiceId: 'root_buying_702',
+          invoiceNumber: '702',
+          timestamp: DateTime(2026, 9, 1),
+        ),
+        BalanceHistoryLocal(
+          id: 'supplier_sub_buying',
+          parentId: supplierId,
+          parentType: 'supplier',
+          enteredBalance: 1660.0,
+          type: 'buying',
+          invoiceId: 'sub_buying_702',
+          invoiceNumber: '702',
+          timestamp: DateTime(2026, 9, 1),
+        ),
+        BalanceHistoryLocal(
+          id: 'supplier_root_payment',
+          parentId: supplierId,
+          parentType: 'supplier',
+          enteredBalance: 900.0,
+          type: 'buying_payment',
+          invoiceId: 'root_buying_702',
+          invoiceNumber: '702',
+          timestamp: DateTime(2026, 9, 1),
+        ),
+        BalanceHistoryLocal(
+          id: 'supplier_sub_payment',
+          parentId: supplierId,
+          parentType: 'supplier',
+          enteredBalance: 900.0,
+          type: 'buying_payment',
+          invoiceId: 'sub_buying_702',
+          invoiceNumber: '702',
+          timestamp: DateTime(2026, 9, 1),
+        ),
+      ]) {
+        await BalanceHistoryRepository.instance.upsertLocal(entry);
+      }
+
+      final history =
+          BalanceHistoryRepository.instance.getForSupplier(supplierId);
+      expect(history.where((entry) => entry.type == 'buying'), hasLength(1));
+      expect(
+        history.where((entry) => entry.type == 'buying_payment'),
+        hasLength(1),
+      );
+      expect(
+        BalanceHistoryRepository.instance.calculateSupplierBalance(supplierId),
+        760.0,
+      );
+    });
+
+    test('treats a supplier voucher without a direction as a payment',
+        () async {
+      const supplierId = 'supplier_voucher_direction';
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: 'supplier_addition',
+          parentId: supplierId,
+          parentType: 'supplier',
+          enteredBalance: 500.0,
+          type: 'addition',
+          timestamp: DateTime(2026, 9, 2),
+        ),
+      );
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: 'supplier_payment',
+          parentId: supplierId,
+          parentType: 'supplier',
+          enteredBalance: 125.0,
+          type: 'voucher',
+          timestamp: DateTime(2026, 9, 3),
+        ),
+      );
+
+      expect(
+        BalanceHistoryRepository.instance.calculateSupplierBalance(supplierId),
+        375.0,
       );
     });
   });
@@ -439,6 +616,12 @@ void main() {
       expect(decoded['clientId'], 'client123');
       expect(decoded['amount'], 250.5);
       expect(decoded['isAddition'], true);
+    });
+  });
+
+  group('BatchSyncEngine', () {
+    test('singleton is available for queued sync processing', () {
+      expect(BatchSyncEngine.instance.isRunning, isFalse);
     });
   });
 }

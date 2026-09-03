@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/box_repository.dart';
@@ -7,7 +6,6 @@ import '../sync/connectivity_service.dart';
 import 'invoice_number_utils.dart';
 import 'invoice_special_service.dart';
 import 'invoice_stock_service.dart';
-import 'sales_invoice_actions_service.dart';
 
 /// Updates an existing sales invoice locally in Hive first, then syncs to Firestore in background.
 class SalesInvoiceUpdateService {
@@ -84,9 +82,11 @@ class SalesInvoiceUpdateService {
     final totalCost =
         InvoiceStockService.computeCostTotal(newProducts, catalog);
     final profitMargin = totalSumFinal - totalCost;
-    final newBalance = totalSumFinal - paidAmount;
-    final newRemaining = newBalance;
     final previousBalance = invoiceNum(originalInvoice['previousBalance']);
+    final newRemaining = totalSumFinal - paidAmount;
+    final runningBalanceAfterInvoice = previousBalance + newRemaining;
+    final syncOperationId =
+        'sales_edit_${rootInvoiceId}_${DateTime.now().microsecondsSinceEpoch}';
 
     final rootUpdate = <String, dynamic>{
       'id': rootInvoiceId,
@@ -98,7 +98,8 @@ class SalesInvoiceUpdateService {
       'totalSum': totalSumFinal,
       'profitMargin': profitMargin,
       'paidAmount': paidAmount,
-      'balance': newBalance,
+      'balance': runningBalanceAfterInvoice,
+      'invoiceRemaining': newRemaining,
       'previousBalance': previousBalance,
       'paymentMethod': paymentMethod,
       'notes': notes,
@@ -114,7 +115,8 @@ class SalesInvoiceUpdateService {
     if (oldClient == clientName && newClientId != null) {
       final currentBal = localNewClient?.balance ?? 0.0;
       final updatedBal = currentBal - oldRemaining + newRemaining;
-      await ClientRepository.instance.updateLocalBalance(newClientId, updatedBal);
+      await ClientRepository.instance
+          .updateLocalBalance(newClientId, updatedBal);
     } else {
       if (oldClientId != null && localOldClient != null) {
         await ClientRepository.instance.updateLocalBalance(
@@ -141,130 +143,18 @@ class SalesInvoiceUpdateService {
       operationType: 'editInvoice',
       payload: {
         'clientId': newClientId ?? '',
+        'oldClientId': oldClientId ?? '',
+        'clientSubInvoiceDocId': clientSubInvoiceDocId ?? '',
         'invoiceId': rootInvoiceId,
+        'sourceCollection': collection,
         'updateData': rootUpdate,
         'oldProducts': oldProducts,
         'newProducts': newProducts,
+        'oldPaidAmount': oldPaid,
+        'paidAmount': paidAmount,
+        'syncOperationId': syncOperationId,
       },
     );
-
-    // 5. If online, also execute direct Firestore write in background safely
-    try {
-      final rootRef =
-          FirebaseFirestore.instance.collection(collection).doc(rootInvoiceId);
-      await rootRef.update(rootUpdate);
-
-      final clientSubFields = <String, dynamic>{
-        'invoiceId': rootInvoiceId,
-        'invoiceNumber': invoiceNumber,
-        'clientId': newClientId,
-        'date': selectedDate,
-        'totalSum': totalSumFinal,
-        'paidAmount': paidAmount,
-        'balance': newBalance,
-        'previousBalance': previousBalance,
-        'paymentMethod': paymentMethod,
-        'notes': notes,
-        'invoiceDiscount': effectiveDiscountAmt,
-        'products': newProducts,
-      };
-
-      DocumentReference<Map<String, dynamic>>? oldSubRef;
-      if (clientSubInvoiceDocId != null &&
-          clientSubInvoiceDocId.isNotEmpty &&
-          oldClientId != null) {
-        oldSubRef = FirebaseFirestore.instance
-            .collection('clients')
-            .doc(oldClientId)
-            .collection('invoices')
-            .doc(clientSubInvoiceDocId);
-      } else if (oldClientId != null) {
-        final found = await SalesInvoiceActionsService.findClientSubInvoice(
-          clientId: oldClientId,
-          rootInvoiceId: rootInvoiceId,
-        );
-        if (found != null) {
-          oldSubRef = found.reference;
-        }
-      }
-
-      if (oldClient == clientName) {
-        if (oldSubRef != null) {
-          final subSnap = await oldSubRef.get();
-          if (subSnap.exists) {
-            await oldSubRef.update(clientSubFields);
-          } else {
-            await FirebaseFirestore.instance
-                .collection('clients')
-                .doc(newClientId)
-                .collection('invoices')
-                .add(clientSubFields);
-          }
-        } else {
-          await FirebaseFirestore.instance
-              .collection('clients')
-              .doc(newClientId)
-              .collection('invoices')
-              .add(clientSubFields);
-        }
-      } else {
-        if (oldSubRef != null && (await oldSubRef.get()).exists) {
-          await oldSubRef.delete();
-        }
-        await FirebaseFirestore.instance
-            .collection('clients')
-            .doc(newClientId)
-            .collection('invoices')
-            .add(clientSubFields);
-      }
-
-      if (oldClientId != null) {
-        final oldClientRef =
-            FirebaseFirestore.instance.collection('clients').doc(oldClientId);
-        final oldSnap = await oldClientRef.get();
-        if (oldSnap.exists) {
-          final current = invoiceNum(oldSnap.data()?['balance']);
-          if (oldClient == clientName) {
-            await oldClientRef.update({
-              'balance': current - oldRemaining + newRemaining,
-            });
-          } else {
-            await oldClientRef.update({'balance': current - oldRemaining});
-          }
-        }
-      }
-
-      if (newClientId != null && oldClient != clientName) {
-        final newClientRef =
-            FirebaseFirestore.instance.collection('clients').doc(newClientId);
-        final newSnap = await newClientRef.get();
-        final newCurrent =
-            newSnap.exists ? invoiceNum(newSnap.data()?['balance']) : 0.0;
-        await newClientRef.set({
-          'clientName': clientName,
-          'balance': newCurrent + newRemaining,
-          'id': newClientId,
-        }, SetOptions(merge: true));
-      }
-
-      if (paidDelta.abs() > 0.001) {
-        final boxDocRef =
-            FirebaseFirestore.instance.collection('box').doc('mainBox');
-        await boxDocRef.set(
-          {'value': FieldValue.increment(paidDelta)},
-          SetOptions(merge: true),
-        );
-        await boxDocRef.collection('changes').add({
-          'date': FieldValue.serverTimestamp(),
-          'value': paidDelta,
-          'type': paidDelta >= 0 ? 'addition' : 'subtraction',
-          'name': clientName,
-          'invoiceNumber': invoiceNumber,
-        });
-      }
-    } catch (_) {
-      // Offline / network failure - already queued for sync
-    }
 
     ConnectivityService.instance.forceSync();
   }

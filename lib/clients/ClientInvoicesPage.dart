@@ -279,8 +279,14 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                 ClientRepository.instance.findByName(
                   _clientName ?? widget.clientId,
                 );
+        final ledgerBalance = localClient != null
+            ? BalanceHistoryRepository.instance.calculateClientBalance(
+                localClient.id,
+                fallback: localClient.balance,
+              )
+            : _currentClientBalance ?? 0.0;
         setState(() {
-          _currentClientBalance = localClient?.balance ?? 0.0;
+          _currentClientBalance = ledgerBalance;
           _invoices = localSales
               .map((inv) => _ItemDoc(id: inv.id, data: inv.toMap()))
               .toList();
@@ -337,7 +343,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
     final isAddition = addText.isNotEmpty;
     final valueText = isAddition ? addText : deductText;
-    double enteredBalance = double.tryParse(valueText) ?? 0.0;
+    double enteredBalance = invoiceTryParseAmount(valueText) ?? 0.0;
 
     if (enteredBalance <= 0) {
       ScaffoldMessenger.of(context).showSnackBar(
@@ -350,7 +356,10 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       // 1. Get current balance from local Hive immediately
       final clientLocal = ClientRepository.instance.getById(widget.clientId);
       final double currentBalance =
-          clientLocal?.balance ?? _currentClientBalance ?? 0.0;
+          BalanceHistoryRepository.instance.calculateClientBalance(
+        widget.clientId,
+        fallback: clientLocal?.balance ?? _currentClientBalance ?? 0.0,
+      );
 
       final double newBalance = isAddition
           ? currentBalance + enteredBalance
@@ -1241,8 +1250,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       final localClient = ClientRepository.instance.getById(widget.clientId) ??
           ClientRepository.instance.findByName(_clientName ?? widget.clientId);
       if (localClient != null) {
-        await ClientRepository.instance
-            .updateLocalBalance(localClient.id, localClient.balance + balanceDiff);
+        await ClientRepository.instance.updateLocalBalance(
+            localClient.id, localClient.balance + balanceDiff);
       }
 
       // 5. Enqueue return deletion to SyncQueue
@@ -2011,9 +2020,11 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     // 1. Read directly from local Hive (0ms)
     final local = ClientRepository.instance.getById(widget.clientId) ??
         ClientRepository.instance.findByName(widget.clientId);
+    double? localLedgerBalance;
     if (local != null && mounted) {
       final ledgerBalance = BalanceHistoryRepository.instance
           .calculateClientBalance(local.id, fallback: local.balance);
+      localLedgerBalance = ledgerBalance;
       setState(() {
         _clientName = local.name;
         _currentClientBalance = ledgerBalance;
@@ -2047,8 +2058,11 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
             final Map<String, dynamic> localData =
                 Map<String, dynamic>.from(data);
             localData['clientName'] = resolvedName;
-            // Always keep the local Hive balance, not the Firestore one
-            final localBalance = local?.balance ?? _currentClientBalance ?? 0.0;
+            // Always keep the local Hive ledger balance, not the Firestore one
+            final localBalance = localLedgerBalance ??
+                _currentClientBalance ??
+                local?.balance ??
+                0.0;
             localData['balance'] = localBalance;
             await ClientRepository.instance
                 .upsertLocal(widget.clientId, localData);
@@ -2350,7 +2364,8 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
                 const SizedBox(height: 6),
                 Container(
                   width: double.infinity,
-                  padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+                  padding:
+                      EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
                   decoration: BoxDecoration(
                     color: Colors.orange.shade50,
                     borderRadius: BorderRadius.circular(6.r),
@@ -2737,8 +2752,8 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     //    Balance persistence is handled exclusively by write operations (save invoice,
     //    save payment, syncForClient, etc.).
 
-    // 4. Sort descending for display (newest first)
-    final sortedDescending = _sortDocs(sortedAscending);
+    // 4. Display newest first using the same order that produced the balances.
+    final sortedDescending = sortedAscending.reversed.toList();
 
     if (mounted) {
       setState(() {
@@ -2804,22 +2819,37 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
       final typeA = dataA['type']?.toString() ?? '';
       final typeB = dataB['type']?.toString() ?? '';
 
+      if (typeA == 'opening' && typeB != 'opening') return -1;
+      if (typeB == 'opening' && typeA != 'opening') return 1;
+
       final dateA = _parseDocDate(dataA['timestamp'] ?? dataA['date']);
       final dateB = _parseDocDate(dataB['timestamp'] ?? dataB['date']);
 
       if (dateA != null && dateB != null) {
-        final cmp = dateA.compareTo(dateB);
-        if (cmp != 0) return cmp;
+        final dayCmp = _dateOnly(dateA).compareTo(_dateOnly(dateB));
+        if (dayCmp != 0) return dayCmp;
       } else if (dateA != null) {
         return -1;
       } else if (dateB != null) {
         return 1;
       }
 
-      if (typeA == 'opening' && typeB != 'opening') return -1;
-      if (typeB == 'opening' && typeA != 'opening') return 1;
+      final invA = _docInvoiceNumber(dataA);
+      final invB = _docInvoiceNumber(dataB);
+      if (invA > 0 && invB > 0 && invA != invB) {
+        return invA.compareTo(invB);
+      }
 
-      return _typePriorityAscending(typeA).compareTo(_typePriorityAscending(typeB));
+      if (dateA != null && dateB != null) {
+        final timeCmp = dateA.compareTo(dateB);
+        if (timeCmp != 0) return timeCmp;
+      }
+
+      final priorityCmp = _typePriorityAscending(typeA)
+          .compareTo(_typePriorityAscending(typeB));
+      if (priorityCmp != 0) return priorityCmp;
+
+      return a.id.compareTo(b.id);
     });
     return sorted;
   }
@@ -2853,6 +2883,12 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
     return null;
   }
+
+  static DateTime _dateOnly(DateTime value) =>
+      DateTime(value.year, value.month, value.day);
+
+  static int _docInvoiceNumber(Map<String, dynamic> data) =>
+      int.tryParse(data['invoiceNumber']?.toString().trim() ?? '') ?? 0;
 
   static List<_ItemDoc> _sortDocs(List<_ItemDoc> docs) {
     final sorted = List<_ItemDoc>.from(docs);
@@ -3446,14 +3482,15 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
                                         (data['enteredBalance'] as num?)
                                                 ?.toDouble() ??
                                             0.0;
-                                    final before =
-                                        (data['balanceBefore'] as num?)
-                                                ?.toDouble() ??
-                                            0.0;
                                     final isIncrease = _isIncreaseType(type);
-                                    final after = isIncrease
-                                        ? before + entered
-                                        : before - entered;
+                                    final before = doc.computedBefore ??
+                                        (data['balanceBefore'] as num?)
+                                            ?.toDouble() ??
+                                        0.0;
+                                    final after = doc.computedAfter ??
+                                        (isIncrease
+                                            ? before + entered
+                                            : before - entered);
                                     final sign = isIncrease ? '+' : '-';
                                     final color =
                                         _colorForType(type, isIncrease);
