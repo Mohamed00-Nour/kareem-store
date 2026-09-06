@@ -19,6 +19,7 @@ import 'package:kareem_store/repositories/box_repository.dart';
 import 'package:kareem_store/repositories/balance_history_repository.dart';
 import 'package:kareem_store/Services/invoice_number_utils.dart';
 import 'package:kareem_store/sync/batch_sync_engine.dart';
+import 'package:kareem_store/sync/invoice_sync_normalizer.dart';
 
 /// Helper: initialise Hive in a temp directory for tests.
 Future<void> initTestHive() async {
@@ -165,6 +166,46 @@ void main() {
   // ── InvoiceLocal & InvoiceRepository ────────────────────────────────────
 
   group('InvoiceLocal & InvoiceRepository', () {
+    test('parses numeric strings from Firestore safely', () {
+      final invoice = InvoiceLocal.fromFirestore('string_invoice', {
+        'invoiceNumber': '42',
+        'date': '2026-09-05T10:00:00.000',
+        'totalSum': '1660.5',
+        'paidAmount': '900',
+        'balance': '760.5',
+        'previousBalance': '25',
+        'profitMargin': '310.25',
+        'invoiceDiscount': '10',
+        'products': [
+          {
+            'amount': '2',
+            'quantity': '2.5',
+            'qty': '3',
+            'cost': '40',
+            'costPrice': '41',
+            'selectedPrice': '50',
+            'total': '100',
+            'totalCost': '80',
+            'newCostPrice': '42',
+            'newSellingPrice1': '55',
+            'newSellingPrice2': '54',
+            'newSellingPrice3': '53',
+          },
+        ],
+      });
+
+      expect(invoice.invoiceNumber, 42);
+      expect(invoice.totalSum, 1660.5);
+      expect(invoice.paidAmount, 900);
+      expect(invoice.balance, 760.5);
+      expect(invoice.previousBalance, 25);
+      expect(invoice.profitMargin, 310.25);
+      expect(invoice.invoiceDiscount, 10);
+      for (final field in productLineSyncNumericFields) {
+        expect(invoice.products.single[field], isA<double>());
+      }
+    });
+
     test('Stores and retrieves sales invoices locally', () async {
       final invoice = InvoiceLocal(
         id: 'inv_test_1',
@@ -583,6 +624,35 @@ void main() {
       expect(item!.status, 'pending');
     });
 
+    test('recovers interrupted syncing items without deleting them', () async {
+      final id = await SyncQueueManager.instance.enqueue(
+        operationType: 'createInvoice',
+        payload: {'invoiceId': 'interrupted'},
+      );
+      await SyncQueueManager.instance.markSyncing(id);
+
+      expect(SyncQueueManager.instance.hasUnfinished, isTrue);
+      await SyncQueueManager.instance.recoverInterruptedItems();
+
+      final item = syncQueueBox.get(id)!;
+      expect(item.status, 'pending');
+      expect(syncQueueBox.containsKey(id), isTrue);
+    });
+
+    test('manual retry resets failed status, error, and retry count', () async {
+      final id = await SyncQueueManager.instance.enqueue(
+        operationType: 'createInvoice',
+        payload: {'invoiceId': 'failed'},
+      );
+      await SyncQueueManager.instance.markFailed(id, 'temporary failure');
+      await SyncQueueManager.instance.resetFailedItems();
+
+      final item = syncQueueBox.get(id)!;
+      expect(item.status, 'pending');
+      expect(item.retryCount, 0);
+      expect(item.lastError, isNull);
+    });
+
     test('getPending orders items by createdAt ascending', () async {
       await SyncQueueManager.instance.enqueue(
         operationType: 'createInvoice',
@@ -622,6 +692,46 @@ void main() {
   group('BatchSyncEngine', () {
     test('singleton is available for queued sync processing', () {
       expect(BatchSyncEngine.instance.isRunning, isFalse);
+    });
+  });
+
+  group('Invoice sync normalization', () {
+    test('normalizes invoice and nested product numeric strings', () {
+      final normalized = normalizeInvoiceForSync({
+        'invoiceNumber': '104.0',
+        'totalSum': '1,660.50',
+        'paidAmount': '900',
+        'balance': '760.5',
+        'previousBalance': '25',
+        'invoiceDiscount': '10',
+        'profitMargin': '300.25',
+        'products': [
+          {
+            'amount': '2',
+            'quantity': '2.5',
+            'qty': '3',
+            'cost': '40',
+            'costPrice': '41',
+            'selectedPrice': '50',
+            'total': '100',
+            'totalCost': '80',
+            'newCostPrice': '42',
+            'newSellingPrice1': '55',
+            'newSellingPrice2': '54',
+            'newSellingPrice3': '53',
+          },
+        ],
+      });
+
+      expect(normalized['invoiceNumber'], 104);
+      expect(normalized['totalSum'], 1660.5);
+      for (final field in invoiceSyncNumericFields) {
+        expect(normalized[field], isA<double>());
+      }
+      final product = (normalized['products'] as List).single as Map;
+      for (final field in productLineSyncNumericFields) {
+        expect(product[field], isA<double>());
+      }
     });
   });
 }

@@ -8,6 +8,7 @@ import '../repositories/supplier_repository.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/client_invoice_balance_sync_service.dart';
 import 'sync_queue_manager.dart';
+import 'invoice_sync_normalizer.dart';
 
 /// Processes the [SyncQueueManager] queue and uploads operations to Firestore.
 ///
@@ -36,6 +37,7 @@ class BatchSyncEngine {
     if (_isRunning) return;
     _isRunning = true;
     try {
+      await SyncQueueManager.instance.recoverInterruptedItems();
       final pending = SyncQueueManager.instance.getPending();
       for (final item in pending) {
         if (item.retryCount >= _maxRetries) {
@@ -55,7 +57,7 @@ class BatchSyncEngine {
     await SyncQueueManager.instance.markSyncing(item.operationId);
     try {
       final payload = SyncQueueManager.decodePayload(item);
-      await _dispatch(item.operationType, payload);
+      await _dispatch(item.operationType, payload, item.operationId);
       await SyncQueueManager.instance.markSynced(item.operationId);
       _updateLastSyncMeta(item.operationType);
     } catch (e) {
@@ -117,23 +119,22 @@ class BatchSyncEngine {
         product['quantity'] ??
         product['count'] ??
         product['qty'];
-    if (val is num) return val.toDouble();
-    return double.tryParse(val?.toString() ?? '') ?? 0.0;
+    return syncDouble(val);
   }
 
   // ── Operation Dispatcher ──────────────────────────────────────────────────
 
-  Future<void> _dispatch(
-      String operationType, Map<String, dynamic> payload) async {
+  Future<void> _dispatch(String operationType, Map<String, dynamic> payload,
+      String operationId) async {
     switch (operationType) {
       case 'createInvoice':
         await _syncCreateInvoice(payload);
         break;
       case 'editInvoice':
-        await _syncEditInvoice(payload);
+        await _syncEditInvoice(payload, operationId);
         break;
       case 'deleteInvoice':
-        await _syncDeleteInvoice(payload);
+        await _syncDeleteInvoice(payload, operationId);
         break;
       case 'adjustClientBalance':
         await _syncAdjustClientBalance(payload);
@@ -155,7 +156,7 @@ class BatchSyncEngine {
         break;
       case 'deleteReturn':
       case 'deleteReturnInvoice':
-        await _syncDeleteReturn(payload);
+        await _syncDeleteReturn(payload, operationId);
         break;
       case 'createQuote':
         await _syncCreateQuote(payload);
@@ -167,10 +168,10 @@ class BatchSyncEngine {
         await _syncCreateBuyingInvoice(payload);
         break;
       case 'editBuyingInvoice':
-        await _syncEditBuyingInvoice(payload);
+        await _syncEditBuyingInvoice(payload, operationId);
         break;
       case 'deleteBuyingInvoice':
-        await _syncDeleteBuyingInvoice(payload);
+        await _syncDeleteBuyingInvoice(payload, operationId);
         break;
       case 'createClient':
         await _syncCreateClient(payload);
@@ -206,15 +207,17 @@ class BatchSyncEngine {
   /// - Cash box update if paidAmount > 0
   Future<void> _syncCreateInvoice(Map<String, dynamic> payload) async {
     final batch = _fs.batch();
-    final String clientId = payload['clientId'];
-    final String invoiceId = payload['invoiceId'];
+    final String clientId = payload['clientId']?.toString() ?? '';
+    final String invoiceId = payload['invoiceId']?.toString() ?? '';
     final Map<String, dynamic> invoiceData =
-        Map<String, dynamic>.from(payload['invoiceData']);
-    final List<dynamic> products = payload['products'] ?? [];
-    final double totalSum = (payload['totalSum'] as num).toDouble();
-    final double paidAmount = (payload['paidAmount'] as num).toDouble();
-    final int invoiceNumber =
-        (invoiceData['invoiceNumber'] as num?)?.toInt() ?? 0;
+        normalizeInvoiceForSync(payload['invoiceData'] as Map? ?? {});
+    final List<dynamic> products =
+        normalizeProductLinesForSync(payload['products']);
+    final double totalSum =
+        syncDouble(payload['totalSum'] ?? invoiceData['totalSum']);
+    final double paidAmount =
+        syncDouble(payload['paidAmount'] ?? invoiceData['paidAmount']);
+    final int invoiceNumber = syncInt(invoiceData['invoiceNumber']);
     final String clientName = invoiceData['clientName']?.toString() ?? '';
 
     // Convert ISO date string back to DateTime for Firestore
@@ -269,8 +272,7 @@ class BatchSyncEngine {
           .doc('${invoiceId}_sale');
       batch.set(histRef1, {
         'enteredBalance': totalSum,
-        'balanceBefore':
-            (invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0,
+        'balanceBefore': syncDouble(invoiceData['previousBalance']),
         'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
         'type': 'sale',
         'invoiceId': invoiceId,
@@ -286,8 +288,7 @@ class BatchSyncEngine {
         batch.set(histRef2, {
           'enteredBalance': paidAmount,
           'balanceBefore':
-              ((invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0) +
-                  totalSum,
+              syncDouble(invoiceData['previousBalance']) + totalSum,
           'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
           'type': 'sale_payment',
           'invoiceId': invoiceId,
@@ -343,7 +344,8 @@ class BatchSyncEngine {
     }
   }
 
-  Future<void> _syncEditInvoice(Map<String, dynamic> payload) async {
+  Future<void> _syncEditInvoice(
+      Map<String, dynamic> payload, String queueOperationId) async {
     final clientId = payload['clientId']?.toString() ?? '';
     final oldClientId = payload['oldClientId']?.toString() ?? clientId;
     final clientSubDocId = payload['clientSubInvoiceDocId']?.toString() ?? '';
@@ -357,20 +359,17 @@ class BatchSyncEngine {
             ? 'returnInvoices'
             : 'invoices';
     final updateData =
-        Map<String, dynamic>.from(payload['updateData'] as Map? ?? {});
-    final oldProducts = payload['oldProducts'] as List? ?? [];
-    final newProducts = payload['newProducts'] as List? ?? [];
+        normalizeInvoiceForSync(payload['updateData'] as Map? ?? {});
+    final oldProducts = normalizeProductLinesForSync(payload['oldProducts']);
+    final newProducts = normalizeProductLinesForSync(payload['newProducts']);
     final hasPaidDelta = payload.containsKey('oldPaidAmount') &&
         payload.containsKey('paidAmount');
-    final oldPaidAmount = (payload['oldPaidAmount'] as num?)?.toDouble() ?? 0.0;
-    final newPaidAmount = (payload['paidAmount'] as num?)?.toDouble() ??
-        (updateData['paidAmount'] as num?)?.toDouble() ??
-        0.0;
+    final oldPaidAmount = syncDouble(payload['oldPaidAmount']);
+    final newPaidAmount =
+        syncDouble(payload['paidAmount'] ?? updateData['paidAmount']);
     final rawOperationId = payload['syncOperationId']?.toString().trim() ?? '';
-    final operationId = rawOperationId.isNotEmpty
-        ? rawOperationId
-        : '$invoiceId-${updateData['totalSum']}-$newPaidAmount-${updateData['date']}'
-            .replaceAll('/', '_');
+    final operationId =
+        rawOperationId.isNotEmpty ? rawOperationId : queueOperationId;
     final markerRef =
         _fs.collection('_sync_operations').doc('edit_invoice_$operationId');
 
@@ -497,15 +496,38 @@ class BatchSyncEngine {
     }
   }
 
-  Future<void> _syncDeleteInvoice(Map<String, dynamic> payload) async {
+  Future<void> _syncDeleteInvoice(
+      Map<String, dynamic> payload, String queueOperationId) async {
     final String clientId = payload['clientId']?.toString() ?? '';
     final String invoiceId = payload['invoiceId']?.toString() ?? '';
     final String clientSubDocId =
         payload['clientSubDocId']?.toString() ?? invoiceId;
-    final List<dynamic> products = payload['products'] as List? ?? [];
-    final double totalSum = (payload['totalSum'] as num?)?.toDouble() ?? 0.0;
-    final double paidAmount =
-        (payload['paidAmount'] as num?)?.toDouble() ?? 0.0;
+    final List<dynamic> products =
+        normalizeProductLinesForSync(payload['products']);
+    final double totalSum = syncDouble(payload['totalSum']);
+    final double paidAmount = syncDouble(payload['paidAmount']);
+
+    final markerRef = _fs
+        .collection('_sync_operations')
+        .doc('delete_invoice_$queueOperationId');
+    if ((await markerRef.get()).exists) {
+      if (clientId.isNotEmpty) {
+        await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+      }
+      return;
+    }
+
+    final rootRef = _fs.collection('invoices').doc(invoiceId);
+    final subRef = clientId.isNotEmpty && clientSubDocId.isNotEmpty
+        ? _fs
+            .collection('clients')
+            .doc(clientId)
+            .collection('invoices')
+            .doc(clientSubDocId)
+        : null;
+    final rootExists = invoiceId.isNotEmpty && (await rootRef.get()).exists;
+    final subExists = subRef != null && (await subRef.get()).exists;
+    if (!rootExists && !subExists) return;
 
     final batch = _fs.batch();
 
@@ -608,6 +630,12 @@ class BatchSyncEngine {
       );
     }
 
+    batch.set(markerRef, {
+      'type': 'deleteInvoice',
+      'invoiceId': invoiceId,
+      'appliedAt': FieldValue.serverTimestamp(),
+    });
+
     await batch.commit();
 
     if (clientId.isNotEmpty) {
@@ -617,7 +645,7 @@ class BatchSyncEngine {
 
   Future<void> _syncAdjustClientBalance(Map<String, dynamic> payload) async {
     final String clientId = payload['clientId'];
-    final double amount = (payload['amount'] as num).toDouble();
+    final double amount = syncDouble(payload['amount']);
     final bool isAddition = payload['isAddition'] == true;
     final Map<String, dynamic> logEntry =
         Map<String, dynamic>.from(payload['logEntry']);
@@ -667,7 +695,7 @@ class BatchSyncEngine {
 
   Future<void> _syncAdjustSupplierBalance(Map<String, dynamic> payload) async {
     final String supplierId = payload['supplierId'];
-    final double amount = (payload['amount'] as num).toDouble();
+    final double amount = syncDouble(payload['amount']);
     final bool isAddition = payload['isAddition'] == true;
     final Map<String, dynamic> logEntry =
         Map<String, dynamic>.from(payload['logEntry']);
@@ -782,13 +810,16 @@ class BatchSyncEngine {
   /// - Cash box update
   Future<void> _syncCreateReturn(Map<String, dynamic> payload) async {
     final batch = _fs.batch();
-    final String clientId = payload['clientId'];
-    final String invoiceId = payload['invoiceId'];
+    final String clientId = payload['clientId']?.toString() ?? '';
+    final String invoiceId = payload['invoiceId']?.toString() ?? '';
     final Map<String, dynamic> invoiceData =
-        Map<String, dynamic>.from(payload['invoiceData']);
-    final List<dynamic> products = payload['products'] ?? [];
-    final double totalSum = (payload['totalSum'] as num).toDouble();
-    final double paidAmount = (payload['paidAmount'] as num).toDouble();
+        normalizeInvoiceForSync(payload['invoiceData'] as Map? ?? {});
+    final List<dynamic> products =
+        normalizeProductLinesForSync(payload['products']);
+    final double totalSum =
+        syncDouble(payload['totalSum'] ?? invoiceData['totalSum']);
+    final double paidAmount =
+        syncDouble(payload['paidAmount'] ?? invoiceData['paidAmount']);
 
     // Convert ISO date string back to DateTime for Firestore
     if (invoiceData['date'] is String) {
@@ -798,6 +829,12 @@ class BatchSyncEngine {
 
     // 1. Write the return invoice document.
     final invoiceRef = _fs.collection('returnInvoices').doc(invoiceId);
+    if ((await invoiceRef.get()).exists) {
+      if (clientId.isNotEmpty) {
+        await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+      }
+      return;
+    }
     batch.set(invoiceRef, invoiceData, SetOptions(merge: true));
 
     // 2. Restore stock for each product (atomic — safe for multi-device).
@@ -835,8 +872,7 @@ class BatchSyncEngine {
     );
 
     // 5. Balance history log entries with deterministic IDs
-    final int invoiceNumber =
-        (invoiceData['invoiceNumber'] as num?)?.toInt() ?? 0;
+    final int invoiceNumber = syncInt(invoiceData['invoiceNumber']);
     final histRef1 = _fs
         .collection('clients')
         .doc(clientId)
@@ -844,8 +880,7 @@ class BatchSyncEngine {
         .doc('${invoiceId}_return');
     batch.set(histRef1, {
       'enteredBalance': totalSum,
-      'balanceBefore':
-          (invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0,
+      'balanceBefore': syncDouble(invoiceData['previousBalance']),
       'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
       'type': 'return',
       'invoiceId': invoiceId,
@@ -860,9 +895,7 @@ class BatchSyncEngine {
           .doc('${invoiceId}_return_pay');
       batch.set(histRef2, {
         'enteredBalance': paidAmount,
-        'balanceBefore':
-            ((invoiceData['previousBalance'] as num?)?.toDouble() ?? 0.0) -
-                totalSum,
+        'balanceBefore': syncDouble(invoiceData['previousBalance']) - totalSum,
         'timestamp': invoiceData['date'] ?? FieldValue.serverTimestamp(),
         'type': 'return_payment',
         'invoiceId': invoiceId,
@@ -886,15 +919,38 @@ class BatchSyncEngine {
   }
 
   /// Syncs a deleted return invoice back to Firestore.
-  Future<void> _syncDeleteReturn(Map<String, dynamic> payload) async {
+  Future<void> _syncDeleteReturn(
+      Map<String, dynamic> payload, String queueOperationId) async {
     final String clientId = payload['clientId']?.toString() ?? '';
     final String invoiceId = payload['invoiceId']?.toString() ?? '';
     final String clientSubDocId =
         payload['clientSubDocId']?.toString() ?? invoiceId;
-    final List<dynamic> products = payload['products'] as List? ?? [];
-    final double totalSum = (payload['totalSum'] as num?)?.toDouble() ?? 0.0;
-    final double paidAmount =
-        (payload['paidAmount'] as num?)?.toDouble() ?? 0.0;
+    final List<dynamic> products =
+        normalizeProductLinesForSync(payload['products']);
+    final double totalSum = syncDouble(payload['totalSum']);
+    final double paidAmount = syncDouble(payload['paidAmount']);
+
+    final markerRef = _fs
+        .collection('_sync_operations')
+        .doc('delete_return_$queueOperationId');
+    if ((await markerRef.get()).exists) {
+      if (clientId.isNotEmpty) {
+        await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+      }
+      return;
+    }
+
+    final rootRef = _fs.collection('returnInvoices').doc(invoiceId);
+    final subRef = clientId.isNotEmpty && clientSubDocId.isNotEmpty
+        ? _fs
+            .collection('clients')
+            .doc(clientId)
+            .collection('returnInvoices')
+            .doc(clientSubDocId)
+        : null;
+    final rootExists = invoiceId.isNotEmpty && (await rootRef.get()).exists;
+    final subExists = subRef != null && (await subRef.get()).exists;
+    if (!rootExists && !subExists) return;
 
     final batch = _fs.batch();
 
@@ -999,6 +1055,12 @@ class BatchSyncEngine {
       );
     }
 
+    batch.set(markerRef, {
+      'type': 'deleteReturn',
+      'invoiceId': invoiceId,
+      'appliedAt': FieldValue.serverTimestamp(),
+    });
+
     await batch.commit();
 
     if (clientId.isNotEmpty) {
@@ -1025,16 +1087,20 @@ class BatchSyncEngine {
   }
 
   /// Syncs an offline-created buying invoice to Firestore.
-  Future<void> _syncCreateBuyingInvoice(Map<String, dynamic> payload) async {
-    final String supplierId = payload['supplierId'] ?? '';
-    final String supplierName = payload['supplierName'] ?? '';
-    final String invoiceId = payload['invoiceId'];
+  Future<void> _syncCreateBuyingInvoice(
+    Map<String, dynamic> payload, {
+    DocumentReference<Map<String, dynamic>>? markerRef,
+  }) async {
+    final String supplierId = payload['supplierId']?.toString() ?? '';
+    final String supplierName = payload['supplierName']?.toString() ?? '';
+    final String invoiceId = payload['invoiceId']?.toString() ?? '';
     final invoiceRef = _fs.collection('buying invoices').doc(invoiceId);
     final Map<String, dynamic> invoiceData =
-        Map<String, dynamic>.from(payload['invoiceData']);
-    final List<dynamic> products = payload['products'] ?? [];
+        normalizeInvoiceForSync(payload['invoiceData'] as Map? ?? {});
+    final List<dynamic> products =
+        normalizeProductLinesForSync(payload['products']);
     final double paidAmount =
-        (payload['paidAmount'] as num?)?.toDouble() ?? 0.0;
+        syncDouble(payload['paidAmount'] ?? invoiceData['paidAmount']);
 
     if (invoiceData['date'] is String) {
       invoiceData['date'] = DateTime.parse(invoiceData['date'] as String);
@@ -1086,19 +1152,16 @@ class BatchSyncEngine {
           'quantity': FieldValue.increment(qty),
         };
         if (product['newCostPrice'] != null) {
-          updateMap['costPrice'] = (product['newCostPrice'] as num).toDouble();
+          updateMap['costPrice'] = syncDouble(product['newCostPrice']);
         }
         if (product['newSellingPrice1'] != null) {
-          updateMap['sellingPrice1'] =
-              (product['newSellingPrice1'] as num).toDouble();
+          updateMap['sellingPrice1'] = syncDouble(product['newSellingPrice1']);
         }
         if (product['newSellingPrice2'] != null) {
-          updateMap['sellingPrice2'] =
-              (product['newSellingPrice2'] as num).toDouble();
+          updateMap['sellingPrice2'] = syncDouble(product['newSellingPrice2']);
         }
         if (product['newSellingPrice3'] != null) {
-          updateMap['sellingPrice3'] =
-              (product['newSellingPrice3'] as num).toDouble();
+          updateMap['sellingPrice3'] = syncDouble(product['newSellingPrice3']);
         }
         batch.update(pRef, updateMap);
       }
@@ -1114,6 +1177,14 @@ class BatchSyncEngine {
       );
     }
 
+    if (markerRef != null) {
+      batch.set(markerRef, {
+        'type': 'editBuyingInvoice',
+        'invoiceId': invoiceId,
+        'appliedAt': FieldValue.serverTimestamp(),
+      });
+    }
+
     await batch.commit();
 
     if (supplierId.isNotEmpty) {
@@ -1123,7 +1194,8 @@ class BatchSyncEngine {
 
   /// Applies only the differences of a buying-invoice edit. A stable marker is
   /// committed with all changes, so retrying the queue item is a no-op.
-  Future<void> _syncEditBuyingInvoice(Map<String, dynamic> payload) async {
+  Future<void> _syncEditBuyingInvoice(
+      Map<String, dynamic> payload, String queueOperationId) async {
     final supplierId = payload['supplierId']?.toString() ?? '';
     final supplierName = payload['supplierName']?.toString() ?? '';
     final invoiceId = payload['invoiceId']?.toString() ?? '';
@@ -1132,19 +1204,18 @@ class BatchSyncEngine {
     }
 
     final invoiceData =
-        Map<String, dynamic>.from(payload['invoiceData'] as Map? ?? {});
+        normalizeInvoiceForSync(payload['invoiceData'] as Map? ?? {});
     if (invoiceData['date'] is String) {
       invoiceData['date'] = DateTime.parse(invoiceData['date'] as String);
     }
-    final oldProducts = payload['oldProducts'] as List? ?? [];
-    final newProducts = payload['products'] as List? ?? [];
-    final oldPaidAmount = (payload['oldPaidAmount'] as num?)?.toDouble() ?? 0.0;
-    final newPaidAmount = (payload['paidAmount'] as num?)?.toDouble() ?? 0.0;
+    final oldProducts = normalizeProductLinesForSync(payload['oldProducts']);
+    final newProducts = normalizeProductLinesForSync(payload['products']);
+    final oldPaidAmount = syncDouble(payload['oldPaidAmount']);
+    final newPaidAmount =
+        syncDouble(payload['paidAmount'] ?? invoiceData['paidAmount']);
     final rawOperationId = payload['syncOperationId']?.toString().trim() ?? '';
-    final operationId = rawOperationId.isNotEmpty
-        ? rawOperationId
-        : '$invoiceId-${invoiceData['totalSum']}-$newPaidAmount-${invoiceData['date']}'
-            .replaceAll('/', '_');
+    final operationId =
+        rawOperationId.isNotEmpty ? rawOperationId : queueOperationId;
     final markerRef =
         _fs.collection('_sync_operations').doc('edit_buying_$operationId');
 
@@ -1157,11 +1228,12 @@ class BatchSyncEngine {
 
     final rootRef = _fs.collection('buying invoices').doc(invoiceId);
     if (!(await rootRef.get()).exists) {
-      await _syncCreateBuyingInvoice({
+      final createPayload = <String, dynamic>{
         ...payload,
         'products': newProducts,
         'paidAmount': newPaidAmount,
-      });
+      };
+      await _syncCreateBuyingInvoice(createPayload, markerRef: markerRef);
       return;
     }
 
@@ -1226,19 +1298,16 @@ class BatchSyncEngine {
         update['quantity'] = FieldValue.increment(delta);
       }
       if (latest?['newCostPrice'] != null) {
-        update['costPrice'] = (latest!['newCostPrice'] as num).toDouble();
+        update['costPrice'] = syncDouble(latest!['newCostPrice']);
       }
       if (latest?['newSellingPrice1'] != null) {
-        update['sellingPrice1'] =
-            (latest!['newSellingPrice1'] as num).toDouble();
+        update['sellingPrice1'] = syncDouble(latest!['newSellingPrice1']);
       }
       if (latest?['newSellingPrice2'] != null) {
-        update['sellingPrice2'] =
-            (latest!['newSellingPrice2'] as num).toDouble();
+        update['sellingPrice2'] = syncDouble(latest!['newSellingPrice2']);
       }
       if (latest?['newSellingPrice3'] != null) {
-        update['sellingPrice3'] =
-            (latest!['newSellingPrice3'] as num).toDouble();
+        update['sellingPrice3'] = syncDouble(latest!['newSellingPrice3']);
       }
       if (update.isNotEmpty) batch.update(entry.value, update);
     }
@@ -1264,19 +1333,20 @@ class BatchSyncEngine {
   }
 
   /// Syncs a deleted buying invoice back to Firestore.
-  Future<void> _syncDeleteBuyingInvoice(Map<String, dynamic> payload) async {
+  Future<void> _syncDeleteBuyingInvoice(
+      Map<String, dynamic> payload, String queueOperationId) async {
     final String supplierId = payload['supplierId']?.toString() ?? '';
     final String invoiceId = payload['invoiceId']?.toString() ?? '';
     final String supplierSubDocId =
         payload['supplierSubDocId']?.toString() ?? invoiceId;
-    final List<dynamic> products = payload['products'] as List? ?? [];
-    final double paidAmount =
-        (payload['paidAmount'] as num?)?.toDouble() ?? 0.0;
+    final List<dynamic> products =
+        normalizeProductLinesForSync(payload['products']);
+    final double paidAmount = syncDouble(payload['paidAmount']);
 
     final operationId =
         payload['syncOperationId']?.toString().trim().isNotEmpty == true
             ? payload['syncOperationId'].toString().trim()
-            : (invoiceId.isNotEmpty ? invoiceId : supplierSubDocId);
+            : queueOperationId;
     final markerRef =
         _fs.collection('_sync_operations').doc('delete_buying_$operationId');
     if ((await markerRef.get()).exists) {
@@ -1412,8 +1482,7 @@ class BatchSyncEngine {
     final String clientId = payload['clientId'] as String? ?? '';
     final Map<String, dynamic> data =
         Map<String, dynamic>.from(payload['data'] as Map? ?? {});
-    final double openingBalance =
-        (payload['openingBalance'] as num?)?.toDouble() ?? 0.0;
+    final double openingBalance = syncDouble(payload['openingBalance']);
 
     if (clientId.isEmpty) {
       throw ArgumentError('createClient payload missing clientId');
@@ -1463,8 +1532,7 @@ class BatchSyncEngine {
     final String supplierId = payload['supplierId'] as String? ?? '';
     final Map<String, dynamic> data =
         Map<String, dynamic>.from(payload['data'] as Map? ?? {});
-    final double openingBalance =
-        (payload['openingBalance'] as num?)?.toDouble() ?? 0.0;
+    final double openingBalance = syncDouble(payload['openingBalance']);
 
     if (supplierId.isEmpty) {
       throw ArgumentError('createSupplier payload missing supplierId');
@@ -1548,8 +1616,8 @@ class BatchSyncEngine {
 
   // ── Update Box (offline sync) ─────────────────────────────────────────────
   Future<void> _syncUpdateBox(Map<String, dynamic> payload) async {
-    final double changeAmount = (payload['changeAmount'] as num).toDouble();
-    final double value = (payload['value'] as num).toDouble();
+    final double changeAmount = syncDouble(payload['changeAmount']);
+    final double value = syncDouble(payload['value']);
     final String type = payload['type']?.toString() ?? 'addition';
     final String name = payload['name']?.toString() ?? '';
     final DateTime date = payload['date'] != null
@@ -1578,7 +1646,7 @@ class BatchSyncEngine {
   // ── Update Stock (offline sync) ───────────────────────────────────────────
   Future<void> _syncUpdateStock(Map<String, dynamic> payload) async {
     final String productId = payload['productId'];
-    final double delta = (payload['delta'] as num).toDouble();
+    final double delta = syncDouble(payload['delta']);
     final String changeType = payload['changeType']?.toString() ?? 'adjustment';
     final DateTime date = payload['date'] != null
         ? DateTime.parse(payload['date'] as String)

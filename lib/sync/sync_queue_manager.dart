@@ -51,7 +51,6 @@ class SyncQueueManager {
     return nonEncodable.toString();
   }
 
-
   // ── Read ──────────────────────────────────────────────────────────────────
 
   bool get _isBoxReady => Hive.isBoxOpen(HiveBoxNames.syncQueue);
@@ -77,6 +76,16 @@ class SyncQueueManager {
 
   /// True when there are items waiting to be synced.
   bool get hasPending => pendingCount > 0;
+
+  /// True for every state that still requires work. In particular, a stale
+  /// `syncing` item must keep connectivity polling alive until it is recovered.
+  bool get hasUnfinished {
+    if (!_isBoxReady) return false;
+    return syncQueueBox.values.any((item) =>
+        item.status == 'pending' ||
+        item.status == 'failed' ||
+        item.status == 'syncing');
+  }
 
   /// True when there are operations currently being uploaded.
   bool get hasSyncingItems {
@@ -119,6 +128,32 @@ class SyncQueueManager {
     final item = syncQueueBox.get(operationId);
     if (item != null) {
       item.status = 'pending';
+      await item.save();
+    }
+  }
+
+  /// Recovers uploads interrupted by an app/process shutdown.
+  Future<void> recoverInterruptedItems() async {
+    if (!_isBoxReady) return;
+    final interrupted = syncQueueBox.values
+        .where((item) => item.status == 'syncing')
+        .toList(growable: false);
+    for (final item in interrupted) {
+      item.status = 'pending';
+      await item.save();
+    }
+  }
+
+  /// Manual retry starts failed operations with a fresh retry budget.
+  Future<void> resetFailedItems() async {
+    if (!_isBoxReady) return;
+    final failed = syncQueueBox.values
+        .where((item) => item.status == 'failed')
+        .toList(growable: false);
+    for (final item in failed) {
+      item.status = 'pending';
+      item.retryCount = 0;
+      item.lastError = null;
       await item.save();
     }
   }

@@ -37,14 +37,13 @@ class ConnectivityService {
     _subscription?.cancel();
     _periodicTimer?.cancel();
 
-    _subscription = Connectivity()
-        .onConnectivityChanged
-        .listen(_onConnectivityChanged);
+    _subscription =
+        Connectivity().onConnectivityChanged.listen(_onConnectivityChanged);
 
     // Periodic check — every 5 s when there are pending items, otherwise every 30 s.
     // This ensures a freshly enqueued item is always picked up quickly.
     _periodicTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (SyncQueueManager.instance.hasPending) {
+      if (SyncQueueManager.instance.hasUnfinished) {
         _checkAndSync();
       }
     });
@@ -95,7 +94,7 @@ class ConnectivityService {
 
         if (hasNetwork) {
           _setOnline(true);
-          if (SyncQueueManager.instance.hasPending) {
+          if (SyncQueueManager.instance.hasUnfinished) {
             await BatchSyncEngine.instance.processQueue();
           }
         } else {
@@ -121,6 +120,7 @@ class ConnectivityService {
   /// If a check is already running, the sync is guaranteed to execute once the
   /// current check finishes (no silent drop).
   Future<void> forceSync() async {
+    await SyncQueueManager.instance.resetFailedItems();
     if (_isChecking) {
       // Signal that a full re-run is needed after the current check finishes.
       _pendingForce = true;

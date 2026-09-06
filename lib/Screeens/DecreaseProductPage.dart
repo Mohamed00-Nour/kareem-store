@@ -1041,13 +1041,16 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         : invoiceDiscount;
     final totalAfterPaymentValidation =
         totalBeforePaymentValidation - discountForPaymentValidation;
+    final bool isDeferredSale =
+        !widget.isReturnInvoice && paymentMethod == 'آجل';
     if (effectivePaid < -0.001) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('المبلغ المدفوع لا يمكن أن يكون سالب')),
       );
       return;
     }
-    if (effectivePaid - totalAfterPaymentValidation > 0.001) {
+    if (!isDeferredSale &&
+        effectivePaid - totalAfterPaymentValidation > 0.001) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('المبلغ المدفوع أكبر من الإجمالي')),
       );

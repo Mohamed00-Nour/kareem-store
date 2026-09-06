@@ -11,11 +11,15 @@ import 'local_db/hive_init.dart';
 import 'repositories/data_sync_service.dart';
 import 'sync/connectivity_service.dart';
 import 'sync/realtime_sync_service.dart';
+import 'sync/sync_queue_manager.dart';
 import 'Services/printer_settings_service.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
   await initHive(); // Initialize local Hive database first
+  // Recover durable uploads interrupted by a previous app shutdown before any
+  // startup service can make the first queue-processing attempt.
+  await SyncQueueManager.instance.recoverInterruptedItems();
   await Firebase.initializeApp(
     options: DefaultFirebaseOptions.currentPlatform,
   );

@@ -86,6 +86,12 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
 
   void _setSheet(VoidCallback fn) => setState(fn);
 
+  bool get _isDeferredSale {
+    final method = widget.invoiceData['paymentMethod']?.toString() ?? '';
+    final type = widget.invoiceData['invoiceType']?.toString() ?? 'sale';
+    return type != 'return' && (method == 'آجل' || method == 'اجل');
+  }
+
   Future<void> _save() async {
     isSaving.value = true;
     try {
@@ -153,10 +159,9 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
         0.0,
         (s, p) => s + (double.tryParse(p['total'].toString()) ?? 0.0),
       );
-      var newPaid =
-          double.tryParse(paidCtrl.text.replaceAll(',', '.')) ?? 0.0;
+      var newPaid = double.tryParse(paidCtrl.text.replaceAll(',', '.')) ?? 0.0;
       if (newPaid < 0) newPaid = 0;
-      if (newPaid > newTotalSum) {
+      if (!_isDeferredSale && newPaid > newTotalSum) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
             content: Text('المدفوع لا يمكن أن يكون أكبر من إجمالي الفاتورة'),
@@ -343,10 +348,10 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
                             final paid = double.tryParse(
                                     value.text.replaceAll(',', '.')) ??
                                 0.0;
-                            final currentTotal = invoiceNum(
-                                widget.invoiceData['balance']);
-                            final oldUnpaid = invoiceUnpaidAmount(
-                                widget.invoiceData);
+                            final currentTotal =
+                                invoiceNum(widget.invoiceData['balance']);
+                            final oldUnpaid =
+                                invoiceUnpaidAmount(widget.invoiceData);
                             final newUnpaid = invoiceTotal - paid;
                             final remaining =
                                 currentTotal - oldUnpaid + newUnpaid;
@@ -418,8 +423,7 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
                 builder: (_, saving, __) => Row(children: [
                   Expanded(
                     child: TextButton(
-                      onPressed:
-                          saving ? null : () => Navigator.pop(context),
+                      onPressed: saving ? null : () => Navigator.pop(context),
                       child: const Text('تراجع',
                           style: TextStyle(
                             color: Colors.orange,
@@ -492,9 +496,8 @@ Widget _buildEditRowCard(
                   if (val.text.isEmpty) {
                     return const Iterable<_ProdInfo>.empty();
                   }
-                  return allProds.where((p) => p.name
-                      .toLowerCase()
-                      .contains(val.text.toLowerCase()));
+                  return allProds.where((p) =>
+                      p.name.toLowerCase().contains(val.text.toLowerCase()));
                 },
                 displayStringForOption: (p) => p.name,
                 optionsViewBuilder: (ctx, onSel, opts) {
@@ -513,8 +516,7 @@ Widget _buildEditRowCard(
                             final p = opts.elementAt(j);
                             return ListTile(
                               dense: true,
-                              title:
-                                  Text(p.name, textAlign: TextAlign.right),
+                              title: Text(p.name, textAlign: TextAlign.right),
                               subtitle: Text(
                                 'س1: ${p.sellingPrice1.toStringAsFixed(2)}',
                                 textAlign: TextAlign.right,
@@ -640,8 +642,7 @@ Widget _buildEditRowCard(
                 ),
                 focusedBorder: OutlineInputBorder(
                   borderRadius: BorderRadius.circular(8),
-                  borderSide:
-                      const BorderSide(color: Colors.orange, width: 2),
+                  borderSide: const BorderSide(color: Colors.orange, width: 2),
                 ),
               ),
               onTap: () => _selectAllField(row.customPriceCtrl),

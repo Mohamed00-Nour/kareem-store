@@ -226,6 +226,8 @@ class _InvoiceCheckoutSheetContentState
           double paid = invoiceTryParseAmount(paidCtrl.text) ?? 0.0;
           double remaining = paid - totalAfterDiscount;
           final bool isCash = paymentMethod == 'نقداً';
+          final bool isDeferredSale =
+              !widget.isReturnInvoice && paymentMethod == 'آجل';
           final bool paidLessThanTotal =
               isCash && paid + 0.001 < totalAfterDiscount;
 
@@ -798,7 +800,8 @@ class _InvoiceCheckoutSheetContentState
                                     );
                                     return;
                                   }
-                                  if (paidAmount - totalAfterDiscount > 0.001) {
+                                  if (!isDeferredSale &&
+                                      paidAmount - totalAfterDiscount > 0.001) {
                                     ScaffoldMessenger.of(context).showSnackBar(
                                       const SnackBar(
                                         content: Text(
