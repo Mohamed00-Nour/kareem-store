@@ -1,11 +1,12 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../../Services/quick_entity_creation_service.dart';
 import '../../sync/connectivity_service.dart';
-import '../../sync/sync_queue_manager.dart';
-import '../../repositories/product_repository.dart';
+import '../../utils/entity_name_normalizer.dart';
 
-/// Opens a bottom sheet to create a product in Firestore without leaving the invoice.
+/// Opens a bottom sheet to create a product locally without leaving the invoice.
 /// Returns the saved product map (including [id]) or null if cancelled.
 Future<Map<String, dynamic>?> showQuickAddProductSheet(
   BuildContext context, {
@@ -70,64 +71,22 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
     super.dispose();
   }
 
-  String _normalizeName(String raw) {
-    return raw.trim().replaceAll(RegExp(r'\s+'), ' ').toLowerCase();
-  }
-
   double _optionalDouble(TextEditingController c) {
     final text = c.text.trim();
     if (text.isEmpty) return 0.0;
     return double.tryParse(text) ?? 0.0;
   }
 
-  Future<bool> _productExists(String name) async {
-    if (!ConnectivityService.instance.isOnline) {
-      final local = ProductRepository.instance.findByName(name);
-      return local != null;
-    }
-    final q = await FirebaseFirestore.instance
-        .collection('products')
-        .where('name', isEqualTo: name)
-        .limit(1)
-        .get();
-    return q.docs.isNotEmpty;
-  }
-
   Future<void> _save() async {
     if (!_formKey.currentState!.validate() || _isSaving) return;
 
-    final name = _normalizeName(_nameCtrl.text);
+    final name = cleanEntityName(_nameCtrl.text);
     if (name.isEmpty) return;
 
     setState(() => _isSaving = true);
     try {
-      if (await _productExists(name)) {
-        if (!mounted) return;
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('المنتج موجود بالفعل')),
-        );
-        return;
-      }
-
-      int nextRandom = 1;
-      if (ConnectivityService.instance.isOnline) {
-        try {
-          final snap = await FirebaseFirestore.instance
-              .collection('products')
-              .orderBy('randomNumber', descending: true)
-              .limit(1)
-              .get()
-              .timeout(const Duration(seconds: 4));
-          if (snap.docs.isNotEmpty) {
-            nextRandom =
-                ((snap.docs.first['randomNumber'] ?? 0) as num).toInt() + 1;
-          }
-        } catch (_) {}
-      }
-
       final descText = _descCtrl.text.trim();
       final data = <String, dynamic>{
-        'name': name,
         'description': descText.isNotEmpty ? descText : null,
         'sellingPrice1': _optionalDouble(_sp1Ctrl),
         'sellingPrice2': _optionalDouble(_sp2Ctrl),
@@ -135,36 +94,24 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
         'costPrice': _optionalDouble(_costCtrl),
         'quantity': _optionalDouble(_qtyCtrl),
         'alertAmount': 0.0,
-        'randomNumber': nextRandom,
         'department': '',
         'onDemand': _onDemand,
         'retail': widget.showRetailOption && _retail,
       };
 
-      String productId;
-      if (ConnectivityService.instance.isOnline) {
-        final ref =
-            await FirebaseFirestore.instance.collection('products').add(data);
-        productId = ref.id;
-        data['id'] = productId;
-        await ref.update({'id': productId});
-      } else {
-        productId = FirebaseFirestore.instance.collection('products').doc().id;
-        data['id'] = productId;
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'createProduct',
-          payload: {
-            'productId': productId,
-            'data': data,
-          },
-        );
-      }
-
-      // Update local Hive cache immediately so product is instantly available
-      await ProductRepository.instance.upsertLocal(productId, data);
+      final product = await QuickEntityCreationService.instance.createProduct(
+        name: name,
+        data: data,
+      );
+      unawaited(ConnectivityService.instance.forceSync());
 
       if (!mounted) return;
-      Navigator.pop(context, {...data, 'id': productId});
+      Navigator.pop(context, product.toMap());
+    } on QuickCreateDuplicateException {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('المنتج موجود بالفعل')),
+      );
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -195,8 +142,11 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
       validator: (v) {
         final text = v?.trim() ?? '';
         if (required && text.isEmpty) return 'هذا الحقل مطلوب';
-        if (isNumber && text.isNotEmpty && double.tryParse(text) == null) {
-          return 'يرجى إدخال رقم صالح';
+        if (isNumber && text.isNotEmpty) {
+          final parsed = double.tryParse(text);
+          if (parsed == null || !parsed.isFinite) {
+            return 'يرجى إدخال رقم صالح';
+          }
         }
         return null;
       },
@@ -224,7 +174,8 @@ class _QuickAddProductSheetState extends State<_QuickAddProductSheet> {
                 Row(
                   children: [
                     IconButton(
-                      onPressed: _isSaving ? null : () => Navigator.pop(context),
+                      onPressed:
+                          _isSaving ? null : () => Navigator.pop(context),
                       icon: const Icon(Icons.close),
                     ),
                     Expanded(

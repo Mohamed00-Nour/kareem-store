@@ -1,13 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter_bloc/flutter_bloc.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:kareem_store/repositories/client_repository.dart';
-import 'package:kareem_store/repositories/balance_history_repository.dart';
 import 'package:kareem_store/repositories/product_repository.dart';
-import 'package:kareem_store/local_db/models/balance_history_local.dart';
+import 'package:kareem_store/local_db/hive_init.dart';
 import 'package:kareem_store/sync/connectivity_service.dart';
-import 'package:kareem_store/sync/sync_queue_manager.dart';
-import 'package:kareem_store/Services/client_invoice_balance_sync_service.dart';
-import 'package:kareem_store/Services/invoice_stock_service.dart';
+import 'package:kareem_store/Services/quick_entity_creation_service.dart';
 import 'invoice_state.dart';
 import '../product_model.dart';
 import 'package:kareem_store/Widgets/egypt_phone_field.dart';
@@ -23,6 +22,8 @@ class InvoiceCubit extends Cubit<InvoiceState> {
     ));
     fetchProducts();
     fetchClients();
+    clientsBox.listenable().addListener(_loadClientsFromLocalCache);
+    productsBox.listenable().addListener(_loadProductsFromLocalCache);
   }
 
   Future<void> fetchClients() async {
@@ -52,19 +53,21 @@ class InvoiceCubit extends Cubit<InvoiceState> {
 
   void _loadProductsFromLocalCache() {
     final locals = ProductRepository.instance.getAll();
-    final mapped = locals.map((p) => Product(
-      id: p.id,
-      randomNumber: 0,
-      name: p.name,
-      description: p.description,
-      sellingPrice1: p.sellingPrice1,
-      sellingPrice2: p.sellingPrice2,
-      sellingPrice3: p.sellingPrice3,
-      costPrice: p.costPrice,
-      quantity: p.quantity,
-      alertAmount: 0,
-      retail: p.retail,
-    )).toList();
+    final mapped = locals
+        .map((p) => Product(
+              id: p.id,
+              randomNumber: 0,
+              name: p.name,
+              description: p.description,
+              sellingPrice1: p.sellingPrice1,
+              sellingPrice2: p.sellingPrice2,
+              sellingPrice3: p.sellingPrice3,
+              costPrice: p.costPrice,
+              quantity: p.quantity,
+              alertAmount: 0,
+              retail: p.retail,
+            ))
+        .toList();
     emit(state.copyWith(products: mapped, isFetching: false));
   }
 
@@ -80,69 +83,30 @@ class InvoiceCubit extends Cubit<InvoiceState> {
     ));
   }
 
-  Future<void> addNewClient(String name, double balance, String phoneText) async {
-    final phone = phoneText.isEmpty ? '' : EgyptPhoneField.toWhatsappDigits(phoneText);
-    final docRef = FirebaseFirestore.instance.collection('clients').doc();
-    final clientId = docRef.id;
-    final data = <String, dynamic>{
-      'clientName': name,
-      'balance': balance,
-      'phone': phone,
-      'id': clientId,
-    };
+  Future<void> addNewClient(
+      String name, double balance, String phoneText) async {
+    final phone =
+        phoneText.isEmpty ? '' : EgyptPhoneField.toWhatsappDigits(phoneText);
+    final client = await QuickEntityCreationService.instance.createClient(
+      name: name,
+      openingBalance: balance,
+      phone: phone,
+    );
+    unawaited(ConnectivityService.instance.forceSync());
 
-    // 1. Save to local Hive database immediately (0ms)
-    await ClientRepository.instance.upsertLocal(clientId, data);
-
-    if (balance != 0) {
-      await BalanceHistoryRepository.instance.upsertLocal(
-        BalanceHistoryLocal(
-          id: '${clientId}_opening',
-          parentId: clientId,
-          parentType: 'client',
-          enteredBalance: balance,
-          balanceBefore: 0.0,
-          type: 'opening',
-          timestamp: DateTime.now(),
-        ),
-      );
-    }
-
-    // 2. Sync to Firestore in background / queue for later
-    final bool isOnline = ConnectivityService.instance.isOnline;
-    if (isOnline) {
-      try {
-        await docRef.set(data, SetOptions(merge: true));
-        if (balance != 0) {
-          await docRef
-              .collection('balanceHistory')
-              .doc('${clientId}_opening')
-              .set({
-            'enteredBalance': balance,
-            'balanceBefore': 0.0,
-            'type': 'opening',
-            'timestamp': FieldValue.serverTimestamp(),
-          });
-          await ClientInvoiceBalanceSyncService.syncForClient(clientId);
-        }
-      } catch (e) {
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'createClient',
-          payload: {'clientId': clientId, 'data': data, 'openingBalance': balance},
-        );
-      }
-    } else {
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'createClient',
-        payload: {'clientId': clientId, 'data': data, 'openingBalance': balance},
-      );
-    }
-
-    final newClients = List<String>.from(state.clients)..insert(0, name);
+    final newClients = List<String>.from(state.clients);
+    if (!newClients.contains(client.name)) newClients.insert(0, client.name);
     emit(state.copyWith(
       clients: newClients,
-      clientName: name,
+      clientName: client.name,
       clientBalance: balance,
     ));
+  }
+
+  @override
+  Future<void> close() {
+    clientsBox.listenable().removeListener(_loadClientsFromLocalCache);
+    productsBox.listenable().removeListener(_loadProductsFromLocalCache);
+    return super.close();
   }
 }

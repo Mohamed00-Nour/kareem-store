@@ -48,8 +48,8 @@ class ConnectivityService {
       }
     });
 
-    // Initial check
-    _checkAndSync();
+    // Initial check also revives durable failures left by a previous process.
+    unawaited(forceSync());
   }
 
   /// Stop listening (call on app dispose if needed).
@@ -65,7 +65,9 @@ class ConnectivityService {
   Future<void> _onConnectivityChanged(dynamic event) async {
     final bool hasNetwork = _hasNetworkConnection(event);
     if (hasNetwork) {
-      await _checkAndSync();
+      // A real connectivity transition grants exhausted items a fresh retry
+      // budget, so they cannot remain stranded after the network returns.
+      await forceSync();
     } else {
       _isChecking = false;
       _setOnline(false);

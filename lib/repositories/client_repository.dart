@@ -1,8 +1,8 @@
-import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/client_local.dart';
 import '../sync/sync_queue_manager.dart';
+import '../utils/entity_name_normalizer.dart';
 
 import 'balance_history_repository.dart';
 
@@ -51,10 +51,10 @@ class ClientRepository {
 
   /// Search clients locally by name — zero Firestore reads. Returns stored balances.
   List<ClientLocal> search(String query) {
-    final q = query.trim().toLowerCase();
+    final q = normalizeEntityName(query);
     if (q.isEmpty) return getAll();
     final list = clientsBox.values
-        .where((c) => c.name.toLowerCase().contains(q))
+        .where((c) => normalizeEntityName(c.name).contains(q))
         .toList();
     list.sort((a, b) => a.name.compareTo(b.name));
     return list;
@@ -67,10 +67,10 @@ class ClientRepository {
 
   /// Get a single client by name (case-insensitive). Returns stored balance.
   ClientLocal? findByName(String name) {
-    final n = name.trim().toLowerCase();
+    final n = normalizeEntityName(name);
     try {
       return clientsBox.values
-          .firstWhere((client) => client.name.toLowerCase() == n);
+          .firstWhere((client) => normalizeEntityName(client.name) == n);
     } catch (_) {
       return null;
     }
@@ -83,19 +83,10 @@ class ClientRepository {
     final snap = await _fs.collection('clients').get();
     final box = clientsBox;
 
-    // Track local balances for clients that have pending queued updates
-    final pendingOps = SyncQueueManager.instance.getPending();
-    final pendingClientIds = <String>{};
-    for (final op in pendingOps) {
-      try {
-        final payload = jsonDecode(op.payloadJson) as Map<String, dynamic>;
-        final cId = payload['clientId']?.toString();
-        if (cId != null && cId.isNotEmpty) {
-          pendingClientIds.add(cId);
-        }
-      } catch (_) {}
-    }
-
+    final pendingClientIds = SyncQueueManager.instance.unfinishedEntityIds(
+      operationType: 'createClient',
+      idKey: 'clientId',
+    );
     final Map<String, ClientLocal> entries = {};
     for (final doc in snap.docs) {
       final serverClient = ClientLocal.fromFirestore(doc.id, doc.data());
@@ -106,7 +97,12 @@ class ClientRepository {
       }
       entries[doc.id] = serverClient;
     }
-    await box.clear();
+    final staleKeys = box.keys
+        .where((key) =>
+            !entries.containsKey(key.toString()) &&
+            !pendingClientIds.contains(key.toString()))
+        .toList(growable: false);
+    await box.deleteAll(staleKeys);
     await box.putAll(entries);
     appMetaBox.put(
       HiveMetaKeys.lastClientSyncAt,

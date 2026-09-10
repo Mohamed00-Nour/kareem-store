@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/product_local.dart';
+import '../sync/sync_queue_manager.dart';
+import '../utils/entity_name_normalizer.dart';
 
 /// Repository for Product data.
 ///
@@ -29,24 +31,26 @@ class ProductRepository {
 
   /// Search products locally by name (case-insensitive) — zero Firestore reads.
   List<ProductLocal> search(String query) {
-    final q = query.trim().toLowerCase();
+    final q = normalizeEntityName(query);
     if (q.isEmpty) return getAll();
     return productsBox.values
-        .where((p) => p.name.toLowerCase().contains(q))
+        .where((p) => normalizeEntityName(p.name).contains(q))
         .toList()
       ..sort((a, b) => a.name.compareTo(b.name));
   }
 
   /// Find a single product by name (exact, case-insensitive).
   ProductLocal? findByName(String name) {
-    final n = name.trim().toLowerCase();
+    final n = normalizeEntityName(name);
     try {
       return productsBox.values
-          .firstWhere((p) => p.name.toLowerCase() == n);
+          .firstWhere((p) => normalizeEntityName(p.name) == n);
     } catch (_) {
       return null;
     }
   }
+
+  ProductLocal? getById(String id) => productsBox.get(id);
 
   // ── Sync ──────────────────────────────────────────────────────────────────
 
@@ -55,12 +59,21 @@ class ProductRepository {
   Future<void> fullSync() async {
     final snap = await _fs.collection('products').get();
     final box = productsBox;
-    await box.clear();
+    final pendingIds = SyncQueueManager.instance.unfinishedEntityIds(
+      operationType: 'createProduct',
+      idKey: 'productId',
+    );
     final Map<String, ProductLocal> entries = {};
     for (final doc in snap.docs) {
       final data = doc.data();
       entries[doc.id] = ProductLocal.fromFirestore(doc.id, data);
     }
+    final staleKeys = box.keys
+        .where((key) =>
+            !entries.containsKey(key.toString()) &&
+            !pendingIds.contains(key.toString()))
+        .toList(growable: false);
+    await box.deleteAll(staleKeys);
     await box.putAll(entries);
     appMetaBox.put(
       HiveMetaKeys.lastProductSyncAt,

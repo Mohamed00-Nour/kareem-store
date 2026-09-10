@@ -9,6 +9,7 @@ import 'home_page.dart';
 import '../Buing Invoices/BuyingInvoiceListPage.dart';
 import '../Buing Invoices/BuyingInvoiceDetailPage.dart';
 import '../Services/invoice_number_utils.dart';
+import '../Services/quick_entity_creation_service.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/buying_invoice_update_service.dart';
 import '../Services/invoice_print_ui.dart';
@@ -22,6 +23,7 @@ import '../repositories/box_repository.dart';
 import '../repositories/balance_history_repository.dart';
 import '../local_db/models/balance_history_local.dart';
 import '../local_db/hive_init.dart';
+import '../utils/entity_name_normalizer.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'g_Nav.dart';
 
@@ -106,6 +108,7 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   Timer? _productsDebounceTimer;
+  Timer? _suppliersDebounceTimer;
 
   @override
   void initState() {
@@ -113,6 +116,7 @@ class _AddProductPageState extends State<AddProductPage> {
     _fetchProducts();
     _fetchSuppliers();
     productsBox.listenable().addListener(_onProductsBoxChanged);
+    suppliersBox.listenable().addListener(_onSuppliersBoxChanged);
     if (widget.invoiceToEdit != null) {
       _applyInvoiceToEdit(widget.invoiceToEdit!);
     } else {
@@ -130,10 +134,19 @@ class _AddProductPageState extends State<AddProductPage> {
     });
   }
 
+  void _onSuppliersBoxChanged() {
+    _suppliersDebounceTimer?.cancel();
+    _suppliersDebounceTimer = Timer(const Duration(milliseconds: 100), () {
+      if (mounted) _loadSuppliersFromLocalCache();
+    });
+  }
+
   @override
   void dispose() {
     _productsDebounceTimer?.cancel();
+    _suppliersDebounceTimer?.cancel();
     productsBox.listenable().removeListener(_onProductsBoxChanged);
+    suppliersBox.listenable().removeListener(_onSuppliersBoxChanged);
     _dateController.dispose();
     // _productController is managed by Autocomplete's internal state — do not dispose here
     super.dispose();
@@ -180,7 +193,6 @@ class _AddProductPageState extends State<AddProductPage> {
     }
   }
 
-
   /// Loads suppliers from local Hive cache (or Firestore offline SDK cache fallback).
   Future<void> _loadSuppliersFromLocalCache() async {
     if (!mounted) return;
@@ -193,12 +205,10 @@ class _AddProductPageState extends State<AddProductPage> {
         .where((s) => s.name.isNotEmpty)
         .toList();
 
+    setState(() {
+      _suppliers = validSuppliers;
+    });
     if (validSuppliers.isNotEmpty) {
-      if (mounted) {
-        setState(() {
-          _suppliers = validSuppliers;
-        });
-      }
       return;
     }
 
@@ -391,9 +401,18 @@ class _AddProductPageState extends State<AddProductPage> {
       if (workingSupplier.id.isEmpty) {
         final localSup =
             SupplierRepository.instance.findByName(workingSupplier.name);
-        final id = localSup?.id ??
-            FirebaseFirestore.instance.collection('suppliers').doc().id;
-        workingSupplier = Supplier(id: id, name: workingSupplier.name);
+        if (localSup != null) {
+          workingSupplier = Supplier(id: localSup.id, name: localSup.name);
+        } else {
+          try {
+            final created = await QuickEntityCreationService.instance
+                .createSupplier(name: workingSupplier.name);
+            workingSupplier = Supplier(id: created.id, name: created.name);
+            unawaited(ConnectivityService.instance.forceSync());
+          } on QuickCreateDuplicateException catch (e) {
+            workingSupplier = Supplier(id: e.existingId, name: e.existingName);
+          }
+        }
       }
 
       int newInvoiceNumber = await _fetchNextBuyingInvoiceNumber();
@@ -450,7 +469,8 @@ class _AddProductPageState extends State<AddProductPage> {
       if (workingSupplier.id.isNotEmpty) {
         final existingBal = _supplierBalance;
         final updatedBal = existingBal + balance;
-        await SupplierRepository.instance.updateLocalBalance(workingSupplier.id, updatedBal);
+        await SupplierRepository.instance
+            .updateLocalBalance(workingSupplier.id, updatedBal);
         await BalanceHistoryRepository.instance.upsertLocal(
           BalanceHistoryLocal(
             id: '${docId}_buying',
@@ -479,7 +499,6 @@ class _AddProductPageState extends State<AddProductPage> {
             ),
           );
         }
-
       }
 
       // 3. Update products stock and prices locally
@@ -493,13 +512,16 @@ class _AddProductPageState extends State<AddProductPage> {
             localProd.costPrice = (product['newCostPrice'] as num).toDouble();
           }
           if (product['newSellingPrice1'] != null) {
-            localProd.sellingPrice1 = (product['newSellingPrice1'] as num).toDouble();
+            localProd.sellingPrice1 =
+                (product['newSellingPrice1'] as num).toDouble();
           }
           if (product['newSellingPrice2'] != null) {
-            localProd.sellingPrice2 = (product['newSellingPrice2'] as num).toDouble();
+            localProd.sellingPrice2 =
+                (product['newSellingPrice2'] as num).toDouble();
           }
           if (product['newSellingPrice3'] != null) {
-            localProd.sellingPrice3 = (product['newSellingPrice3'] as num).toDouble();
+            localProd.sellingPrice3 =
+                (product['newSellingPrice3'] as num).toDouble();
           }
           await productsBox.put(localProd.id, localProd);
         }
@@ -526,7 +548,6 @@ class _AddProductPageState extends State<AddProductPage> {
       // Trigger background sync without awaiting
       ConnectivityService.instance.forceSync();
 
-
       if (!mounted) return;
       setState(() {
         _dataModified = false;
@@ -549,7 +570,6 @@ class _AddProductPageState extends State<AddProductPage> {
   Future<int> _fetchNextBuyingInvoiceNumber() async {
     return LocalInvoiceCounter.nextNumber('buying');
   }
-
 
   void _navigateHome() {
     Navigator.of(context).pushAndRemoveUntil(
@@ -719,7 +739,6 @@ class _AddProductPageState extends State<AddProductPage> {
     return localSup?.balance ?? 0.0;
   }
 
-
   Future<void> _fetchAndSetSupplierBalance(String supplierName) async {
     final bal = await _fetchSupplierBalance(supplierName);
     if (!mounted) return;
@@ -778,7 +797,8 @@ class _AddProductPageState extends State<AddProductPage> {
         await existingLocal.save();
       }
     } else {
-      final existingByName = ProductRepository.instance.findByName(product.name);
+      final existingByName =
+          ProductRepository.instance.findByName(product.name);
       if (existingByName != null) {
         if (updates.containsKey('sellingPrice1')) {
           existingByName.sellingPrice1 = sp1;
@@ -1448,7 +1468,8 @@ class _AddProductPageState extends State<AddProductPage> {
                           alignment: Alignment.centerRight,
                           child: Text('وصف المنتج',
                               style: TextStyle(
-                                  fontSize: 13.sp, fontWeight: FontWeight.bold)),
+                                  fontSize: 13.sp,
+                                  fontWeight: FontWeight.bold)),
                         ),
                         SizedBox(height: 6.h),
                         TextField(
@@ -1601,6 +1622,7 @@ class _AddProductPageState extends State<AddProductPage> {
     Supplier? checkoutSupplier = _selectedSupplier;
     String notes = '';
     bool addingNewSupplier = false;
+    bool savingNewSupplier = false;
     String supplierSearch = '';
     String? supplierDuplicateWarning;
     double? checkoutSupplierBalance =
@@ -1613,6 +1635,7 @@ class _AddProductPageState extends State<AddProductPage> {
     final discountCtrl = TextEditingController();
     final notesCtrl = TextEditingController();
     final newSupplierCtrl = TextEditingController();
+    final newSupplierBalanceCtrl = TextEditingController();
     final supplierSearchCtrl = TextEditingController();
     // Guard flag — set to false when the sheet is dismissed so async
     // callbacks don't call setSheet() on a disposed StatefulBuilder.
@@ -2023,37 +2046,140 @@ class _AddProductPageState extends State<AddProductPage> {
                               padding: EdgeInsets.symmetric(
                                   horizontal: 14.w, vertical: 12.h),
                             ),
-                            onPressed: () {
-                              final newName = newSupplierCtrl.text.trim();
-                              if (newName.isEmpty) return;
-                              final alreadyExists = _suppliers.any((s) =>
-                                  s.name.toLowerCase() ==
-                                  newName.toLowerCase());
-                              if (alreadyExists) {
-                                final existing = _suppliers.firstWhere((s) =>
-                                    s.name.toLowerCase() ==
-                                    newName.toLowerCase());
-                                setSheet(() {
-                                  checkoutSupplier = existing;
-                                  supplierDuplicateWarning =
-                                      'هذا المورد موجود بالفعل';
-                                });
-                              } else {
-                                final newSupplier =
-                                    Supplier(id: '', name: newName);
-                                setSheet(() {
-                                  _suppliers.add(newSupplier);
-                                  checkoutSupplier = newSupplier;
-                                  addingNewSupplier = false;
-                                  supplierDuplicateWarning = null;
-                                  newSupplierCtrl.clear();
-                                });
-                              }
-                            },
-                            child: Text('إضافة',
-                                style: TextStyle(fontSize: 13.sp)),
+                            onPressed: savingNewSupplier
+                                ? null
+                                : () async {
+                                    final newName = cleanEntityName(
+                                      newSupplierCtrl.text,
+                                    );
+                                    if (newName.isEmpty) return;
+                                    final balanceText =
+                                        newSupplierBalanceCtrl.text.trim();
+                                    final openingBalance = balanceText.isEmpty
+                                        ? 0.0
+                                        : double.tryParse(balanceText);
+                                    if (openingBalance == null ||
+                                        !openingBalance.isFinite) {
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        const SnackBar(
+                                          content: Text(
+                                            'يرجى إدخال رصيد افتتاحي صحيح',
+                                          ),
+                                        ),
+                                      );
+                                      return;
+                                    }
+                                    final normalizedNewName =
+                                        normalizeEntityName(newName);
+                                    final alreadyExists = _suppliers.any((s) =>
+                                        normalizeEntityName(s.name) ==
+                                        normalizedNewName);
+                                    if (alreadyExists) {
+                                      final existing = _suppliers.firstWhere(
+                                          (s) =>
+                                              normalizeEntityName(s.name) ==
+                                              normalizedNewName);
+                                      setSheet(() {
+                                        checkoutSupplier = existing;
+                                        supplierDuplicateWarning =
+                                            'هذا المورد موجود بالفعل';
+                                      });
+                                      return;
+                                    }
+
+                                    setSheet(() {
+                                      savingNewSupplier = true;
+                                      supplierDuplicateWarning = null;
+                                    });
+                                    try {
+                                      final created =
+                                          await QuickEntityCreationService
+                                              .instance
+                                              .createSupplier(
+                                        name: newName,
+                                        openingBalance: openingBalance,
+                                      );
+                                      unawaited(
+                                        ConnectivityService.instance
+                                            .forceSync(),
+                                      );
+                                      if (!sheetMounted) return;
+                                      final newSupplier = Supplier(
+                                        id: created.id,
+                                        name: created.name,
+                                      );
+                                      setSheet(() {
+                                        if (!_suppliers.any(
+                                          (supplier) =>
+                                              supplier.id == newSupplier.id,
+                                        )) {
+                                          _suppliers.add(newSupplier);
+                                        }
+                                        checkoutSupplier = newSupplier;
+                                        checkoutSupplierBalance =
+                                            openingBalance;
+                                        addingNewSupplier = false;
+                                        supplierDuplicateWarning = null;
+                                        newSupplierCtrl.clear();
+                                        newSupplierBalanceCtrl.clear();
+                                      });
+                                    } on QuickCreateDuplicateException catch (e) {
+                                      if (!sheetMounted) return;
+                                      final existing = Supplier(
+                                        id: e.existingId,
+                                        name: e.existingName,
+                                      );
+                                      setSheet(() {
+                                        checkoutSupplier = existing;
+                                        supplierDuplicateWarning =
+                                            'هذا المورد موجود بالفعل';
+                                      });
+                                    } catch (e) {
+                                      if (!sheetMounted) return;
+                                      ScaffoldMessenger.of(ctx).showSnackBar(
+                                        SnackBar(
+                                          content: Text(
+                                              'خطأ أثناء إضافة المورد: $e'),
+                                        ),
+                                      );
+                                    } finally {
+                                      if (sheetMounted) {
+                                        setSheet(
+                                            () => savingNewSupplier = false);
+                                      }
+                                    }
+                                  },
+                            child: savingNewSupplier
+                                ? SizedBox(
+                                    width: 18.w,
+                                    height: 18.w,
+                                    child: const CircularProgressIndicator(
+                                      strokeWidth: 2,
+                                      color: Colors.white,
+                                    ),
+                                  )
+                                : Text('إضافة',
+                                    style: TextStyle(fontSize: 13.sp)),
                           ),
                         ],
+                      ),
+                      SizedBox(height: 8.h),
+                      TextField(
+                        controller: newSupplierBalanceCtrl,
+                        textDirection: TextDirection.rtl,
+                        keyboardType: const TextInputType.numberWithOptions(
+                            decimal: true),
+                        decoration: InputDecoration(
+                          hintText: 'الرصيد الافتتاحي (اختياري)',
+                          hintTextDirection: TextDirection.rtl,
+                          contentPadding: EdgeInsets.symmetric(
+                              horizontal: 12.w, vertical: 10.h),
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(10.r),
+                          ),
+                          filled: true,
+                          fillColor: Colors.grey.shade50,
+                        ),
                       ),
                     ],
                     // ── Duplicate warning ──
@@ -2268,12 +2394,14 @@ class _AddProductPageState extends State<AddProductPage> {
                                 borderRadius: BorderRadius.circular(8.r)),
                             padding: EdgeInsets.symmetric(vertical: 12.h),
                           ),
-                          onPressed: _isSaving
+                          onPressed: _isSaving || savingNewSupplier
                               ? null
                               : () async {
                                   Supplier? finalSupplier = checkoutSupplier;
                                   if (addingNewSupplier) {
-                                    final name = newSupplierCtrl.text.trim();
+                                    final name = cleanEntityName(
+                                      newSupplierCtrl.text,
+                                    );
                                     if (name.isEmpty) {
                                       ScaffoldMessenger.of(context)
                                           .showSnackBar(const SnackBar(
@@ -2281,8 +2409,62 @@ class _AddProductPageState extends State<AddProductPage> {
                                                   'يرجى إدخال اسم المورد')));
                                       return;
                                     }
-                                    finalSupplier =
-                                        Supplier(id: '', name: name);
+                                    final balanceText =
+                                        newSupplierBalanceCtrl.text.trim();
+                                    final openingBalance = balanceText.isEmpty
+                                        ? 0.0
+                                        : double.tryParse(balanceText);
+                                    if (openingBalance == null ||
+                                        !openingBalance.isFinite) {
+                                      ScaffoldMessenger.of(context)
+                                          .showSnackBar(const SnackBar(
+                                              content: Text(
+                                                  'يرجى إدخال رصيد افتتاحي صحيح')));
+                                      return;
+                                    }
+                                    setSheet(() => savingNewSupplier = true);
+                                    try {
+                                      final local = SupplierRepository.instance
+                                          .findByName(name);
+                                      if (local != null) {
+                                        finalSupplier = Supplier(
+                                          id: local.id,
+                                          name: local.name,
+                                        );
+                                      } else {
+                                        final created =
+                                            await QuickEntityCreationService
+                                                .instance
+                                                .createSupplier(
+                                          name: name,
+                                          openingBalance: openingBalance,
+                                        );
+                                        finalSupplier = Supplier(
+                                          id: created.id,
+                                          name: created.name,
+                                        );
+                                        unawaited(ConnectivityService.instance
+                                            .forceSync());
+                                      }
+                                    } on QuickCreateDuplicateException catch (e) {
+                                      finalSupplier = Supplier(
+                                        id: e.existingId,
+                                        name: e.existingName,
+                                      );
+                                    } catch (e) {
+                                      if (sheetMounted) {
+                                        setSheet(
+                                            () => savingNewSupplier = false);
+                                      }
+                                      if (context.mounted) {
+                                        ScaffoldMessenger.of(context)
+                                            .showSnackBar(SnackBar(
+                                          content: Text(
+                                              'خطأ أثناء إضافة المورد: $e'),
+                                        ));
+                                      }
+                                      return;
+                                    }
                                   }
                                   if (finalSupplier == null) {
                                     ScaffoldMessenger.of(context).showSnackBar(

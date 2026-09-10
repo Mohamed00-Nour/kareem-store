@@ -769,16 +769,18 @@ class BatchSyncEngine {
   }
 
   Future<void> _syncCreateProduct(Map<String, dynamic> payload) async {
-    final String productId = payload['productId'];
+    final String productId = payload['productId']?.toString().trim() ?? '';
     final Map<String, dynamic> data =
-        Map<String, dynamic>.from(payload['data']);
+        Map<String, dynamic>.from(payload['data'] as Map? ?? {});
+    if (productId.isEmpty) {
+      throw ArgumentError('createProduct payload missing productId');
+    }
     data['updatedAt'] = FieldValue.serverTimestamp();
     await _fs
         .collection('products')
         .doc(productId)
         .set(data, SetOptions(merge: true));
     await ProductRepository.instance.upsertLocal(productId, data);
-    await ProductRepository.instance.deltaSync();
   }
 
   Future<void> _syncEditProduct(Map<String, dynamic> payload) async {
@@ -1483,36 +1485,37 @@ class BatchSyncEngine {
     final Map<String, dynamic> data =
         Map<String, dynamic>.from(payload['data'] as Map? ?? {});
     final double openingBalance = syncDouble(payload['openingBalance']);
+    final String openingHistoryId =
+        payload['openingHistoryId']?.toString().trim().isNotEmpty == true
+            ? payload['openingHistoryId'].toString().trim()
+            : '${clientId}_opening';
+    final createdAt = DateTime.tryParse(
+          payload['createdAt']?.toString() ?? '',
+        ) ??
+        DateTime.now();
 
     if (clientId.isEmpty) {
       throw ArgumentError('createClient payload missing clientId');
     }
 
-    // Remove the local 'id' field before writing — Firestore uses doc ID.
-    data.remove('id');
-
     final docRef = _fs.collection('clients').doc(clientId);
-
-    // Check if doc already exists (e.g. written on another device while offline).
-    final existingSnap = await docRef.get();
-    if (existingSnap.exists) {
-      // Already synced — nothing to do.
-      await ClientRepository.instance
-          .upsertLocal(clientId, existingSnap.data()!);
-      return;
-    }
 
     final batch = _fs.batch();
     batch.set(docRef, data, SetOptions(merge: true));
 
     if (openingBalance != 0) {
-      final histRef = docRef.collection('balanceHistory').doc();
-      batch.set(histRef, {
-        'enteredBalance': openingBalance,
-        'balanceBefore': 0.0,
-        'type': 'opening',
-        'timestamp': FieldValue.serverTimestamp(),
-      });
+      final histRef = docRef.collection('balanceHistory').doc(openingHistoryId);
+      batch.set(
+          histRef,
+          {
+            'id': openingHistoryId,
+            'enteredBalance': openingBalance,
+            'balanceBefore': 0.0,
+            'type': 'opening',
+            'timestamp': createdAt,
+            'notes': 'رصيد افتتاحي',
+          },
+          SetOptions(merge: true));
     }
 
     await batch.commit();
@@ -1533,45 +1536,59 @@ class BatchSyncEngine {
     final Map<String, dynamic> data =
         Map<String, dynamic>.from(payload['data'] as Map? ?? {});
     final double openingBalance = syncDouble(payload['openingBalance']);
+    final String openingHistoryId =
+        payload['openingHistoryId']?.toString().trim().isNotEmpty == true
+            ? payload['openingHistoryId'].toString().trim()
+            : '${supplierId}_opening';
+    final String openingVoucherId =
+        payload['openingVoucherId']?.toString().trim().isNotEmpty == true
+            ? payload['openingVoucherId'].toString().trim()
+            : '${supplierId}_opening';
+    final createdAt = DateTime.tryParse(
+          payload['createdAt']?.toString() ?? '',
+        ) ??
+        DateTime.now();
 
     if (supplierId.isEmpty) {
       throw ArgumentError('createSupplier payload missing supplierId');
     }
 
-    data.remove('id');
-
     final docRef = _fs.collection('suppliers').doc(supplierId);
-
-    final existingSnap = await docRef.get();
-    if (existingSnap.exists) {
-      await SupplierRepository.instance
-          .upsertLocal(supplierId, existingSnap.data()!);
-      return;
-    }
 
     final batch = _fs.batch();
     batch.set(docRef, data, SetOptions(merge: true));
 
     if (openingBalance != 0) {
-      final voucherRef = _fs.collection('supplier_vouchers').doc();
-      batch.set(voucherRef, {
-        'supplierId': supplierId,
-        'supplierName': data['name'],
-        'direction': 'له',
-        'amount': openingBalance,
-        'description': 'رصيد افتتاحي',
-        'date': FieldValue.serverTimestamp(),
-        'timestamp': FieldValue.serverTimestamp(),
-      });
+      final voucherRef =
+          _fs.collection('supplier_vouchers').doc(openingVoucherId);
+      batch.set(
+          voucherRef,
+          {
+            'id': openingVoucherId,
+            'supplierId': supplierId,
+            'supplierName': data['supplierName'] ?? data['name'],
+            'direction': 'له',
+            'amount': openingBalance,
+            'description': 'رصيد افتتاحي',
+            'date': createdAt,
+            'timestamp': createdAt,
+          },
+          SetOptions(merge: true));
 
-      final histRef = docRef.collection('balanceHistory').doc();
-      batch.set(histRef, {
-        'enteredBalance': openingBalance,
-        'balanceBefore': 0.0,
-        'type': 'opening',
-        'direction': 'له',
-        'timestamp': FieldValue.serverTimestamp(),
-      });
+      final histRef = docRef.collection('balanceHistory').doc(openingHistoryId);
+      batch.set(
+          histRef,
+          {
+            'id': openingHistoryId,
+            'enteredBalance': openingBalance,
+            'balanceBefore': 0.0,
+            'type': 'opening',
+            'direction': 'له',
+            'voucherId': openingVoucherId,
+            'timestamp': createdAt,
+            'notes': 'رصيد افتتاحي',
+          },
+          SetOptions(merge: true));
     }
 
     await batch.commit();

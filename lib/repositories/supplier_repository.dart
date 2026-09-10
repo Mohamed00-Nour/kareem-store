@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/supplier_local.dart';
+import '../sync/sync_queue_manager.dart';
+import '../utils/entity_name_normalizer.dart';
 
 import 'balance_history_repository.dart';
 
@@ -18,7 +20,8 @@ class SupplierRepository {
 
   /// Compute live running balance for a supplier directly from local Hive transaction history.
   double computeLiveBalanceFromHive(String supplierId) {
-    final history = BalanceHistoryRepository.instance.getForSupplier(supplierId);
+    final history =
+        BalanceHistoryRepository.instance.getForSupplier(supplierId);
     if (history.isEmpty) {
       final existing = suppliersBox.get(supplierId);
       return existing?.balance ?? 0.0;
@@ -26,7 +29,8 @@ class SupplierRepository {
     double running = 0.0;
     for (final bh in history) {
       final type = bh.type;
-      final isIncrease = type == 'buying' || type == 'opening' || type == 'addition';
+      final isIncrease =
+          type == 'buying' || type == 'opening' || type == 'addition';
       if (isIncrease) {
         running += bh.enteredBalance;
       } else {
@@ -48,10 +52,10 @@ class SupplierRepository {
 
   /// Search suppliers locally by name — zero Firestore reads.
   List<SupplierLocal> search(String query) {
-    final q = query.trim().toLowerCase();
+    final q = normalizeEntityName(query);
     if (q.isEmpty) return getAll();
     final list = suppliersBox.values
-        .where((s) => s.name.toLowerCase().contains(q))
+        .where((s) => normalizeEntityName(s.name).contains(q))
         .toList();
     for (final s in list) {
       s.balance = computeLiveBalanceFromHive(s.id);
@@ -71,10 +75,10 @@ class SupplierRepository {
 
   /// Get a single supplier by name (case-insensitive) with instant Hive balance.
   SupplierLocal? findByName(String name) {
-    final n = name.trim().toLowerCase();
+    final n = normalizeEntityName(name);
     try {
       final s = suppliersBox.values
-          .firstWhere((supplier) => supplier.name.toLowerCase() == n);
+          .firstWhere((supplier) => normalizeEntityName(supplier.name) == n);
       s.balance = computeLiveBalanceFromHive(s.id);
       return s;
     } catch (_) {
@@ -88,6 +92,10 @@ class SupplierRepository {
   Future<void> fullSync() async {
     final snap = await _fs.collection('suppliers').get();
     final box = suppliersBox;
+    final pendingIds = SyncQueueManager.instance.unfinishedEntityIds(
+      operationType: 'createSupplier',
+      idKey: 'supplierId',
+    );
     final Map<String, SupplierLocal> entries = {};
     for (final doc in snap.docs) {
       final serverSupplier = SupplierLocal.fromFirestore(doc.id, doc.data());
@@ -97,7 +105,12 @@ class SupplierRepository {
       }
       entries[doc.id] = serverSupplier;
     }
-    await box.clear();
+    final staleKeys = box.keys
+        .where((key) =>
+            !entries.containsKey(key.toString()) &&
+            !pendingIds.contains(key.toString()))
+        .toList(growable: false);
+    await box.deleteAll(staleKeys);
     await box.putAll(entries);
     appMetaBox.put(
       HiveMetaKeys.lastSupplierSyncAt,

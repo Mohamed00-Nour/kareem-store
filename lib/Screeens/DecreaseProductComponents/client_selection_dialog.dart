@@ -3,6 +3,8 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:flutter_bloc/flutter_bloc.dart';
 import 'package:kareem_store/Widgets/egypt_phone_field.dart';
 import 'package:kareem_store/Services/invoice_number_utils.dart';
+import 'package:kareem_store/Services/quick_entity_creation_service.dart';
+import 'package:kareem_store/utils/entity_name_normalizer.dart';
 import 'bloc/invoice_cubit.dart';
 import 'bloc/invoice_state.dart';
 
@@ -40,10 +42,10 @@ void showClientNameDialog(
   ).then((result) {
     if (result is ClientSelectionResult && context.mounted) {
       BlocProvider.of<InvoiceCubit>(context).setClientInfo(
-            result.clientName,
-            result.clientBalance,
-            result.paidAmountText,
-          );
+        result.clientName,
+        result.clientBalance,
+        result.paidAmountText,
+      );
     }
   });
 }
@@ -57,7 +59,8 @@ class _ClientSelectionContent extends StatefulWidget {
   });
 
   @override
-  State<_ClientSelectionContent> createState() => _ClientSelectionContentState();
+  State<_ClientSelectionContent> createState() =>
+      _ClientSelectionContentState();
 }
 
 class _ClientSelectionContentState extends State<_ClientSelectionContent> {
@@ -103,7 +106,8 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
       loadingClientBalance = true;
       selectedClientBalance = null;
     });
-    final bal = await BlocProvider.of<InvoiceCubit>(context).fetchClientBalance(clientName.trim());
+    final bal = await BlocProvider.of<InvoiceCubit>(context)
+        .fetchClientBalance(clientName.trim());
     if (!mounted) return;
     setState(() {
       selectedClientBalance = bal;
@@ -125,8 +129,8 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
         final filtered = searchQuery.isEmpty
             ? state.clients
             : state.clients
-                .where((c) =>
-                    c.toLowerCase().contains(searchQuery.toLowerCase()))
+                .where(
+                    (c) => c.toLowerCase().contains(searchQuery.toLowerCase()))
                 .toList();
 
         return Directionality(
@@ -184,18 +188,15 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
                               horizontal: 12.w, vertical: 10.h),
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(10.r),
-                            borderSide:
-                                BorderSide(color: Colors.grey.shade400),
+                            borderSide: BorderSide(color: Colors.grey.shade400),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(10.r),
-                            borderSide:
-                                BorderSide(color: Colors.grey.shade400),
+                            borderSide: BorderSide(color: Colors.grey.shade400),
                           ),
                           focusedBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(10.r),
-                            borderSide:
-                                const BorderSide(color: Colors.black87),
+                            borderSide: const BorderSide(color: Colors.black87),
                           ),
                           filled: true,
                           fillColor: Colors.grey.shade50,
@@ -221,8 +222,7 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
                           ),
                           child: Icon(
                             Icons.person_add_alt_1,
-                            color:
-                                showAddField ? Colors.white : Colors.black87,
+                            color: showAddField ? Colors.white : Colors.black87,
                             size: 22.sp,
                           ),
                         ),
@@ -296,8 +296,7 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
                                 );
                                 return;
                               }
-                              final phoneText =
-                                  newClientPhoneCtrl.text.trim();
+                              final phoneText = newClientPhoneCtrl.text.trim();
                               if (phoneText.isNotEmpty &&
                                   !EgyptPhoneField.isValidLocalPart(
                                       phoneText)) {
@@ -309,15 +308,17 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
                                 );
                                 return;
                               }
+                              final normalizedNewName =
+                                  normalizeEntityName(newName);
                               final alreadyExists = state.clients.any((c) =>
-                                  c.toLowerCase() == newName.toLowerCase());
+                                  normalizeEntityName(c) == normalizedNewName);
                               if (alreadyExists) {
                                 setState(() {
-                                  duplicateWarning =
-                                      'هذا العميل موجود بالفعل';
-                                  selectedClient = state.clients.firstWhere((c) =>
-                                      c.toLowerCase() ==
-                                      newName.toLowerCase());
+                                  duplicateWarning = 'هذا العميل موجود بالفعل';
+                                  selectedClient = state.clients.firstWhere(
+                                      (c) =>
+                                          normalizeEntityName(c) ==
+                                          normalizedNewName);
                                 });
                                 return;
                               }
@@ -331,9 +332,21 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
                                     newClientBalanceCtrl.text.trim();
                                 final balance = balanceText.isEmpty
                                     ? 0.0
-                                    : (double.tryParse(balanceText) ?? 0.0);
-                                
-                                await BlocProvider.of<InvoiceCubit>(context).addNewClient(newName, balance, phoneText);
+                                    : double.tryParse(balanceText);
+                                if (balance == null || !balance.isFinite) {
+                                  if (!mounted) return;
+                                  ScaffoldMessenger.of(context).showSnackBar(
+                                    const SnackBar(
+                                      content: Text(
+                                        'يرجى إدخال رصيد افتتاحي صحيح',
+                                      ),
+                                    ),
+                                  );
+                                  return;
+                                }
+
+                                await BlocProvider.of<InvoiceCubit>(context)
+                                    .addNewClient(newName, balance, phoneText);
 
                                 if (!mounted) return;
                                 setState(() {
@@ -344,12 +357,17 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
                                   newClientBalanceCtrl.clear();
                                   newClientPhoneCtrl.clear();
                                 });
+                              } on QuickCreateDuplicateException catch (e) {
+                                if (!mounted) return;
+                                setState(() {
+                                  duplicateWarning = 'هذا العميل موجود بالفعل';
+                                  selectedClient = e.existingName;
+                                });
                               } catch (e) {
                                 if (!mounted) return;
                                 ScaffoldMessenger.of(context).showSnackBar(
                                   SnackBar(
-                                    content:
-                                        Text('خطأ أثناء إضافة العميل: $e'),
+                                    content: Text('خطأ أثناء إضافة العميل: $e'),
                                   ),
                                 );
                               } finally {
@@ -477,13 +495,12 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
                 if (selectedClient.isNotEmpty) ...[
                   Container(
                     width: double.infinity,
-                    padding: EdgeInsets.symmetric(
-                        horizontal: 12.w, vertical: 10.h),
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
                     decoration: BoxDecoration(
                       color: Colors.orange.withOpacity(0.12),
                       borderRadius: BorderRadius.circular(10.r),
-                      border:
-                          Border.all(color: Colors.orange.withOpacity(0.4)),
+                      border: Border.all(color: Colors.orange.withOpacity(0.4)),
                     ),
                     child: loadingClientBalance
                         ? Row(
@@ -539,8 +556,8 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
                     hintText: '0.00',
                     prefixIcon: const Icon(Icons.payments_outlined,
                         color: Colors.black54),
-                    contentPadding: EdgeInsets.symmetric(
-                        horizontal: 12.w, vertical: 10.h),
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(10.r),
                       borderSide: BorderSide(color: Colors.grey.shade400),
@@ -574,7 +591,9 @@ class _ClientSelectionContentState extends State<_ClientSelectionContent> {
                     onPressed: selectedClient.isEmpty
                         ? null
                         : () async {
-                            final bal = await BlocProvider.of<InvoiceCubit>(context).fetchClientBalance(
+                            final bal =
+                                await BlocProvider.of<InvoiceCubit>(context)
+                                    .fetchClientBalance(
                               selectedClient.trim(),
                             );
                             if (!mounted) return;

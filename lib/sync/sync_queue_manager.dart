@@ -71,6 +71,33 @@ class SyncQueueManager {
       ..sort((a, b) => a.createdAt.compareTo(b.createdAt));
   }
 
+  /// IDs referenced by create operations that have not been durably completed.
+  /// Repositories use this while refreshing from Firestore so a pending local
+  /// record is never erased just because it is not in the cloud yet.
+  Set<String> unfinishedEntityIds({
+    required String operationType,
+    required String idKey,
+  }) {
+    if (!_isBoxReady) return const <String>{};
+    final ids = <String>{};
+    for (final item in syncQueueBox.values) {
+      if (item.operationType != operationType ||
+          (item.status != 'pending' &&
+              item.status != 'failed' &&
+              item.status != 'syncing')) {
+        continue;
+      }
+      try {
+        final id = decodePayload(item)[idKey]?.toString().trim() ?? '';
+        if (id.isNotEmpty) ids.add(id);
+      } catch (_) {
+        // A malformed queue item is handled by the sync engine. It must not
+        // prevent other valid local records from being protected.
+      }
+    }
+    return ids;
+  }
+
   /// Number of pending (not yet synced) items.
   int get pendingCount => getPending().length;
 

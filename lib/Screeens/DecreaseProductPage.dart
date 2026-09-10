@@ -19,6 +19,7 @@ import 'Invoices/All_invoices.dart';
 import 'Invoices/InvoiceDetailPage.dart';
 import 'Data/quick_add_product_sheet.dart';
 import '../Services/client_invoice_balance_sync_service.dart';
+import '../Services/quick_entity_creation_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/return_invoice_save_service.dart';
@@ -41,6 +42,7 @@ import '../repositories/box_repository.dart';
 import '../repositories/balance_history_repository.dart';
 import '../local_db/models/balance_history_local.dart';
 import '../local_db/hive_init.dart';
+import '../utils/entity_name_normalizer.dart';
 
 class DecreaseProductPage extends StatefulWidget {
   /// When true, saves as [returnInvoices] (stock in, reversed profit/sales/box).
@@ -364,15 +366,18 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                   );
                                   return;
                                 }
+                                final normalizedNewName =
+                                    normalizeEntityName(newName);
                                 final alreadyExists = _clients.any((c) =>
-                                    c.toLowerCase() == newName.toLowerCase());
+                                    normalizeEntityName(c) ==
+                                    normalizedNewName);
                                 if (alreadyExists) {
                                   setSheet(() {
                                     duplicateWarning =
                                         'هذا العميل موجود بالفعل';
                                     selectedClient = _clients.firstWhere((c) =>
-                                        c.toLowerCase() ==
-                                        newName.toLowerCase());
+                                        normalizeEntityName(c) ==
+                                        normalizedNewName);
                                   });
                                   return;
                                 }
@@ -386,36 +391,43 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                       newClientBalanceCtrl.text.trim();
                                   final balance = balanceText.isEmpty
                                       ? 0.0
-                                      : (double.tryParse(balanceText) ?? 0.0);
+                                      : double.tryParse(balanceText);
+                                  if (balance == null || !balance.isFinite) {
+                                    if (!ctx.mounted) return;
+                                    ScaffoldMessenger.of(ctx).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                          'يرجى إدخال رصيد افتتاحي صحيح',
+                                        ),
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   final phone = phoneText.isEmpty
                                       ? ''
                                       : EgyptPhoneField.toWhatsappDigits(
                                           phoneText);
-                                  final docRef = FirebaseFirestore.instance
-                                      .collection('clients')
-                                      .doc();
-                                  final clientId = docRef.id;
-                                  await docRef.set({
-                                    'clientName': newName,
-                                    'balance': balance,
-                                    'phone': phone,
-                                    'id': clientId,
-                                  }, SetOptions(merge: true));
-                                  if (balance != 0) {
-                                    await docRef
-                                        .collection('balanceHistory')
-                                        .add({
-                                      'enteredBalance': balance,
-                                      'balanceBefore': 0.0,
-                                      'type': 'opening',
-                                      'timestamp': FieldValue.serverTimestamp(),
-                                    });
-                                  }
+                                  final client =
+                                      await QuickEntityCreationService.instance
+                                          .createClient(
+                                    name: newName,
+                                    openingBalance: balance,
+                                    phone: phone,
+                                  );
+                                  unawaited(
+                                    ConnectivityService.instance.forceSync(),
+                                  );
 
                                   if (!ctx.mounted) return;
                                   setSheet(() {
-                                    _clients.insert(0, newName);
-                                    selectedClient = newName;
+                                    if (!_clients.any(
+                                      (name) =>
+                                          normalizeEntityName(name) ==
+                                          normalizeEntityName(client.name),
+                                    )) {
+                                      _clients.insert(0, client.name);
+                                    }
+                                    selectedClient = client.name;
                                     selectedClientBalance = balance;
                                     showAddField = false;
                                     newClientCtrl.clear();
@@ -425,6 +437,13 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                                   if (!mounted) return;
                                   setState(() {
                                     _clientBalance = balance;
+                                  });
+                                } on QuickCreateDuplicateException catch (e) {
+                                  if (!ctx.mounted) return;
+                                  setSheet(() {
+                                    duplicateWarning =
+                                        'هذا العميل موجود بالفعل';
+                                    selectedClient = e.existingName;
                                   });
                                 } catch (e) {
                                   if (!ctx.mounted) return;
@@ -719,6 +738,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   }
 
   Timer? _productsDebounceTimer;
+  Timer? _clientsDebounceTimer;
 
   @override
   void initState() {
@@ -726,6 +746,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     _fetchProducts();
     _fetchClients();
     productsBox.listenable().addListener(_onProductsBoxChanged);
+    clientsBox.listenable().addListener(_onClientsBoxChanged);
     if (widget.invoiceToEdit != null) {
       _applyInvoiceToEdit(widget.invoiceToEdit!);
     } else {
@@ -743,10 +764,19 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     });
   }
 
+  void _onClientsBoxChanged() {
+    _clientsDebounceTimer?.cancel();
+    _clientsDebounceTimer = Timer(const Duration(milliseconds: 100), () {
+      if (mounted) _loadClientsFromLocalCache();
+    });
+  }
+
   @override
   void dispose() {
     _productsDebounceTimer?.cancel();
+    _clientsDebounceTimer?.cancel();
     productsBox.listenable().removeListener(_onProductsBoxChanged);
+    clientsBox.listenable().removeListener(_onClientsBoxChanged);
     super.dispose();
   }
 
@@ -1077,24 +1107,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         if (localClient != null) {
           resolvedClientId = localClient.id;
         } else {
-          // New client: Generate ID and save locally first
-          resolvedClientId =
-              FirebaseFirestore.instance.collection('clients').doc().id;
-          final clientData = {
-            'clientName': effectiveClient,
-            'balance': 0.0,
-            'id': resolvedClientId,
-          };
-
-          await ClientRepository.instance
-              .upsertLocal(resolvedClientId, clientData);
-
-          // Background sync to Firestore without blocking the UI
-          FirebaseFirestore.instance
-              .collection('clients')
-              .doc(resolvedClientId)
-              .set(clientData, SetOptions(merge: true))
-              .catchError((_) {});
+          // A typed-but-not-yet-saved name follows the same Hive-first path.
+          try {
+            final created = await QuickEntityCreationService.instance
+                .createClient(name: effectiveClient);
+            resolvedClientId = created.id;
+            unawaited(ConnectivityService.instance.forceSync());
+          } on QuickCreateDuplicateException catch (e) {
+            resolvedClientId = e.existingId;
+          }
         }
       }
 
@@ -1509,9 +1530,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   }
 
   bool _clientNameInList(String clientName) {
-    final normalized = clientName.trim().toLowerCase();
+    final normalized = normalizeEntityName(clientName);
     if (normalized.isEmpty) return false;
-    return _clients.any((c) => c.trim().toLowerCase() == normalized);
+    return _clients.any((c) => normalizeEntityName(c) == normalized);
   }
 
   Future<bool> _clientExists(String clientName) async {
