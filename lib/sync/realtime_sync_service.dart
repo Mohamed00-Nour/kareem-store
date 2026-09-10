@@ -6,6 +6,7 @@ import '../repositories/product_repository.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/supplier_repository.dart';
+import 'sync_queue_manager.dart';
 
 /// Real-time stream listener that bridges Firestore database changes directly
 /// into local Hive boxes. Enables immediate cross-device live streaming of
@@ -93,9 +94,36 @@ class RealtimeSyncService {
   void _listenToBuyingInvoices() {
     final sub = _fs.collection('buying invoices').snapshots().listen(
       (snapshot) {
+        final locallyWrittenIds = <String>{
+          ...SyncQueueManager.instance.unfinishedEntityIds(
+            operationType: 'createBuyingInvoice',
+            idKey: 'invoiceId',
+          ),
+          ...SyncQueueManager.instance.unfinishedEntityIds(
+            operationType: 'editBuyingInvoice',
+            idKey: 'invoiceId',
+          ),
+        };
+        final locallyDeletedIds = <String>{
+          ...SyncQueueManager.instance.unfinishedEntityIds(
+            operationType: 'deleteBuyingInvoice',
+            idKey: 'invoiceId',
+          ),
+          ...SyncQueueManager.instance.unfinishedEntityIds(
+            operationType: 'deleteBuyingInvoice',
+            idKey: 'supplierSubDocId',
+          ),
+        };
         for (final change in snapshot.docChanges) {
           final docId = change.doc.id;
           final data = change.doc.data();
+          final canonicalId = data?['invoiceId']?.toString().trim() ?? docId;
+          if (locallyWrittenIds.contains(docId) ||
+              locallyWrittenIds.contains(canonicalId) ||
+              locallyDeletedIds.contains(docId) ||
+              locallyDeletedIds.contains(canonicalId)) {
+            continue;
+          }
           if (change.type == DocumentChangeType.removed) {
             InvoiceRepository.instance.deleteBuyingLocal(docId);
           } else if (data != null) {

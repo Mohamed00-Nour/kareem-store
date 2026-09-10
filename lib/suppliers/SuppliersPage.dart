@@ -10,9 +10,13 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
+import '../Services/supplier_payment_service.dart';
 import '../repositories/supplier_repository.dart';
 import '../repositories/balance_history_repository.dart';
+import '../repositories/invoice_repository.dart';
 import '../local_db/models/balance_history_local.dart';
+import '../local_db/models/invoice_local.dart';
+import '../local_db/models/supplier_local.dart';
 import '../sync/connectivity_service.dart';
 import '../sync/sync_queue_manager.dart';
 import 'SupplierListPage.dart';
@@ -98,8 +102,7 @@ class SuppliersPage extends StatelessWidget {
 
                         final opening =
                             double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
-                        final totalBalance =
-                            opening == 0 ? 0.0 : opening.abs();
+                        final totalBalance = opening == 0 ? 0.0 : opening.abs();
 
                         final docRef = FirebaseFirestore.instance
                             .collection('suppliers')
@@ -119,8 +122,7 @@ class SuppliersPage extends StatelessWidget {
                               .upsertLocal(supplierId, data);
 
                           if (opening != 0) {
-                            final historyId =
-                                '${supplierId}_opening';
+                            final historyId = '${supplierId}_opening';
                             await BalanceHistoryRepository.instance.upsertLocal(
                               BalanceHistoryLocal(
                                 id: historyId,
@@ -206,47 +208,20 @@ class SuppliersPage extends StatelessWidget {
     required String name,
   }) async {
     try {
-      final bool isOnline = ConnectivityService.instance.isOnline;
-      if (!isOnline) {
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'createSupplier',
-          payload: {
-            'supplierId': supplierId,
-            'data': data,
-            'openingBalance': opening.abs(),
-          },
-        );
-        return;
-      }
-
-      final docRef =
-          FirebaseFirestore.instance.collection('suppliers').doc(supplierId);
-      await docRef.set(data, SetOptions(merge: true));
-
-      if (opening != 0) {
-        await FirebaseFirestore.instance
-            .collection('supplier_vouchers')
-            .add({
+      final createdAt = DateTime.now();
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'createSupplier',
+        payload: {
           'supplierId': supplierId,
+          'data': data,
+          'openingBalance': opening.abs(),
+          'openingHistoryId': '${supplierId}_opening',
+          'openingVoucherId': '${supplierId}_opening',
+          'createdAt': createdAt,
           'supplierName': name,
-          'direction': 'له',
-          'amount': opening.abs(),
-          'description': 'رصيد افتتاحي',
-          'date': Timestamp.now(),
-          'timestamp': FieldValue.serverTimestamp(),
-        });
-        await docRef
-            .collection('balanceHistory')
-            .doc('${supplierId}_opening')
-            .set({
-          'enteredBalance': opening.abs(),
-          'balanceBefore': 0.0,
-          'type': 'opening',
-          'direction': 'له',
-          'timestamp': FieldValue.serverTimestamp(),
-        });
-        await SupplierInvoiceBalanceSyncService.syncForSupplier(supplierId);
-      }
+        },
+      );
+      ConnectivityService.instance.forceSync();
     } catch (e) {
       debugPrint('Background supplier creation failed: $e');
     }
@@ -415,6 +390,42 @@ class _SupplierOpeningBalancesPageState
     extends State<_SupplierOpeningBalancesPage> {
   String _search = '';
   bool _generating = false;
+  List<SupplierLocal> _suppliers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromHive();
+    _backgroundSync();
+  }
+
+  void _loadFromHive() {
+    if (!mounted) return;
+    setState(() => _suppliers = SupplierRepository.instance.getAll());
+  }
+
+  Future<void> _backgroundSync() async {
+    if (!ConnectivityService.instance.isOnline) return;
+    try {
+      await ConnectivityService.instance.forceSync();
+      await SupplierPaymentService.instance.refreshVoucherCounterFromCloud();
+      await SupplierRepository.instance.deltaSync();
+      await InvoiceRepository.instance.deltaSyncBuying();
+      for (final supplier in SupplierRepository.instance.getAll()) {
+        await SupplierInvoiceBalanceSyncService.syncForSupplier(supplier.id);
+        await BalanceHistoryRepository.instance.fullSyncForSupplier(
+          supplier.id,
+        );
+        await InvoiceRepository.instance.syncBuyingReturnsForSupplier(
+          supplier.id,
+          supplierName: supplier.name,
+        );
+      }
+      _loadFromHive();
+    } catch (_) {
+      // Keep displaying the cached supplier ledger.
+    }
+  }
 
   void _showReportChoiceDialog() {
     showModalBottomSheet(
@@ -744,15 +755,14 @@ class _SupplierOpeningBalancesPageState
       final dateStr = DateFormat('dd/MM/yyyy').format(now);
       final timeStr = DateFormat('hh:mm:ss a').format(now);
 
-      final snap = await FirebaseFirestore.instance
-          .collection('suppliers')
-          .orderBy('name')
-          .get();
-
       final rows = <Map<String, dynamic>>[];
-      for (final doc in snap.docs) {
-        final name = (doc['name'] ?? '').toString();
-        final balance = (doc['totalBalance'] ?? 0.0).toDouble();
+      for (final supplier in SupplierRepository.instance.getAll()) {
+        final name = supplier.name;
+        final balance =
+            BalanceHistoryRepository.instance.calculateSupplierBalance(
+          supplier.id,
+          fallback: supplier.balance,
+        );
         final lahu = balance > 0 ? balance : 0.0;
         final alayhi = balance < 0 ? balance.abs() : 0.0;
         rows.add({'name': name, 'lahu': lahu, 'alayhi': alayhi});
@@ -931,17 +941,13 @@ class _SupplierOpeningBalancesPageState
     }
   }
 
-  void _showAddAmountDialog(BuildContext context, String supplierId,
-      String supplierName, double currentBalance) async {
-    // Get next voucher number
-    final voucherSnap = await FirebaseFirestore.instance
-        .collection('supplier_vouchers')
-        .orderBy('voucherNumber', descending: true)
-        .limit(1)
-        .get();
-    final nextVoucher = voucherSnap.docs.isNotEmpty
-        ? (voucherSnap.docs.first['voucherNumber'] as int) + 1
-        : 1;
+  void _showAddAmountDialog(
+    BuildContext context,
+    String supplierId,
+    String supplierName,
+  ) async {
+    final nextVoucher =
+        await SupplierPaymentService.instance.reserveVoucherNumber();
 
     String direction = 'عليه'; // 'له' or 'عليه'
     String paymentMethod = 'نقداً'; // 'نقداً', 'بطاقة', 'شيك'
@@ -1218,102 +1224,21 @@ class _SupplierOpeningBalancesPageState
                                     setDlg(() => isSaving = true);
 
                                     try {
-                                      final isOwedToSupplier =
-                                          direction == 'له';
-                                      double delta =
-                                          isOwedToSupplier ? amount : -amount;
-
-                                      // Get current supplier balance
-                                      DocumentSnapshot supplierDoc =
-                                          await FirebaseFirestore.instance
-                                              .collection('suppliers')
-                                              .doc(supplierId)
-                                              .get();
-
-                                      double latestBalance = 0.0;
-                                      if (supplierDoc.exists) {
-                                        latestBalance =
-                                            (supplierDoc['totalBalance'] ?? 0.0)
-                                                .toDouble();
-                                      } else {
-                                        latestBalance = currentBalance;
-                                      }
-
-                                      double newBalance = latestBalance + delta;
-
-                                      // Update supplier balance
-                                      await FirebaseFirestore.instance
-                                          .collection('suppliers')
-                                          .doc(supplierId)
-                                          .update({'totalBalance': newBalance});
-
                                       final vNumber =
                                           int.tryParse(voucherCtrl.text) ??
                                               nextVoucher;
-
-                                      // Record voucher
-                                      await FirebaseFirestore.instance
-                                          .collection('supplier_vouchers')
-                                          .add({
-                                        'supplierId': supplierId,
-                                        'supplierName': supplierName,
-                                        'voucherNumber': vNumber,
-                                        'direction': direction,
-                                        'amount': amount,
-                                        'description': descCtrl.text,
-                                        'date': selectedDate,
-                                        'paymentMethod': paymentMethod,
-                                        'timestamp':
-                                            FieldValue.serverTimestamp(),
-                                      });
-                                      // Construct notes for the balance history
-                                      String noteStr = 'سند $direction';
-                                      noteStr += ' رقم $vNumber';
-                                      final dText = descCtrl.text.trim();
-                                      // Add to balanceHistory
-                                      await FirebaseFirestore.instance
-                                          .collection('suppliers')
-                                          .doc(supplierId)
-                                          .collection('balanceHistory')
-                                          .add({
-                                        'enteredBalance': amount,
-                                        'balanceBefore': latestBalance,
-                                        'type': 'voucher',
-                                        'direction': direction,
-                                        'notes': noteStr,
-                                        'timestamp': selectedDate,
-                                      });
-
-                                      // Update the box collection
-                                      DocumentReference boxDocRef =
-                                          FirebaseFirestore.instance
-                                              .collection('box')
-                                              .doc('mainBox');
-
-                                      await boxDocRef.set(
-                                        {
-                                          'value': FieldValue.increment(
-                                              isOwedToSupplier ? -amount : amount)
-                                        },
-                                        SetOptions(merge: true),
+                                      await SupplierPaymentService.instance
+                                          .save(
+                                        supplierId: supplierId,
+                                        supplierName: supplierName,
+                                        direction: direction,
+                                        amount: amount,
+                                        description: descCtrl.text,
+                                        date: selectedDate,
+                                        paymentMethod: paymentMethod,
+                                        voucherNumber: vNumber,
                                       );
-
-                                      // Add change to the box subcollection
-                                      await boxDocRef
-                                          .collection('changes')
-                                          .add({
-                                        'date': FieldValue.serverTimestamp(),
-                                        'value': amount,
-                                        'type': isOwedToSupplier
-                                            ? 'decrement'
-                                            : 'addition',
-                                        'name': supplierName,
-                                        'notes': noteStr,
-                                        'invoiceNumber': null,
-                                      });
-
-                                      await SupplierInvoiceBalanceSyncService
-                                          .syncForSupplier(supplierId);
+                                      _loadFromHive();
 
                                       if (ctx.mounted) Navigator.pop(ctx);
                                       if (context.mounted) {
@@ -1444,18 +1369,11 @@ class _SupplierOpeningBalancesPageState
 
             // List
             Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('suppliers')
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (!snapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final suppliers = snapshot.data!.docs.where((d) {
+              child: Builder(
+                builder: (context) {
+                  final suppliers = _suppliers.where((supplier) {
                     if (_search.isEmpty) return true;
-                    return (d['name'] ?? '')
-                        .toString()
+                    return supplier.name
                         .toLowerCase()
                         .contains(_search.toLowerCase());
                   }).toList();
@@ -1464,15 +1382,19 @@ class _SupplierOpeningBalancesPageState
                     itemCount: suppliers.length,
                     separatorBuilder: (_, __) => const Divider(height: 1),
                     itemBuilder: (context, index) {
-                      final doc = suppliers[index];
-                      final name = (doc['name'] ?? '').toString();
-                      final balance = (doc['totalBalance'] ?? 0.0).toDouble();
+                      final supplier = suppliers[index];
+                      final name = supplier.name;
+                      final balance = BalanceHistoryRepository.instance
+                          .calculateSupplierBalance(
+                        supplier.id,
+                        fallback: supplier.balance,
+                      );
                       final lahu = balance < 0 ? balance.abs() : 0.0;
                       final alayhi = balance > 0 ? balance : 0.0;
 
                       return InkWell(
-                        onTap: () => _showAddAmountDialog(
-                            context, doc.id, name, balance),
+                        onTap: () =>
+                            _showAddAmountDialog(context, supplier.id, name),
                         child: Container(
                           padding: const EdgeInsets.symmetric(
                               horizontal: 12, vertical: 10),
@@ -1556,6 +1478,21 @@ class _SupplierDeferredPage extends StatefulWidget {
 class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
   String _search = '';
   bool _generating = false;
+
+  @override
+  void initState() {
+    super.initState();
+    _backgroundSync();
+  }
+
+  Future<void> _backgroundSync() async {
+    if (!ConnectivityService.instance.isOnline) return;
+    try {
+      await ConnectivityService.instance.forceSync();
+      await InvoiceRepository.instance.deltaSyncBuying();
+      if (mounted) setState(() {});
+    } catch (_) {}
+  }
 
   void _showReportChoiceDialog(
       List<MapEntry<String, double>> allEntries, double grandTotal) {
@@ -2084,16 +2021,12 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
-        body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('buying invoices')
-              .where('balance', isGreaterThan: 0)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            final invoices = snapshot.data!.docs;
+        body: Builder(
+          builder: (context) {
+            final invoices = InvoiceRepository.instance
+                .getAllBuying()
+                .where((invoice) => invoice.balance > 0)
+                .toList();
             if (invoices.isEmpty) {
               return const Center(child: Text('لا توجد فواتير آجلة متبقية'));
             }
@@ -2101,9 +2034,8 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
             // Group by supplierName
             final Map<String, double> totals = {};
             for (final inv in invoices) {
-              final data = inv.data() as Map<String, dynamic>;
-              final supplier = (data['supplierName'] ?? '').toString();
-              final balance = (data['balance'] ?? 0.0).toDouble();
+              final supplier = inv.supplierName;
+              final balance = inv.balance;
               totals[supplier] = (totals[supplier] ?? 0.0) + balance;
             }
 
@@ -2240,7 +2172,7 @@ class _SupplierRemainingReportPageState
   bool _generating = false;
 
   Future<void> _generatePdf(
-    List<QueryDocumentSnapshot> suppliers,
+    List<SupplierLocal> suppliers,
     Map<String, double> invoiceBalances,
   ) async {
     setState(() => _generating = true);
@@ -2256,9 +2188,13 @@ class _SupplierRemainingReportPageState
 
       // Build rows
       final rows = <Map<String, dynamic>>[];
-      for (final doc in suppliers) {
-        final name = (doc['name'] ?? '').toString();
-        final totalBalance = (doc['totalBalance'] ?? 0.0).toDouble();
+      for (final supplier in suppliers) {
+        final name = supplier.name;
+        final totalBalance =
+            BalanceHistoryRepository.instance.calculateSupplierBalance(
+          supplier.id,
+          fallback: supplier.balance,
+        );
         if (totalBalance == 0.0) continue;
         final invBal = invoiceBalances[name] ?? 0.0;
         final openCashBal = totalBalance - invBal;
@@ -2439,109 +2375,118 @@ class _SupplierRemainingReportPageState
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
-        body: StreamBuilder<QuerySnapshot>(
-          stream:
-              FirebaseFirestore.instance.collection('suppliers').snapshots(),
-          builder: (context, suppSnap) {
-            return StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('buying invoices')
-                  .where('balance', isGreaterThan: 0)
-                  .snapshots(),
-              builder: (context, invSnap) {
-                if (!suppSnap.hasData || !invSnap.hasData) {
-                  return const Center(child: CircularProgressIndicator());
-                }
+        body: Builder(
+          builder: (context) {
+            // Build invoice balances map by supplierName
+            final Map<String, double> invoiceBalances = {};
+            for (final invoice in InvoiceRepository.instance
+                .getAllBuying()
+                .where((invoice) => invoice.balance > 0)) {
+              final sName = invoice.supplierName;
+              final bal = invoice.balance;
+              invoiceBalances[sName] = (invoiceBalances[sName] ?? 0.0) + bal;
+            }
 
-                // Build invoice balances map by supplierName
-                final Map<String, double> invoiceBalances = {};
-                for (final doc in invSnap.data!.docs) {
-                  final data = doc.data() as Map<String, dynamic>;
-                  final sName = (data['supplierName'] ?? '').toString();
-                  final bal = (data['balance'] ?? 0.0).toDouble();
-                  invoiceBalances[sName] =
-                      (invoiceBalances[sName] ?? 0.0) + bal;
-                }
+            final suppliers = SupplierRepository.instance
+                .getAll()
+                .where((supplier) =>
+                    BalanceHistoryRepository.instance
+                        .calculateSupplierBalance(
+                          supplier.id,
+                          fallback: supplier.balance,
+                        )
+                        .abs() >
+                    0.001)
+                .toList()
+              ..sort((a, b) => BalanceHistoryRepository.instance
+                  .calculateSupplierBalance(
+                    b.id,
+                    fallback: b.balance,
+                  )
+                  .compareTo(BalanceHistoryRepository.instance
+                      .calculateSupplierBalance(
+                    a.id,
+                    fallback: a.balance,
+                  )));
 
-                final suppliers = suppSnap.data!.docs
-                    .where((d) => (d['totalBalance'] ?? 0.0) != 0.0)
-                    .toList()
-                  ..sort((a, b) => (b['totalBalance'] as num)
-                      .compareTo(a['totalBalance'] as num));
+            if (suppliers.isEmpty) {
+              return const Center(child: Text('لا توجد أرصدة متبقية للموردين'));
+            }
 
-                if (suppliers.isEmpty) {
-                  return const Center(
-                      child: Text('لا توجد أرصدة متبقية للموردين'));
-                }
+            final grandTotal = suppliers.fold<double>(
+              0.0,
+              (sum, supplier) =>
+                  sum +
+                  BalanceHistoryRepository.instance.calculateSupplierBalance(
+                    supplier.id,
+                    fallback: supplier.balance,
+                  ),
+            );
 
-                double grandTotal = suppliers.fold(
-                    0.0, (s, d) => s + (d['totalBalance'] ?? 0.0).toDouble());
-
-                return Stack(
+            return Stack(
+              children: [
+                Column(
                   children: [
-                    Column(
-                      children: [
-                        Container(
-                          color: Colors.orange.shade100,
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 16, vertical: 10),
-                          child: Row(
-                            mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                            children: [
-                              Text(grandTotal.toStringAsFixed(2),
-                                  style: const TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16,
-                                      color: Colors.red)),
-                              const Text('الإجمالي',
-                                  style: TextStyle(
-                                      fontWeight: FontWeight.bold,
-                                      fontSize: 16)),
-                            ],
-                          ),
-                        ),
-                        Expanded(
-                          child: ListView.builder(
-                            itemCount: suppliers.length,
-                            itemBuilder: (context, index) {
-                              final doc = suppliers[index];
-                              final balance =
-                                  (doc['totalBalance'] ?? 0.0).toDouble();
-                              return ListTile(
-                                onTap: () => Navigator.push(
-                                  context,
-                                  MaterialPageRoute(
-                                    builder: (_) => SupplierInvoicesPage(
-                                        supplierId: doc.id),
-                                  ),
-                                ),
-                                title: Text(doc['name'] ?? '',
-                                    textAlign: TextAlign.right,
-                                    style: const TextStyle(
-                                        fontWeight: FontWeight.bold)),
-                                trailing: Text(
-                                  balance.toStringAsFixed(2),
-                                  style: TextStyle(
-                                    color:
-                                        balance > 0 ? Colors.red : Colors.green,
-                                    fontWeight: FontWeight.bold,
-                                    fontSize: 15,
-                                  ),
-                                ),
-                              );
-                            },
-                          ),
-                        ),
-                      ],
-                    ),
-                    if (_generating)
-                      Container(
-                        color: Colors.black38,
-                        child: const Center(child: CircularProgressIndicator()),
+                    Container(
+                      color: Colors.orange.shade100,
+                      padding: const EdgeInsets.symmetric(
+                          horizontal: 16, vertical: 10),
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                        children: [
+                          Text(grandTotal.toStringAsFixed(2),
+                              style: const TextStyle(
+                                  fontWeight: FontWeight.bold,
+                                  fontSize: 16,
+                                  color: Colors.red)),
+                          const Text('الإجمالي',
+                              style: TextStyle(
+                                  fontWeight: FontWeight.bold, fontSize: 16)),
+                        ],
                       ),
+                    ),
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: suppliers.length,
+                        itemBuilder: (context, index) {
+                          final supplier = suppliers[index];
+                          final balance = BalanceHistoryRepository.instance
+                              .calculateSupplierBalance(
+                            supplier.id,
+                            fallback: supplier.balance,
+                          );
+                          return ListTile(
+                            onTap: () => Navigator.push(
+                              context,
+                              MaterialPageRoute(
+                                builder: (_) => SupplierInvoicesPage(
+                                    supplierId: supplier.id),
+                              ),
+                            ),
+                            title: Text(supplier.name,
+                                textAlign: TextAlign.right,
+                                style: const TextStyle(
+                                    fontWeight: FontWeight.bold)),
+                            trailing: Text(
+                              balance.toStringAsFixed(2),
+                              style: TextStyle(
+                                color: balance > 0 ? Colors.red : Colors.green,
+                                fontWeight: FontWeight.bold,
+                                fontSize: 15,
+                              ),
+                            ),
+                          );
+                        },
+                      ),
+                    ),
                   ],
-                );
-              },
+                ),
+                if (_generating)
+                  Container(
+                    color: Colors.black38,
+                    child: const Center(child: CircularProgressIndicator()),
+                  ),
+              ],
             );
           },
         ),
@@ -2568,32 +2513,38 @@ class _SupplierBalanceReportPage extends StatelessWidget {
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
-        body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('suppliers')
-              .where('totalBalance', isGreaterThan: 0)
-              .snapshots(),
-          builder: (context, snapshot) {
-            if (!snapshot.hasData) {
-              return const Center(child: CircularProgressIndicator());
-            }
-            final suppliers = snapshot.data!.docs;
+        body: Builder(
+          builder: (context) {
+            final suppliers = SupplierRepository.instance
+                .getAll()
+                .where((supplier) =>
+                    BalanceHistoryRepository.instance.calculateSupplierBalance(
+                      supplier.id,
+                      fallback: supplier.balance,
+                    ) >
+                    0)
+                .toList();
             if (suppliers.isEmpty) {
               return const Center(child: Text('لا يوجد موردين لديهم أرصدة'));
             }
             return ListView.builder(
               itemCount: suppliers.length,
               itemBuilder: (context, index) {
-                final doc = suppliers[index];
-                final balance = (doc['totalBalance'] ?? 0.0).toDouble();
+                final supplier = suppliers[index];
+                final balance =
+                    BalanceHistoryRepository.instance.calculateSupplierBalance(
+                  supplier.id,
+                  fallback: supplier.balance,
+                );
                 return ListTile(
                   onTap: () => Navigator.push(
                     context,
                     MaterialPageRoute(
-                      builder: (_) => SupplierInvoicesPage(supplierId: doc.id),
+                      builder: (_) =>
+                          SupplierInvoicesPage(supplierId: supplier.id),
                     ),
                   ),
-                  title: Text(doc['name'] ?? '',
+                  title: Text(supplier.name,
                       textAlign: TextAlign.right,
                       style: const TextStyle(fontWeight: FontWeight.bold)),
                   trailing: Text(
@@ -2625,6 +2576,28 @@ class _SupplierBalanceCheckPage extends StatefulWidget {
 
 class _SupplierBalanceCheckPageState extends State<_SupplierBalanceCheckPage> {
   String _search = '';
+  List<SupplierLocal> _suppliers = [];
+
+  @override
+  void initState() {
+    super.initState();
+    _loadFromHive();
+    _backgroundSync();
+  }
+
+  void _loadFromHive() {
+    if (!mounted) return;
+    setState(() => _suppliers = SupplierRepository.instance.getAll());
+  }
+
+  Future<void> _backgroundSync() async {
+    if (!ConnectivityService.instance.isOnline) return;
+    try {
+      await ConnectivityService.instance.forceSync();
+      await SupplierRepository.instance.deltaSync();
+      _loadFromHive();
+    } catch (_) {}
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -2654,18 +2627,11 @@ class _SupplierBalanceCheckPageState extends State<_SupplierBalanceCheckPage> {
               ),
             ),
             Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('suppliers')
-                    .snapshots(),
-                builder: (context, snapshot) {
-                  if (!snapshot.hasData) {
-                    return const Center(child: CircularProgressIndicator());
-                  }
-                  final all = snapshot.data!.docs.where((d) {
+              child: Builder(
+                builder: (context) {
+                  final all = _suppliers.where((supplier) {
                     if (_search.isEmpty) return true;
-                    return (d['name'] ?? '')
-                        .toString()
+                    return supplier.name
                         .toLowerCase()
                         .contains(_search.toLowerCase());
                   }).toList();
@@ -2673,17 +2639,21 @@ class _SupplierBalanceCheckPageState extends State<_SupplierBalanceCheckPage> {
                   return ListView.builder(
                     itemCount: all.length,
                     itemBuilder: (context, index) {
-                      final doc = all[index];
-                      final balance = (doc['totalBalance'] ?? 0.0).toDouble();
+                      final supplier = all[index];
+                      final balance = BalanceHistoryRepository.instance
+                          .calculateSupplierBalance(
+                        supplier.id,
+                        fallback: supplier.balance,
+                      );
                       return ListTile(
                         onTap: () => Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (_) =>
-                                SupplierInvoicesPage(supplierId: doc.id),
+                                SupplierInvoicesPage(supplierId: supplier.id),
                           ),
                         ),
-                        title: Text(doc['name'] ?? '',
+                        title: Text(supplier.name,
                             textAlign: TextAlign.right,
                             style:
                                 const TextStyle(fontWeight: FontWeight.bold)),

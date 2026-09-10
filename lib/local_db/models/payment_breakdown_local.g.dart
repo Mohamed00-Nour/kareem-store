@@ -25,13 +25,16 @@ class PaymentBreakdownLocalAdapter extends TypeAdapter<PaymentBreakdownLocal> {
       bankTransfer: fields[5] == null ? 0.0 : fields[5] as double,
       notes: fields[6] == null ? '' : fields[6] as String,
       timestamp: fields[7] as DateTime,
+      invoiceId: fields[8] == null ? '' : fields[8] as String,
+      invoiceNumber: fields[9] == null ? '' : fields[9] as String,
+      clientName: fields[10] == null ? '' : fields[10] as String,
     );
   }
 
   @override
   void write(BinaryWriter writer, PaymentBreakdownLocal obj) {
     writer
-      ..writeByte(8)
+      ..writeByte(11)
       ..writeByte(0)
       ..write(obj.id)
       ..writeByte(1)
@@ -47,7 +50,13 @@ class PaymentBreakdownLocalAdapter extends TypeAdapter<PaymentBreakdownLocal> {
       ..writeByte(6)
       ..write(obj.notes)
       ..writeByte(7)
-      ..write(obj.timestamp);
+      ..write(obj.timestamp)
+      ..writeByte(8)
+      ..write(obj.invoiceId)
+      ..writeByte(9)
+      ..write(obj.invoiceNumber)
+      ..writeByte(10)
+      ..write(obj.clientName);
   }
 
   @override

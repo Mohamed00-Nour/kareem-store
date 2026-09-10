@@ -17,10 +17,12 @@ class HiveBoxNames {
   static const String clients = 'clients_cache';
   static const String suppliers = 'suppliers_cache';
   static const String syncQueue = 'sync_queue';
-  static const String appMeta = 'app_meta'; // Stores lastSyncTimestamp, counters, etc.
+  static const String appMeta =
+      'app_meta'; // Stores lastSyncTimestamp, counters, etc.
   static const String invoices = 'invoices_cache';
   static const String returnInvoices = 'return_invoices_cache';
   static const String buyingInvoices = 'buying_invoices_cache';
+  static const String buyingReturnInvoices = 'buying_return_invoices_cache';
   static const String quotes = 'quotes_cache';
   static const String expenses = 'expenses_cache';
   static const String box = 'box_cache';
@@ -44,6 +46,7 @@ class HiveMetaKeys {
   static const String nextSalesInvoiceNumber = 'nextSalesInvoiceNumber';
   static const String nextReturnInvoiceNumber = 'nextReturnInvoiceNumber';
   static const String nextBuyingInvoiceNumber = 'nextBuyingInvoiceNumber';
+  static const String nextSupplierVoucherNumber = 'nextSupplierVoucherNumber';
 }
 
 /// Initializes and registers all Hive adapters.
@@ -54,15 +57,20 @@ Future<void> initHive() async {
   // Register TypeAdapters
   if (!Hive.isAdapterRegistered(0)) Hive.registerAdapter(ProductLocalAdapter());
   if (!Hive.isAdapterRegistered(1)) Hive.registerAdapter(ClientLocalAdapter());
-  if (!Hive.isAdapterRegistered(2)) Hive.registerAdapter(SupplierLocalAdapter());
-  if (!Hive.isAdapterRegistered(3)) Hive.registerAdapter(SyncQueueItemAdapter());
+  if (!Hive.isAdapterRegistered(2))
+    Hive.registerAdapter(SupplierLocalAdapter());
+  if (!Hive.isAdapterRegistered(3))
+    Hive.registerAdapter(SyncQueueItemAdapter());
   if (!Hive.isAdapterRegistered(4)) Hive.registerAdapter(InvoiceLocalAdapter());
   if (!Hive.isAdapterRegistered(5)) Hive.registerAdapter(ExpenseLocalAdapter());
   if (!Hive.isAdapterRegistered(6)) Hive.registerAdapter(QuoteLocalAdapter());
   if (!Hive.isAdapterRegistered(7)) Hive.registerAdapter(BoxLocalAdapter());
-  if (!Hive.isAdapterRegistered(8)) Hive.registerAdapter(BalanceHistoryLocalAdapter());
-  if (!Hive.isAdapterRegistered(9)) Hive.registerAdapter(DepartmentLocalAdapter());
-  if (!Hive.isAdapterRegistered(10)) Hive.registerAdapter(PaymentBreakdownLocalAdapter());
+  if (!Hive.isAdapterRegistered(8))
+    Hive.registerAdapter(BalanceHistoryLocalAdapter());
+  if (!Hive.isAdapterRegistered(9))
+    Hive.registerAdapter(DepartmentLocalAdapter());
+  if (!Hive.isAdapterRegistered(10))
+    Hive.registerAdapter(PaymentBreakdownLocalAdapter());
 
   // Open all boxes on startup safely (handles corrupted cache or schema upgrades)
   await _openBoxSafely<ProductLocal>(HiveBoxNames.products);
@@ -73,6 +81,7 @@ Future<void> initHive() async {
   await _openBoxSafely<InvoiceLocal>(HiveBoxNames.invoices);
   await _openBoxSafely<InvoiceLocal>(HiveBoxNames.returnInvoices);
   await _openBoxSafely<InvoiceLocal>(HiveBoxNames.buyingInvoices);
+  await _openBoxSafely<InvoiceLocal>(HiveBoxNames.buyingReturnInvoices);
   await _openBoxSafely<QuoteLocal>(HiveBoxNames.quotes);
   await _openBoxSafely<ExpenseLocal>(HiveBoxNames.expenses);
   await _openBoxSafely<BoxLocal>(HiveBoxNames.box);
@@ -118,7 +127,6 @@ Future<Box<T>> _openBoxSafely<T>(String name) async {
   }
 }
 
-
 /// Convenience accessors — use these to get open boxes from anywhere.
 Box<ProductLocal> get productsBox {
   _ensureBoxOpen(HiveBoxNames.products);
@@ -160,6 +168,11 @@ Box<InvoiceLocal> get buyingInvoicesBox {
   return Hive.box<InvoiceLocal>(HiveBoxNames.buyingInvoices);
 }
 
+Box<InvoiceLocal> get buyingReturnInvoicesBox {
+  _ensureBoxOpen(HiveBoxNames.buyingReturnInvoices);
+  return Hive.box<InvoiceLocal>(HiveBoxNames.buyingReturnInvoices);
+}
+
 Box<QuoteLocal> get quotesBox {
   _ensureBoxOpen(HiveBoxNames.quotes);
   return Hive.box<QuoteLocal>(HiveBoxNames.quotes);
@@ -192,4 +205,3 @@ void _ensureBoxOpen(String name) {
     );
   }
 }
-

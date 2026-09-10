@@ -2,6 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../repositories/supplier_repository.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/box_repository.dart';
+import '../repositories/balance_history_repository.dart';
+import '../local_db/models/balance_history_local.dart';
 import '../sync/sync_queue_manager.dart';
 import '../sync/connectivity_service.dart';
 import 'invoice_number_utils.dart';
@@ -65,13 +67,50 @@ class BuyingInvoiceUpdateService {
       'notes': notes,
       'paymentMethod': balance == 0 ? 'نقد' : 'آجل',
       'invoiceType': 'buying',
-      'products': newProducts
-          .map((p) => Map<String, dynamic>.from(p))
-          .toList(),
+      'products': newProducts.map((p) => Map<String, dynamic>.from(p)).toList(),
     };
 
     // ── 3. Update Hive immediately ──
-    await InvoiceRepository.instance.upsertBuyingLocal(rootInvoiceId, rootUpdate);
+    await InvoiceRepository.instance
+        .upsertBuyingLocal(rootInvoiceId, rootUpdate);
+
+    if (supplierId.isNotEmpty) {
+      final invoiceNumberText = invoiceNumber?.toString() ?? '';
+      await BalanceHistoryRepository.instance.deleteByInvoiceId(
+        'supplier',
+        supplierId,
+        rootInvoiceId,
+        invoiceNumber: invoiceNumberText,
+      );
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: '${rootInvoiceId}_buying',
+          parentId: supplierId,
+          parentType: 'supplier',
+          enteredBalance: totalSum,
+          balanceBefore: previousBalance,
+          type: 'buying',
+          invoiceId: rootInvoiceId,
+          invoiceNumber: invoiceNumberText,
+          timestamp: selectedDate ?? DateTime.now(),
+        ),
+      );
+      if (paidAmount > 0) {
+        await BalanceHistoryRepository.instance.upsertLocal(
+          BalanceHistoryLocal(
+            id: '${rootInvoiceId}_pay',
+            parentId: supplierId,
+            parentType: 'supplier',
+            enteredBalance: paidAmount,
+            balanceBefore: previousBalance + totalSum,
+            type: 'buying_payment',
+            invoiceId: rootInvoiceId,
+            invoiceNumber: invoiceNumberText,
+            timestamp: selectedDate ?? DateTime.now(),
+          ),
+        );
+      }
+    }
 
     final paidDelta = paidAmount - oldPaid;
     if (paidDelta.abs() > 0.001) {
@@ -81,12 +120,14 @@ class BuyingInvoiceUpdateService {
     if (supplierId.isNotEmpty) {
       final localSup = SupplierRepository.instance.getById(supplierId);
       if (localSup != null) {
-        final oldTotal = invoiceNum(originalInvoice['totalSum']);
-        final oldBal = oldTotal - oldPaid;
-        final newBal = balance;
+        final newBalance =
+            BalanceHistoryRepository.instance.calculateSupplierBalance(
+          supplierId,
+          fallback: localSup.balance,
+        );
         await SupplierRepository.instance.updateLocalBalance(
           supplierId,
-          localSup.balance - oldBal + newBal,
+          newBalance,
         );
       }
     }

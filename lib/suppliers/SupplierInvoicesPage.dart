@@ -33,8 +33,6 @@ class SupplierInvoicesPage extends StatefulWidget {
 }
 
 class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
-  static const int _pageSize = 20;
-
   String? _supplierName;
   double? _currentSupplierBalance;
   String _userRole = 'user';
@@ -52,10 +50,9 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
   bool _hasMoreInvoices = true;
   bool _showPayments = false; // toggle: show payment/voucher cards in the list
 
-  List<QueryDocumentSnapshot> _invoices = [];
-  List<QueryDocumentSnapshot> _returnInvoices = [];
-  List<QueryDocumentSnapshot> _payments = [];
-  DocumentSnapshot? _lastInvoiceDoc;
+  List<_SupplierItemDoc> _invoices = [];
+  List<_SupplierItemDoc> _returnInvoices = [];
+  List<_SupplierItemDoc> _payments = [];
 
   final Set<String> _expandedInvoiceIds = {};
   String _searchQuery = '';
@@ -64,9 +61,8 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
   void initState() {
     super.initState();
     _loadUserRole();
-    _fetchSupplierName();
-    _fetchInvoices(reset: true);
-    _scrollController.addListener(_onScroll);
+    _loadFromHive();
+    _backgroundSyncInvoices();
   }
 
   @override
@@ -90,91 +86,60 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     }
   }
 
-  void _onScroll() {
-    if (!_scrollController.hasClients || _searchQuery.isNotEmpty) return;
-    final pos = _scrollController.position;
-    if (pos.pixels < pos.maxScrollExtent - 300) return;
-    _loadMoreInvoices();
-  }
-
-  Future<void> _fetchSupplierName() async {
-    // 1. Read directly from local Hive (0ms)
+  void _loadFromHive() {
     final local = SupplierRepository.instance.getById(widget.supplierId);
-    if (local != null && mounted) {
-      final ledgerBalance = BalanceHistoryRepository.instance
-          .calculateSupplierBalance(widget.supplierId, fallback: local.balance);
-      setState(() {
-        _supplierName = local.name;
-        _currentSupplierBalance = ledgerBalance;
-      });
-    }
+    final supplierName = local?.name ?? _supplierName;
+    final invoices = InvoiceRepository.instance.getBuyingBySupplier(
+      widget.supplierId,
+      supplierName: supplierName,
+    );
+    final returns = InvoiceRepository.instance.getBuyingReturnsBySupplier(
+      widget.supplierId,
+      supplierName: supplierName,
+    );
+    final history = BalanceHistoryRepository.instance.getForSupplier(
+      widget.supplierId,
+    );
+    final balance = BalanceHistoryRepository.instance.calculateSupplierBalance(
+      widget.supplierId,
+      fallback: local?.balance ?? _currentSupplierBalance ?? 0.0,
+    );
 
-    // 2. Background refresh & history sync if online
-    try {
-      if (ConnectivityService.instance.isOnline) {
-        await SupplierInvoiceBalanceSyncService.syncForSupplier(
-          widget.supplierId,
-        );
-        await BalanceHistoryRepository.instance
-            .fullSyncForSupplier(widget.supplierId);
-
-        final doc = await FirebaseFirestore.instance
-            .collection('suppliers')
-            .doc(widget.supplierId)
-            .get();
-        if (mounted && doc.exists) {
-          final data = doc.data();
-          if (data != null) {
-            final resolvedName =
-                data['name'] ?? data['supplierName'] ?? 'المورد';
-            final Map<String, dynamic> localData =
-                Map<String, dynamic>.from(data);
-            localData['name'] = resolvedName;
-            localData['balance'] =
-                (data['totalBalance'] ?? data['balance'] ?? 0.0).toDouble();
-
-            await SupplierRepository.instance
-                .upsertLocal(widget.supplierId, localData);
-
-            final refreshed =
-                SupplierRepository.instance.getById(widget.supplierId);
-            if (mounted) {
-              setState(() {
-                _supplierName = refreshed?.name ?? resolvedName;
-                _currentSupplierBalance = refreshed?.balance ??
-                    (data['totalBalance'] ?? data['balance'] ?? 0.0).toDouble();
-              });
-            }
-          }
-        }
-      }
-    } catch (_) {}
+    if (!mounted) return;
+    setState(() {
+      _supplierName = supplierName;
+      _currentSupplierBalance = balance;
+      _invoices = _deduplicateInvoiceDocs(
+        invoices.map(
+          (invoice) => _SupplierItemDoc(invoice.id, invoice.toMap()),
+        ),
+      );
+      _returnInvoices = returns
+          .map((invoice) => _SupplierItemDoc(invoice.id, invoice.toMap()))
+          .toList();
+      _payments = history
+          .where((entry) => !{
+                'buying',
+                'buying_payment',
+                'buying_return',
+                'buying_return_payment',
+                'return',
+                'return_payment',
+              }.contains(entry.type))
+          .map((entry) => _SupplierItemDoc(entry.id, entry.toMap()))
+          .toList();
+      _isLoadingInvoices = false;
+      _isLoadingMoreInvoices = false;
+      _hasMoreInvoices = false;
+    });
   }
 
-  Query _invoicesQuery() => FirebaseFirestore.instance
-      .collection('suppliers')
-      .doc(widget.supplierId)
-      .collection('buying invoices')
-      .orderBy('date', descending: true);
-
-  Query _returnInvoicesQuery() => FirebaseFirestore.instance
-      .collection('suppliers')
-      .doc(widget.supplierId)
-      .collection('returnBuyingInvoices')
-      .orderBy('date', descending: true);
-
-  Query _paymentsQuery() => FirebaseFirestore.instance
-      .collection('suppliers')
-      .doc(widget.supplierId)
-      .collection('balanceHistory')
-      .orderBy('timestamp', descending: true);
-
-  List<QueryDocumentSnapshot> _deduplicateInvoiceDocs(
-    Iterable<QueryDocumentSnapshot> docs,
+  List<_SupplierItemDoc> _deduplicateInvoiceDocs(
+    Iterable<_SupplierItemDoc> docs,
   ) {
     final seen = <String>{};
     return docs.where((doc) {
-      final data = doc.data() as Map<String, dynamic>? ?? {};
+      final data = doc.data;
       final number = data['invoiceNumber']?.toString().trim() ?? '';
       final linkedId = data['invoiceId']?.toString().trim() ?? '';
       final storedId = data['id']?.toString().trim() ?? '';
@@ -185,80 +150,32 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     }).toList();
   }
 
-  Future<void> _fetchInvoices({bool reset = false}) async {
-    if (reset) {
-      if (!mounted) return;
-      setState(() {
-        _isLoadingInvoices = true;
-        _invoices = [];
-        _returnInvoices = [];
-        _payments = [];
-        _lastInvoiceDoc = null;
-        _hasMoreInvoices = true;
-      });
-    } else {
-      if (_isLoadingMoreInvoices || !_hasMoreInvoices || _isLoadingInvoices) {
-        return;
-      }
-      setState(() => _isLoadingMoreInvoices = true);
-    }
-
+  Future<void> _backgroundSyncInvoices() async {
+    if (!ConnectivityService.instance.isOnline) return;
     try {
-      Query query = _invoicesQuery().limit(_pageSize);
-      if (!reset && _lastInvoiceDoc != null) {
-        query = query.startAfterDocument(_lastInvoiceDoc!);
-      }
-
-      final Future<QuerySnapshot> invoiceFuture = query.get();
-      final Future<QuerySnapshot?> returnFuture = reset
-          ? _returnInvoicesQuery().get()
-          : Future<QuerySnapshot?>.value(null);
-      final Future<QuerySnapshot?> paymentFuture =
-          reset ? _paymentsQuery().get() : Future<QuerySnapshot?>.value(null);
-
-      final snap = await invoiceFuture;
-      final retSnap = await returnFuture;
-      QuerySnapshot? paySnap;
-      try {
-        paySnap = await paymentFuture;
-      } catch (_) {
-        paySnap = null;
-      }
-      if (!mounted) return;
-
-      setState(() {
-        if (reset) {
-          _invoices = _deduplicateInvoiceDocs(snap.docs);
-          _returnInvoices = retSnap?.docs ?? [];
-          _payments = (paySnap?.docs ?? []).where((doc) {
-            final t =
-                (doc.data() as Map<String, dynamic>)['type']?.toString() ?? '';
-            return t != 'buying' && t != 'return';
-          }).toList();
-        } else {
-          _invoices = _deduplicateInvoiceDocs([..._invoices, ...snap.docs]);
-        }
-        if (snap.docs.isNotEmpty) {
-          _lastInvoiceDoc = snap.docs.last;
-        }
-        _hasMoreInvoices = snap.docs.length >= _pageSize;
-        _isLoadingInvoices = false;
-        _isLoadingMoreInvoices = false;
-      });
+      await ConnectivityService.instance.forceSync();
+      await SupplierInvoiceBalanceSyncService.syncForSupplier(
+        widget.supplierId,
+      );
+      await SupplierRepository.instance.deltaSync();
+      final local = SupplierRepository.instance.getById(widget.supplierId);
+      await InvoiceRepository.instance.deltaSyncBuying();
+      await InvoiceRepository.instance.syncBuyingReturnsForSupplier(
+        widget.supplierId,
+        supplierName: local?.name,
+      );
+      await BalanceHistoryRepository.instance.fullSyncForSupplier(
+        widget.supplierId,
+      );
+      _loadFromHive();
     } catch (_) {
-      if (!mounted) return;
-      setState(() {
-        _isLoadingInvoices = false;
-        _isLoadingMoreInvoices = false;
-      });
+      _loadFromHive();
     }
   }
 
-  Future<void> _loadMoreInvoices() => _fetchInvoices(reset: false);
-
   Future<void> _refreshInvoices() async {
-    await _fetchSupplierName();
-    await _fetchInvoices(reset: true);
+    _loadFromHive();
+    await _backgroundSyncInvoices();
   }
 
   Future<void> _saveBalance() async {
@@ -296,7 +213,10 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       final supplierLocal =
           SupplierRepository.instance.getById(widget.supplierId);
       final double currentBalance =
-          supplierLocal?.balance ?? _currentSupplierBalance ?? 0.0;
+          BalanceHistoryRepository.instance.calculateSupplierBalance(
+        widget.supplierId,
+        fallback: supplierLocal?.balance ?? _currentSupplierBalance ?? 0.0,
+      );
       final String supplierName =
           supplierLocal?.name ?? _supplierName ?? widget.supplierId;
 
@@ -336,14 +256,13 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
         setState(() {
           _currentSupplierBalance = newBalance;
         });
-        _refreshInvoices();
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
         );
       }
 
       // 3. Sync to Firestore asynchronously in background (non-blocking)
-      _syncSupplierBalanceToFirestoreInBackground(
+      await _syncSupplierBalanceToFirestoreInBackground(
         supplierId: widget.supplierId,
         supplierName: supplierName,
         newBalance: newBalance,
@@ -353,6 +272,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
         notesText: notesText,
         historyId: historyId,
       );
+      _loadFromHive();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -362,7 +282,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     }
   }
 
-  void _syncSupplierBalanceToFirestoreInBackground({
+  Future<void> _syncSupplierBalanceToFirestoreInBackground({
     required String supplierId,
     required String supplierName,
     required double newBalance,
@@ -418,9 +338,9 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     );
   }
 
-  void _handleEditInvoice(DocumentSnapshot invoice) {
+  void _handleEditInvoice(_SupplierItemDoc invoice) {
     if (_userRole == 'admin') {
-      final invoiceData = Map<String, dynamic>.from(invoice.data() as Map);
+      final invoiceData = Map<String, dynamic>.from(invoice.data);
       invoiceData['id'] = invoiceData['invoiceId'] ?? invoice.id;
       Navigator.push(
         context,
@@ -494,6 +414,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
           List<Map<String, dynamic>>.from(invoiceData?['products'] ?? []);
       final paidAmount = invoiceNum(invoiceData?['paidAmount']);
       final totalSum = invoiceNum(invoiceData?['totalSum']);
+      final invoiceNumber = invoiceData?['invoiceNumber']?.toString();
       final rootInvoiceId = invoiceData?['invoiceId']?.toString() ?? invoiceId;
 
       // 2. Decrement stock in local Hive (purchase invoice added stock, deleting it removes that stock)
@@ -513,11 +434,19 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       }
 
       // 4. Delete balance history entries locally from Hive
-      await BalanceHistoryRepository.instance
-          .deleteByInvoiceId('supplier', widget.supplierId, invoiceId);
+      await BalanceHistoryRepository.instance.deleteByInvoiceId(
+        'supplier',
+        widget.supplierId,
+        invoiceId,
+        invoiceNumber: invoiceNumber,
+      );
       if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
-        await BalanceHistoryRepository.instance
-            .deleteByInvoiceId('supplier', widget.supplierId, rootInvoiceId);
+        await BalanceHistoryRepository.instance.deleteByInvoiceId(
+          'supplier',
+          widget.supplierId,
+          rootInvoiceId,
+          invoiceNumber: invoiceNumber,
+        );
       }
 
       // 5. Adjust Cash Box locally if there was a payment (paid cash is returned to box)
@@ -526,12 +455,18 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       }
 
       // 6. Update supplier balance locally in Hive
-      final unpaid = totalSum - paidAmount;
       final localSup = SupplierRepository.instance.getById(widget.supplierId) ??
           SupplierRepository.instance.findByName(_supplierName ?? '');
       if (localSup != null) {
-        await SupplierRepository.instance
-            .updateLocalBalance(localSup.id, localSup.balance - unpaid);
+        final recalculated =
+            BalanceHistoryRepository.instance.calculateSupplierBalance(
+          localSup.id,
+          fallback: localSup.balance - (totalSum - paidAmount),
+        );
+        await SupplierRepository.instance.updateLocalBalance(
+          localSup.id,
+          recalculated,
+        );
       }
 
       // 7. Enqueue background deletion to SyncQueue
@@ -554,7 +489,8 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم حذف الفاتورة وتحديث المخزون بنجاح')),
       );
-      await _refreshInvoices();
+      _loadFromHive();
+      _backgroundSyncInvoices();
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -915,11 +851,13 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
       final ts = d['timestamp'] ?? d['date'];
       if (ts is Timestamp) return ts.toDate();
       if (ts is DateTime) return ts;
+      if (ts is String) return DateTime.tryParse(ts) ?? DateTime.now();
       return DateTime.now();
     }
     final ts = d['date'];
     if (ts is Timestamp) return ts.toDate();
     if (ts is DateTime) return ts;
+    if (ts is String) return DateTime.tryParse(ts) ?? DateTime(0);
     return DateTime(0);
   }
 
@@ -1238,8 +1176,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
             children: [
               cell((p['product'] ?? '').toString(), align: TextAlign.right),
               cell(invoiceQty(p['amount'])),
-              cell(invoiceAmount(
-                  p['buyingPrice'] ?? p['selectedPrice'] ?? p['price'])),
+              cell(invoiceAmount(invoiceBuyingLineUnitPrice(p))),
               cell(invoiceAmount(p['total'] ?? p['totalCost'])),
             ],
           ),
@@ -1262,13 +1199,14 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
 
     final invoice = entry.doc;
     final bool isReturn = entry.kind == _SupplierEntryKind.returnInvoice;
-    final invoiceData = Map<String, dynamic>.from(invoice.data() as Map);
+    final invoiceData = Map<String, dynamic>.from(invoice.data);
     final dateField = invoiceData['date'];
-    if (dateField is! Timestamp) {
-      return const SizedBox.shrink();
-    }
-
-    final invoiceDate = dateField.toDate().toLocal();
+    final invoiceDate = dateField is Timestamp
+        ? dateField.toDate().toLocal()
+        : dateField is DateTime
+            ? dateField.toLocal()
+            : DateTime.tryParse(dateField?.toString() ?? '')?.toLocal();
+    if (invoiceDate == null) return const SizedBox.shrink();
     final formattedDate = invoiceDate.toString().split(' ')[0];
     final formattedTime = intl.DateFormat('hh:mm a').format(invoiceDate);
 
@@ -1698,11 +1636,19 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
 enum _SupplierEntryKind { invoice, returnInvoice, payment }
 
 class _SupplierInvoiceEntry {
-  final QueryDocumentSnapshot doc;
+  final _SupplierItemDoc doc;
   final _SupplierEntryKind kind;
 
   _SupplierInvoiceEntry({required this.doc, required this.kind});
 
   String get id => doc.id;
-  Map<String, dynamic> get data => doc.data() as Map<String, dynamic>;
+  Map<String, dynamic> get data => doc.data;
+}
+
+class _SupplierItemDoc {
+  final String id;
+  final Map<String, dynamic> data;
+
+  _SupplierItemDoc(this.id, Map<String, dynamic> data)
+      : data = Map<String, dynamic>.from(data);
 }

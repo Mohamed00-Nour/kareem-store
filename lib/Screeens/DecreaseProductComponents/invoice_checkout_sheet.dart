@@ -44,6 +44,10 @@ Future<CheckoutSelectionResult?> showInvoiceCheckoutSheet({
   required bool isSaving,
   required Future<bool> Function(String) clientExists,
   required Future<double> Function(String) fetchClientBalance,
+  double initialWalletAmount = 0.0,
+  double initialCashAmount = 0.0,
+  double initialInstapayAmount = 0.0,
+  double initialBankTransferAmount = 0.0,
 }) {
   return showModalBottomSheet<CheckoutSelectionResult>(
     context: context,
@@ -67,6 +71,10 @@ Future<CheckoutSelectionResult?> showInvoiceCheckoutSheet({
         isSaving: isSaving,
         clientExists: clientExists,
         fetchClientBalance: fetchClientBalance,
+        initialWalletAmount: initialWalletAmount,
+        initialCashAmount: initialCashAmount,
+        initialInstapayAmount: initialInstapayAmount,
+        initialBankTransferAmount: initialBankTransferAmount,
       );
     },
   );
@@ -87,6 +95,10 @@ class _InvoiceCheckoutSheetContent extends StatefulWidget {
   final bool isSaving;
   final Future<bool> Function(String) clientExists;
   final Future<double> Function(String) fetchClientBalance;
+  final double initialWalletAmount;
+  final double initialCashAmount;
+  final double initialInstapayAmount;
+  final double initialBankTransferAmount;
 
   const _InvoiceCheckoutSheetContent({
     required this.isEditing,
@@ -103,6 +115,10 @@ class _InvoiceCheckoutSheetContent extends StatefulWidget {
     required this.isSaving,
     required this.clientExists,
     required this.fetchClientBalance,
+    required this.initialWalletAmount,
+    required this.initialCashAmount,
+    required this.initialInstapayAmount,
+    required this.initialBankTransferAmount,
   });
 
   @override
@@ -151,10 +167,16 @@ class _InvoiceCheckoutSheetContentState
             ? widget.invoiceDiscount.toStringAsFixed(2)
             : '');
     notesCtrl = TextEditingController(text: notes);
-    walletCtrl = TextEditingController();
-    cashCtrl = TextEditingController();
-    instapayCtrl = TextEditingController();
-    bankTransferCtrl = TextEditingController();
+    String initialBreakdownText(double value) =>
+        value > 0 ? value.toStringAsFixed(2) : '';
+    walletCtrl = TextEditingController(
+        text: initialBreakdownText(widget.initialWalletAmount));
+    cashCtrl = TextEditingController(
+        text: initialBreakdownText(widget.initialCashAmount));
+    instapayCtrl = TextEditingController(
+        text: initialBreakdownText(widget.initialInstapayAmount));
+    bankTransferCtrl = TextEditingController(
+        text: initialBreakdownText(widget.initialBankTransferAmount));
     lastManualPaid = widget.isEditing && widget.originalPaidAmount > 0
         ? widget.originalPaidAmount.toStringAsFixed(2)
         : '';

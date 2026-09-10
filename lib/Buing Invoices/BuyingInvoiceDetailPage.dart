@@ -20,7 +20,8 @@ class BuyingInvoiceDetailPage extends StatefulWidget {
   const BuyingInvoiceDetailPage({super.key, required this.invoice});
 
   @override
-  State<BuyingInvoiceDetailPage> createState() => _BuyingInvoiceDetailPageState();
+  State<BuyingInvoiceDetailPage> createState() =>
+      _BuyingInvoiceDetailPageState();
 }
 
 class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
@@ -35,7 +36,6 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
   }
 
   Future<void> _fetchSupplierBalance() async {
-
     final supplierName = widget.invoice['supplierName']?.toString() ?? '';
     final supplierId = widget.invoice['supplierId']?.toString() ?? '';
     double? totalBalance;
@@ -43,7 +43,8 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
       totalBalance = SupplierRepository.instance.getById(supplierId)?.balance;
     }
     if (totalBalance == null && supplierName.isNotEmpty) {
-      totalBalance = SupplierRepository.instance.findByName(supplierName)?.balance;
+      totalBalance =
+          SupplierRepository.instance.findByName(supplierName)?.balance;
     }
 
     if (mounted) {
@@ -54,14 +55,12 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
     }
   }
 
-
   Future<void> _captureAndShareScreenshot() async {
     try {
       final boundary = _globalKey.currentContext!.findRenderObject()
           as RenderRepaintBoundary;
       final image = await boundary.toImage(pixelRatio: 3.0);
-      final byteData =
-          await image.toByteData(format: ui.ImageByteFormat.png);
+      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
       final pngBytes = byteData!.buffer.asUint8List();
 
       final directory = await getTemporaryDirectory();
@@ -253,7 +252,8 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
                   ),
                   backgroundColor: Colors.black.withOpacity(0.7),
                 ),
-                onPressed: _isLoadingBalance ? null : _captureAndShareScreenshot,
+                onPressed:
+                    _isLoadingBalance ? null : _captureAndShareScreenshot,
                 child: Text(
                   'إرسال الفاتورة',
                   style: TextStyle(

@@ -59,6 +59,39 @@ void main() {
     });
   });
 
+  group('invoiceBuyingLineUnitPrice', () {
+    test('uses the cost field saved by current buying invoices', () {
+      expect(
+        invoiceBuyingLineUnitPrice({
+          'cost': 125,
+          'amount': 4,
+          'totalCost': 500,
+        }),
+        125,
+      );
+    });
+
+    test('skips zero legacy aliases and falls back to current cost', () {
+      expect(
+        invoiceBuyingLineUnitPrice({
+          'buyingPrice': 0,
+          'cost': '80.5',
+        }),
+        80.5,
+      );
+    });
+
+    test('derives a missing unit cost from totalCost and quantity', () {
+      expect(
+        invoiceBuyingLineUnitPrice({
+          'amount': 5,
+          'totalCost': 750,
+        }),
+        150,
+      );
+    });
+  });
+
   group('invoiceTryParseAmount', () {
     test('parses common localized money input', () {
       expect(invoiceTryParseAmount('900,50'), 900.50);

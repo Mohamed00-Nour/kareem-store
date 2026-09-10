@@ -191,12 +191,35 @@ class BatchSyncEngine {
       case 'updateStock':
         await _syncUpdateStock(payload);
         break;
+      case 'createPaymentBreakdown':
+      case 'upsertPaymentBreakdown':
+        await _syncUpsertPaymentBreakdown(payload);
+        break;
+      case 'deletePaymentBreakdown':
+        await _syncDeletePaymentBreakdown(payload);
+        break;
       default:
         throw UnsupportedError('Unknown operation type: $operationType');
     }
   }
 
   // ── Operation Handlers ────────────────────────────────────────────────────
+
+  Future<void> _syncUpsertPaymentBreakdown(Map<String, dynamic> payload) async {
+    final id = payload['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    final data = Map<String, dynamic>.from(payload['data'] as Map? ?? {});
+    await _fs
+        .collection('payment_breakdowns')
+        .doc(id)
+        .set(data, SetOptions(merge: true));
+  }
+
+  Future<void> _syncDeletePaymentBreakdown(Map<String, dynamic> payload) async {
+    final id = payload['id']?.toString() ?? '';
+    if (id.isEmpty) return;
+    await _fs.collection('payment_breakdowns').doc(id).delete();
+  }
 
   /// Syncs an offline-created selling invoice to Firestore as a single batch:
   /// - Invoice document in root invoices collection
@@ -709,10 +732,20 @@ class BatchSyncEngine {
         : 'supplier_adjust_${logEntry['type']}_${timestamp}_${amount.toStringAsFixed(4)}'
             .replaceAll('/', '-');
     final supplierName = payload['supplierName']?.toString() ?? '';
+    final direction = payload['direction']?.toString().trim().isNotEmpty == true
+        ? payload['direction'].toString().trim()
+        : (isAddition ? '\u0644\u0647' : '\u0639\u0644\u064a\u0647');
+    final voucherNumber = payload['voucherNumber'];
+    final paymentMethod = payload['paymentMethod']?.toString() ?? '';
+    final description = payload['description']?.toString() ??
+        logEntry['notes']?.toString() ??
+        '';
     final supplierRef = _fs.collection('suppliers').doc(supplierId);
     final historyRef = supplierRef.collection('balanceHistory').doc(historyId);
-    final voucherRef =
-        _fs.collection('supplier_vouchers').doc('${historyId}_voucher');
+    final voucherId = payload['voucherId']?.toString().trim().isNotEmpty == true
+        ? payload['voucherId'].toString().trim()
+        : '${historyId}_voucher';
+    final voucherRef = _fs.collection('supplier_vouchers').doc(voucherId);
     final boxRef = _fs.collection('box').doc('mainBox');
     final boxChangeRef = boxRef.collection('changes').doc(historyId);
     final delta = isAddition ? amount : -amount;
@@ -730,39 +763,42 @@ class BatchSyncEngine {
         SetOptions(merge: true),
       );
 
-      if (isAddition) {
-        transaction.set(historyRef, logEntry);
-        return;
-      }
-
       transaction.set(voucherRef, {
         'supplierId': supplierId,
         'supplierName': supplierName,
-        'direction': '\u0639\u0644\u064a\u0647',
+        'voucherNumber': voucherNumber,
+        'direction': direction,
         'amount': amount,
-        'description': logEntry['notes']?.toString() ?? '',
+        'description': description,
+        'paymentMethod': paymentMethod,
         'date': logEntry['timestamp'],
         'timestamp': logEntry['timestamp'],
       });
       transaction.set(historyRef, {
         ...logEntry,
         'type': 'voucher',
-        'direction': '\u0639\u0644\u064a\u0647',
+        'direction': direction,
         'voucherId': voucherRef.id,
+        if (voucherNumber != null) 'voucherNumber': voucherNumber,
+        if (paymentMethod.isNotEmpty) 'paymentMethod': paymentMethod,
       });
-      transaction.set(
-        boxRef,
-        {'value': FieldValue.increment(-amount)},
-        SetOptions(merge: true),
-      );
-      transaction.set(boxChangeRef, {
-        'date': logEntry['timestamp'],
-        'value': amount,
-        'type': 'decrement',
-        'name': supplierName,
-        'notes': logEntry['notes']?.toString() ?? '',
-        'invoiceNumber': null,
-      });
+      if (!isAddition) {
+        transaction.set(
+          boxRef,
+          {'value': FieldValue.increment(-amount)},
+          SetOptions(merge: true),
+        );
+        transaction.set(boxChangeRef, {
+          'date': logEntry['timestamp'],
+          'value': amount,
+          'type': 'decrement',
+          'name': supplierName,
+          'notes': logEntry['notes']?.toString() ?? '',
+          'invoiceNumber': null,
+          'voucherNumber': voucherNumber,
+          'paymentMethod': paymentMethod,
+        });
+      }
     });
 
     await SupplierInvoiceBalanceSyncService.syncForSupplier(supplierId);

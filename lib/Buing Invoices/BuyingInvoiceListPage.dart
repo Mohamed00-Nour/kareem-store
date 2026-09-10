@@ -1,4 +1,3 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -30,7 +29,6 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
   bool _isFetching = true;
   DateTime? _selectedMonth;
   String _userRole = 'user'; // Default to user role
-  StreamSubscription<QuerySnapshot>? _invoicesSubscription;
 
   @override
   void initState() {
@@ -39,13 +37,13 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     _selectedMonth = DateTime.now();
     _loadUserRole();
     _loadFromLocalCache();
-    _listenToInvoices();
+    _backgroundSyncInvoices();
     _searchController.addListener(_filterInvoices);
   }
 
   void _loadFromLocalCache() {
     final locals = InvoiceRepository.instance.getAllBuying();
-    if (locals.isNotEmpty && mounted) {
+    if (mounted) {
       setState(() {
         _invoices.clear();
         _invoices.addAll(locals.map((inv) => inv.toMap()));
@@ -58,7 +56,6 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
   @override
   void dispose() {
     _searchController.dispose();
-    _invoicesSubscription?.cancel();
     super.dispose();
   }
 
@@ -74,34 +71,16 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     }
   }
 
-  void _listenToInvoices() {
-    _invoicesSubscription = FirebaseFirestore.instance
-        .collection('buying invoices')
-        .orderBy('date', descending: true)
-        .snapshots()
-        .listen((querySnapshot) {
-      if (!mounted) return;
-      setState(() {
-        _invoices.clear();
-        _invoices.addAll(querySnapshot.docs.map((doc) {
-          final data = Map<String, dynamic>.from(doc.data() as Map);
-          data['id'] = doc.id; // include Firestore doc ID for editing
-          InvoiceRepository.instance.upsertBuyingLocal(doc.id, data);
-          return data;
-        }));
-        _filterInvoices(); // Apply filtering after fetching
-        _isFetching = false;
-      });
-    }, onError: (e) {
-      print('Error listening to invoices: $e');
-      if (mounted) {
-        setState(() {
-          _isFetching = false;
-        });
-      }
-    });
+  Future<void> _backgroundSyncInvoices() async {
+    if (!ConnectivityService.instance.isOnline) return;
+    try {
+      await ConnectivityService.instance.forceSync();
+      await InvoiceRepository.instance.deltaSyncBuying();
+      _loadFromLocalCache();
+    } catch (e) {
+      debugPrint('Error syncing buying invoices: $e');
+    }
   }
-
 
   DateTime _parseInvoiceDate(dynamic raw) {
     if (raw is Timestamp) return raw.toDate();
@@ -115,13 +94,15 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     setState(() {
       _filteredInvoices.clear();
       final filtered = _invoices.where((invoice) {
-        final supplierName = (invoice['supplierName'] ?? '').toString().toLowerCase();
+        final supplierName =
+            (invoice['supplierName'] ?? '').toString().toLowerCase();
         final invoiceNumber = (invoice['invoiceNumber'] ?? '').toString();
         final invoiceDate = _parseInvoiceDate(invoice['date']);
         final isInSelectedMonth = _selectedMonth == null ||
             (invoiceDate.year == _selectedMonth!.year &&
                 invoiceDate.month == _selectedMonth!.month);
-        return (supplierName.contains(query) || invoiceNumber.contains(query)) &&
+        return (supplierName.contains(query) ||
+                invoiceNumber.contains(query)) &&
             isInSelectedMonth;
       }).toList();
 
@@ -160,8 +141,18 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
 
     // List of Arabic month names
     List<String> arabicMonths = [
-      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+      'يناير',
+      'فبراير',
+      'مارس',
+      'أبريل',
+      'مايو',
+      'يونيو',
+      'يوليو',
+      'أغسطس',
+      'سبتمبر',
+      'أكتوبر',
+      'نوفمبر',
+      'ديسمبر'
     ];
 
     return showDialog<DateTime>(
@@ -170,7 +161,8 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              title: Text('اختر الشهر والسنة', style: TextStyle(fontSize: 20.sp)),
+              title:
+                  Text('اختر الشهر والسنة', style: TextStyle(fontSize: 20.sp)),
               content: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -213,7 +205,8 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
                 ),
                 TextButton(
                   onPressed: () {
-                    Navigator.of(context).pop(DateTime(selectedYear, selectedMonth));
+                    Navigator.of(context)
+                        .pop(DateTime(selectedYear, selectedMonth));
                   },
                   child: Text('حفظ'),
                 ),
@@ -305,6 +298,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
       final totalSum = invoiceNum(removedInvoice['totalSum']);
       final supplierId = removedInvoice['supplierId']?.toString() ?? '';
       final supplierName = removedInvoice['supplierName']?.toString() ?? '';
+      final invoiceNumber = removedInvoice['invoiceNumber']?.toString();
 
       // 1. Decrement stock in Hive (undo purchase)
       if (products.isNotEmpty) {
@@ -323,8 +317,12 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
 
       // 3. Delete balance history locally from Hive
       if (supplierId.isNotEmpty && invoiceId.isNotEmpty) {
-        await BalanceHistoryRepository.instance
-            .deleteByInvoiceId('supplier', supplierId, invoiceId);
+        await BalanceHistoryRepository.instance.deleteByInvoiceId(
+          'supplier',
+          supplierId,
+          invoiceId,
+          invoiceNumber: invoiceNumber,
+        );
       }
 
       // 4. Adjust Cash Box locally if there was a payment
@@ -334,12 +332,18 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
 
       // 5. Update supplier balance locally in Hive
       if (supplierId.isNotEmpty) {
-        final unpaid = totalSum - paidAmount;
         final localSup = SupplierRepository.instance.getById(supplierId) ??
             SupplierRepository.instance.findByName(supplierName);
         if (localSup != null) {
-          await SupplierRepository.instance
-              .updateLocalBalance(localSup.id, localSup.balance - unpaid);
+          final recalculated =
+              BalanceHistoryRepository.instance.calculateSupplierBalance(
+            localSup.id,
+            fallback: localSup.balance - (totalSum - paidAmount),
+          );
+          await SupplierRepository.instance.updateLocalBalance(
+            localSup.id,
+            recalculated,
+          );
         }
       }
 
@@ -420,7 +424,8 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
                     subtitle: Center(
                         child: Text('المورد: ${invoice['supplierName']}')),
                     trailing: IconButton(
-                      icon: Icon(Icons.delete, color: Colors.black.withOpacity(0.7)),
+                      icon: Icon(Icons.delete,
+                          color: Colors.black.withOpacity(0.7)),
                       onPressed: () => _handleDeleteAction(index),
                     ),
                     onTap: () => _navigateToInvoiceDetail(invoice),

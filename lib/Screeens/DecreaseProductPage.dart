@@ -1037,6 +1037,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     String notes = '',
     double invoiceDiscount = 0.0,
     bool discountIsPercent = true,
+    double walletAmount = 0.0,
+    double cashAmount = 0.0,
+    double instapayAmount = 0.0,
+    double bankTransferAmount = 0.0,
   }) async {
     if (_isSaving) return;
     final String effectiveClient =
@@ -1348,6 +1352,30 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
         // Trigger background sync without awaiting
         ConnectivityService.instance.forceSync();
+      }
+
+      // Payment distribution is informational only. It is stored separately
+      // after the invoice succeeds and never participates in balance/box math.
+      if (!widget.isQuote && _lastInvoice != null) {
+        final invoiceId = (_lastInvoice!['id'] ??
+                _lastInvoice!['invoiceId'] ??
+                _editingRootInvoiceId)
+            ?.toString();
+        if (invoiceId != null && invoiceId.isNotEmpty) {
+          await PaymentBreakdownRepository.instance.saveForInvoice(
+            invoiceId: invoiceId,
+            invoiceNumber:
+                (_lastInvoice!['invoiceNumber'] ?? _editingInvoiceNumber ?? '')
+                    .toString(),
+            clientName: effectiveClient,
+            wallet: walletAmount,
+            cash: cashAmount,
+            instapay: instapayAmount,
+            bankTransfer: bankTransferAmount,
+            notes: notes,
+            date: _selectedDate,
+          );
+        }
       }
 
       if (!mounted) return;
@@ -2604,6 +2632,11 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       return;
     }
 
+    final editingBreakdown = _isEditing
+        ? PaymentBreakdownRepository.instance
+            .getByInvoiceId(_editingRootInvoiceId!)
+        : null;
+
     final result = await showInvoiceCheckoutSheet(
       context: context,
       isEditing: _isEditing,
@@ -2621,23 +2654,13 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       isSaving: _isSaving,
       clientExists: _clientExists,
       fetchClientBalance: _fetchClientBalance,
+      initialWalletAmount: editingBreakdown?.wallet ?? 0.0,
+      initialCashAmount: editingBreakdown?.cash ?? 0.0,
+      initialInstapayAmount: editingBreakdown?.instapay ?? 0.0,
+      initialBankTransferAmount: editingBreakdown?.bankTransfer ?? 0.0,
     );
 
     if (result != null && mounted) {
-      if (result.walletAmount > 0 ||
-          result.cashAmount > 0 ||
-          result.instapayAmount > 0 ||
-          result.bankTransferAmount > 0) {
-        PaymentBreakdownRepository.instance.saveBreakdown(
-          wallet: result.walletAmount,
-          cash: result.cashAmount,
-          instapay: result.instapayAmount,
-          bankTransfer: result.bankTransferAmount,
-          notes: result.notes,
-          date: _selectedDate,
-        );
-      }
-
       // Sync read from Hive — instant, no await needed
       final bal = _getClientBalanceSync(result.clientName);
       setState(() {
@@ -2651,6 +2674,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         notes: result.notes,
         invoiceDiscount: result.invoiceDiscount,
         discountIsPercent: result.discountIsPercent,
+        walletAmount: result.walletAmount,
+        cashAmount: result.cashAmount,
+        instapayAmount: result.instapayAmount,
+        bankTransferAmount: result.bankTransferAmount,
       );
     }
   }

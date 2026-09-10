@@ -20,24 +20,10 @@ class SupplierRepository {
 
   /// Compute live running balance for a supplier directly from local Hive transaction history.
   double computeLiveBalanceFromHive(String supplierId) {
-    final history =
-        BalanceHistoryRepository.instance.getForSupplier(supplierId);
-    if (history.isEmpty) {
-      final existing = suppliersBox.get(supplierId);
-      return existing?.balance ?? 0.0;
-    }
-    double running = 0.0;
-    for (final bh in history) {
-      final type = bh.type;
-      final isIncrease =
-          type == 'buying' || type == 'opening' || type == 'addition';
-      if (isIncrease) {
-        running += bh.enteredBalance;
-      } else {
-        running -= bh.enteredBalance;
-      }
-    }
-    return running;
+    return BalanceHistoryRepository.instance.calculateSupplierBalance(
+      supplierId,
+      fallback: suppliersBox.get(supplierId)?.balance ?? 0.0,
+    );
   }
 
   /// All suppliers from local cache, with instant live balances computed from Hive.
@@ -127,7 +113,14 @@ class SupplierRepository {
 
   /// Upsert a single supplier into local cache.
   Future<void> upsertLocal(String docId, Map<String, dynamic> data) async {
-    await suppliersBox.put(docId, SupplierLocal.fromFirestore(docId, data));
+    final incoming = SupplierLocal.fromFirestore(docId, data);
+    final existing = suppliersBox.get(docId);
+    if (existing != null) {
+      // Supplier balance is owned by the local Hive ledger. Realtime supplier
+      // metadata must never replace it with a delayed Firestore aggregate.
+      incoming.balance = existing.balance;
+    }
+    await suppliersBox.put(docId, incoming);
   }
 
   /// Update local cached balance for a supplier.

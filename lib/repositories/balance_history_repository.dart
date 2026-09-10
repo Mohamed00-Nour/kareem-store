@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/balance_history_local.dart';
+import '../sync/sync_queue_manager.dart';
 import 'invoice_repository.dart';
 
 /// Repository for Client & Supplier Balance History entries.
@@ -27,8 +28,10 @@ class BalanceHistoryRepository {
       case 'buying_payment':
         return 2;
       case 'return':
+      case 'buying_return':
         return 3;
       case 'return_payment':
+      case 'buying_return_payment':
         return 4;
       case 'addition':
         return 5;
@@ -322,6 +325,8 @@ class BalanceHistoryRepository {
         .toList();
 
     final activeBuying = InvoiceRepository.instance.getBuyingBySupplier(sId);
+    final activeBuyingReturns =
+        InvoiceRepository.instance.getBuyingReturnsBySupplier(sId);
 
     bool matchesInvoice(
       BalanceHistoryLocal entry,
@@ -401,10 +406,73 @@ class BalanceHistoryRepository {
       }
     }
 
+    for (final invoice in activeBuyingReturns) {
+      final invoiceId = invoice.id.trim();
+      final invoiceNumber = invoice.invoiceNumber.toString().trim();
+      final returnEntries = list
+          .where((entry) =>
+              (entry.type == 'buying_return' || entry.type == 'return') &&
+              matchesInvoice(entry, invoiceId, invoiceNumber))
+          .toList();
+      final paymentEntries = list
+          .where((entry) =>
+              (entry.type == 'buying_return_payment' ||
+                  entry.type == 'return_payment') &&
+              matchesInvoice(entry, invoiceId, invoiceNumber))
+          .toList();
+
+      if (returnEntries.isEmpty) {
+        final entry = BalanceHistoryLocal(
+          id: '${invoice.id}_buying_return',
+          parentId: sId,
+          parentType: 'supplier',
+          enteredBalance: invoice.totalSum,
+          balanceBefore: invoice.previousBalance,
+          type: 'buying_return',
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber.toString(),
+          timestamp: invoice.date,
+        );
+        upsertLocal(entry);
+        list.add(entry);
+      } else if ((returnEntries.first.enteredBalance - invoice.totalSum).abs() >
+          0.001) {
+        returnEntries.first.enteredBalance = invoice.totalSum;
+        upsertLocal(returnEntries.first);
+      }
+
+      if (invoice.paidAmount > 0 && paymentEntries.isEmpty) {
+        final entry = BalanceHistoryLocal(
+          id: '${invoice.id}_buying_return_pay',
+          parentId: sId,
+          parentType: 'supplier',
+          enteredBalance: invoice.paidAmount,
+          balanceBefore: invoice.previousBalance - invoice.totalSum,
+          type: 'buying_return_payment',
+          invoiceId: invoice.id,
+          invoiceNumber: invoice.invoiceNumber.toString(),
+          timestamp: invoice.date,
+        );
+        upsertLocal(entry);
+        list.add(entry);
+      } else if (invoice.paidAmount > 0 &&
+          (paymentEntries.first.enteredBalance - invoice.paidAmount).abs() >
+              0.001) {
+        paymentEntries.first.enteredBalance = invoice.paidAmount;
+        upsertLocal(paymentEntries.first);
+      }
+    }
+
     bool isActiveInvoiceEntry(BalanceHistoryLocal item) {
-      if (item.type != 'buying' && item.type != 'buying_payment') return true;
-      if (activeBuying.isEmpty) return true;
-      for (final inv in activeBuying) {
+      final isBuying = item.type == 'buying' || item.type == 'buying_payment';
+      final isBuyingReturn = item.type == 'buying_return' ||
+          item.type == 'buying_return_payment' ||
+          item.type == 'return' ||
+          item.type == 'return_payment';
+      if (!isBuying && !isBuyingReturn) return true;
+      final activeInvoices = isBuying ? activeBuying : activeBuyingReturns;
+      if (activeInvoices.isEmpty) return true;
+      for (final inv in activeInvoices) {
         if (!matchesInvoice(
           item,
           inv.id.trim(),
@@ -412,7 +480,10 @@ class BalanceHistoryRepository {
         )) {
           continue;
         }
-        return item.type != 'buying_payment' || inv.paidAmount > 0;
+        final isPayment = item.type == 'buying_payment' ||
+            item.type == 'buying_return_payment' ||
+            item.type == 'return_payment';
+        return !isPayment || inv.paidAmount > 0;
       }
       return false;
     }
@@ -426,10 +497,15 @@ class BalanceHistoryRepository {
     final seenKeys = <String>{};
     final deduplicated = <BalanceHistoryLocal>[];
     for (final item in list) {
+      final canonicalType = item.type == 'return'
+          ? 'buying_return'
+          : item.type == 'return_payment'
+              ? 'buying_return_payment'
+              : item.type;
       final key = item.invoiceNumber.isNotEmpty
-          ? '${item.invoiceNumber}_${item.type}'
+          ? '${item.invoiceNumber}_$canonicalType'
           : (item.invoiceId.isNotEmpty
-              ? '${item.invoiceId}_${item.type}'
+              ? '${item.invoiceId}_$canonicalType'
               : item.id);
       if (seenKeys.add(key)) {
         deduplicated.add(item);
@@ -453,6 +529,8 @@ class BalanceHistoryRepository {
       final direction = entry.direction.trim();
       final isIncrease = type == 'buying' ||
           type == 'addition' ||
+          type == 'buying_return_payment' ||
+          type == 'return_payment' ||
           (type == 'opening' && direction != '\u0639\u0644\u064a\u0647') ||
           (type == 'voucher' && direction == '\u0644\u0647');
       running += isIncrease ? entry.enteredBalance : -entry.enteredBalance;
@@ -555,17 +633,49 @@ class BalanceHistoryRepository {
   }
 
   Future<void> fullSyncForSupplier(String supplierId) async {
+    final pendingHistoryIds = SyncQueueManager.instance.unfinishedEntityIds(
+      operationType: 'adjustSupplierBalance',
+      idKey: 'historyId',
+    );
+    final pendingInvoiceIds = <String>{
+      ...SyncQueueManager.instance.unfinishedEntityIds(
+        operationType: 'createBuyingInvoice',
+        idKey: 'invoiceId',
+      ),
+      ...SyncQueueManager.instance.unfinishedEntityIds(
+        operationType: 'editBuyingInvoice',
+        idKey: 'invoiceId',
+      ),
+    };
+    final deletedInvoiceIds = <String>{
+      ...SyncQueueManager.instance.unfinishedEntityIds(
+        operationType: 'deleteBuyingInvoice',
+        idKey: 'invoiceId',
+      ),
+      ...SyncQueueManager.instance.unfinishedEntityIds(
+        operationType: 'deleteBuyingInvoice',
+        idKey: 'supplierSubDocId',
+      ),
+    };
     final snap = await _fs
         .collection('suppliers')
         .doc(supplierId)
         .collection('balanceHistory')
         .get();
     for (final doc in snap.docs) {
+      final data = doc.data();
+      final invoiceId = data['invoiceId']?.toString().trim() ?? '';
+      final protectedByLocalWrite = pendingHistoryIds.contains(doc.id) ||
+          pendingInvoiceIds.contains(invoiceId);
+      final belongsToPendingDelete = deletedInvoiceIds.contains(invoiceId) ||
+          deletedInvoiceIds.any((id) =>
+              id.isNotEmpty && (doc.id == id || doc.id.startsWith('${id}_')));
+      if (protectedByLocalWrite || belongsToPendingDelete) continue;
       final entry = BalanceHistoryLocal.fromFirestore(
         doc.id,
         supplierId,
         'supplier',
-        doc.data(),
+        data,
       );
       await upsertLocal(entry);
     }

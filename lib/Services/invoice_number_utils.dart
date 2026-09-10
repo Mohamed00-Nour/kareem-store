@@ -143,6 +143,37 @@ double invoiceLineUnitPrice(Map<String, dynamic> line) {
   return lineTotal / quantity;
 }
 
+/// Resolves the unit cost stored on a buying-invoice line.
+///
+/// Buying invoices created by the current purchase screen store the unit cost
+/// as `cost` and the extended value as `totalCost`. Older imports used several
+/// other aliases, so positive values are preferred before deriving the cost
+/// from total and quantity.
+double invoiceBuyingLineUnitPrice(Map<String, dynamic> line) {
+  const priceKeys = <String>[
+    'buyingPrice',
+    'cost',
+    'newCostPrice',
+    'costPrice',
+    'purchasePrice',
+    'selectedPrice',
+    'unitPrice',
+    'price',
+  ];
+
+  for (final key in priceKeys) {
+    final price = invoiceNum(line[key]);
+    if (price > 0) return price;
+  }
+
+  final quantity = invoiceNum(line['amount'] ?? line['quantity']);
+  if (quantity <= 0) return 0.0;
+  final total = invoiceNum(
+    line['totalCost'] ?? line['total'] ?? line['lineTotal'],
+  );
+  return total > 0 ? total / quantity : 0.0;
+}
+
 /// True for return invoices ([invoiceType] == return).
 bool invoiceIsReturn(Map<String, dynamic> invoice) {
   return invoice['invoiceType']?.toString() == 'return';

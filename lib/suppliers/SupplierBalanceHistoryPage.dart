@@ -1,10 +1,10 @@
-import 'dart:async';
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart' hide TextDirection;
 
+import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../repositories/balance_history_repository.dart';
 import '../local_db/models/balance_history_local.dart';
+import '../sync/connectivity_service.dart';
 
 class SupplierBalanceHistoryPage extends StatefulWidget {
   final String supplierId;
@@ -19,82 +19,74 @@ class SupplierBalanceHistoryPage extends StatefulWidget {
 
 class _SupplierBalanceHistoryPageState
     extends State<SupplierBalanceHistoryPage> {
-  List<BalanceHistoryLocal> _history = [];
+  List<_SupplierHistoryRow> _history = [];
   bool _isLoading = true;
-  StreamSubscription<QuerySnapshot>? _sub;
 
   @override
   void initState() {
     super.initState();
     _loadFromLocalCache();
-    _listenToHistory();
-  }
-
-  @override
-  void dispose() {
-    _sub?.cancel();
-    super.dispose();
+    _backgroundSync();
   }
 
   void _loadFromLocalCache() {
     final locals =
         BalanceHistoryRepository.instance.getForSupplier(widget.supplierId);
-    locals.sort((a, b) => a.timestamp.compareTo(b.timestamp));
-
     double running = 0.0;
-    final Map<String, double> beforeMap = {};
+    final rows = <_SupplierHistoryRow>[];
     for (final entry in locals) {
-      beforeMap[entry.id] = running;
       final type = entry.type;
-      final isIncrease = type == 'buying' || type == 'opening' || type == 'addition';
-      if (isIncrease) {
-        running += entry.enteredBalance;
-      } else {
-        running -= entry.enteredBalance;
-      }
+      final direction = entry.direction.trim();
+      final isIncrease = type == 'buying' ||
+          type == 'addition' ||
+          type == 'buying_return_payment' ||
+          type == 'return_payment' ||
+          (type == 'opening' && direction != 'عليه') ||
+          (type == 'voucher' && direction == 'له');
+      final before = running;
+      running += isIncrease ? entry.enteredBalance : -entry.enteredBalance;
+      rows.add(
+        _SupplierHistoryRow(
+          entry: entry,
+          before: before,
+          after: running,
+          isIncrease: isIncrease,
+        ),
+      );
     }
 
-    locals.sort((a, b) => b.timestamp.compareTo(a.timestamp));
+    final newestFirst = rows.reversed.toList();
     if (mounted) {
       setState(() {
-        _history = locals;
+        _history = newestFirst;
         _isLoading = false;
       });
     }
   }
 
-  void _listenToHistory() {
-    _sub?.cancel();
-    _sub = FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(widget.supplierId)
-        .collection('balanceHistory')
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .listen((snapshot) async {
-      for (final doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>? ?? {};
-        final entry = BalanceHistoryLocal.fromFirestore(
-          doc.id,
-          widget.supplierId,
-          'supplier',
-          data,
-        );
-        await BalanceHistoryRepository.instance.upsertLocal(entry);
-      }
+  Future<void> _backgroundSync() async {
+    if (!ConnectivityService.instance.isOnline) return;
+    try {
+      await ConnectivityService.instance.forceSync();
+      await SupplierInvoiceBalanceSyncService.syncForSupplier(
+        widget.supplierId,
+      );
+      await BalanceHistoryRepository.instance.fullSyncForSupplier(
+        widget.supplierId,
+      );
       _loadFromLocalCache();
-    }, onError: (_) {
-      if (mounted) setState(() => _isLoading = false);
-    });
+    } catch (_) {
+      // The Hive ledger remains authoritative and visible offline.
+    }
   }
 
   String _descriptionForEntry(BalanceHistoryLocal entry) {
     final type = entry.type;
-    final notes = entry.direction.isNotEmpty ? entry.direction : '';
+    final direction = entry.direction.trim();
     final invoiceNumber = entry.invoiceNumber;
 
     if (type == 'opening') {
-      return 'رصيد افتتاحي';
+      return entry.notes.isNotEmpty ? entry.notes : 'رصيد افتتاحي';
     }
     if (type == 'buying') {
       return 'فاتورة مشتريات' +
@@ -104,18 +96,22 @@ class _SupplierBalanceHistoryPageState
       return 'سداد فاتورة مشتريات' +
           (invoiceNumber.isNotEmpty ? ' رقم $invoiceNumber' : '');
     }
+    if (type == 'buying_return' || type == 'return') {
+      return 'فاتورة مرتجع مشتريات' +
+          (invoiceNumber.isNotEmpty ? ' رقم $invoiceNumber' : '');
+    }
+    if (type == 'buying_return_payment' || type == 'return_payment') {
+      return 'تحصيل مرتجع مشتريات' +
+          (invoiceNumber.isNotEmpty ? ' رقم $invoiceNumber' : '');
+    }
 
-    String description = '';
+    if (entry.notes.isNotEmpty) return entry.notes;
+    if (type == 'addition') return 'إضافة رصيد';
+    if (type == 'deduction') return 'خصم رصيد';
     if (type == 'voucher') {
-      description = 'سند';
-    } else {
-      description = 'سداد نقدي';
+      return direction.isEmpty ? 'سند مورد' : 'سند مورد ($direction)';
     }
-
-    if (notes.isNotEmpty) {
-      description += ' ($notes)';
-    }
-    return description;
+    return 'حركة رصيد';
   }
 
   @override
@@ -144,21 +140,24 @@ class _SupplierBalanceHistoryPageState
                       child: DataTable(
                         columns: const [
                           DataColumn(label: Text('البيان')),
-                          DataColumn(label: Text('الرصيد المدخل')),
+                          DataColumn(label: Text('الحركة')),
                           DataColumn(label: Text('الرصيد قبل')),
+                          DataColumn(label: Text('الرصيد بعد')),
                           DataColumn(label: Text('التاريخ')),
                         ],
-                        rows: _history.map((entry) {
-                          final formattedDate = DateFormat('yyyy-MM-dd')
-                              .format(entry.timestamp);
+                        rows: _history.map((row) {
+                          final entry = row.entry;
+                          final formattedDate =
+                              DateFormat('yyyy-MM-dd').format(entry.timestamp);
                           final description = _descriptionForEntry(entry);
+                          final sign = row.isIncrease ? '+' : '-';
 
                           return DataRow(cells: [
                             DataCell(Text(description)),
                             DataCell(Text(
-                                entry.enteredBalance.toStringAsFixed(2))),
-                            DataCell(Text(
-                                entry.balanceBefore.toStringAsFixed(2))),
+                                '$sign${entry.enteredBalance.toStringAsFixed(2)}')),
+                            DataCell(Text(row.before.toStringAsFixed(2))),
+                            DataCell(Text(row.after.toStringAsFixed(2))),
                             DataCell(Text(formattedDate)),
                           ]);
                         }).toList(),
@@ -168,4 +167,18 @@ class _SupplierBalanceHistoryPageState
                 ),
     );
   }
+}
+
+class _SupplierHistoryRow {
+  final BalanceHistoryLocal entry;
+  final double before;
+  final double after;
+  final bool isIncrease;
+
+  const _SupplierHistoryRow({
+    required this.entry,
+    required this.before,
+    required this.after,
+    required this.isIncrease,
+  });
 }

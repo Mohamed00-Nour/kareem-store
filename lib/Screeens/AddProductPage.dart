@@ -425,6 +425,12 @@ class _AddProductPageState extends State<AddProductPage> {
       double balance = totalSum - effectivePaid;
       final String docId =
           FirebaseFirestore.instance.collection('buying invoices').doc().id;
+      final existingSupplierBalance = workingSupplier.id.isEmpty
+          ? _supplierBalance
+          : BalanceHistoryRepository.instance.calculateSupplierBalance(
+              workingSupplier.id,
+              fallback: _supplierBalance,
+            );
 
       Map<String, dynamic> invoiceData = {
         'id': docId,
@@ -437,7 +443,7 @@ class _AddProductPageState extends State<AddProductPage> {
         'balance': balance,
         'invoiceDiscount': effectiveDiscountAmt,
         'notes': notes,
-        'previousBalance': _supplierBalance,
+        'previousBalance': existingSupplierBalance,
         'paymentMethod': paymentMethod,
         'products': _addedProducts
             .map((p) => {
@@ -467,17 +473,13 @@ class _AddProductPageState extends State<AddProductPage> {
 
       // 2. Update supplier balance locally
       if (workingSupplier.id.isNotEmpty) {
-        final existingBal = _supplierBalance;
-        final updatedBal = existingBal + balance;
-        await SupplierRepository.instance
-            .updateLocalBalance(workingSupplier.id, updatedBal);
         await BalanceHistoryRepository.instance.upsertLocal(
           BalanceHistoryLocal(
             id: '${docId}_buying',
             parentId: workingSupplier.id,
             parentType: 'supplier',
             enteredBalance: totalSum,
-            balanceBefore: existingBal,
+            balanceBefore: existingSupplierBalance,
             type: 'buying',
             invoiceId: docId,
             invoiceNumber: newInvoiceNumber.toString(),
@@ -491,7 +493,7 @@ class _AddProductPageState extends State<AddProductPage> {
               parentId: workingSupplier.id,
               parentType: 'supplier',
               enteredBalance: effectivePaid,
-              balanceBefore: existingBal + totalSum,
+              balanceBefore: existingSupplierBalance + totalSum,
               type: 'buying_payment',
               invoiceId: docId,
               invoiceNumber: newInvoiceNumber.toString(),
@@ -499,6 +501,15 @@ class _AddProductPageState extends State<AddProductPage> {
             ),
           );
         }
+        final updatedBalance =
+            BalanceHistoryRepository.instance.calculateSupplierBalance(
+          workingSupplier.id,
+          fallback: existingSupplierBalance + balance,
+        );
+        await SupplierRepository.instance.updateLocalBalance(
+          workingSupplier.id,
+          updatedBalance,
+        );
       }
 
       // 3. Update products stock and prices locally

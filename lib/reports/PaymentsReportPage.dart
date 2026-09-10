@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -23,11 +24,27 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
   double _totalInstapay = 0.0;
   double _totalBankTransfer = 0.0;
   double _grandTotal = 0.0;
+  StreamSubscription? _paymentsBoxSubscription;
+  Timer? _reloadDebounce;
 
   @override
   void initState() {
     super.initState();
+    _paymentsBoxSubscription =
+        PaymentBreakdownRepository.instance.box.watch().listen((_) {
+      _reloadDebounce?.cancel();
+      _reloadDebounce = Timer(const Duration(milliseconds: 40), () {
+        if (mounted) _loadData();
+      });
+    });
     _applyFilter('اليوم');
+  }
+
+  @override
+  void dispose() {
+    _reloadDebounce?.cancel();
+    _paymentsBoxSubscription?.cancel();
+    super.dispose();
   }
 
   void _applyFilter(String filter) {
@@ -52,8 +69,13 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
   }
 
   void _loadData() {
+    if (!mounted) return;
     final list = PaymentBreakdownRepository.instance
-        .getByDateRange(_startDate, _endDate);
+        .getByDateRange(_startDate, _endDate)
+      ..sort((a, b) {
+        final dateOrder = b.date.compareTo(a.date);
+        return dateOrder != 0 ? dateOrder : b.timestamp.compareTo(a.timestamp);
+      });
 
     double w = 0.0, c = 0.0, i = 0.0, b = 0.0;
     for (final item in list) {
@@ -114,6 +136,194 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
       });
       _loadData();
     }
+  }
+
+  Future<void> _editEntry(PaymentBreakdownLocal entry) async {
+    final clientCtrl = TextEditingController(text: entry.clientName);
+    final walletCtrl = TextEditingController(
+        text: entry.wallet > 0 ? entry.wallet.toStringAsFixed(2) : '');
+    final cashCtrl = TextEditingController(
+        text: entry.cash > 0 ? entry.cash.toStringAsFixed(2) : '');
+    final instapayCtrl = TextEditingController(
+        text: entry.instapay > 0 ? entry.instapay.toStringAsFixed(2) : '');
+    final bankCtrl = TextEditingController(
+        text: entry.bankTransfer > 0
+            ? entry.bankTransfer.toStringAsFixed(2)
+            : '');
+    final notesCtrl = TextEditingController(text: entry.notes);
+
+    double? parseAmount(TextEditingController controller) {
+      final text = controller.text.trim();
+      if (text.isEmpty) return 0.0;
+      final value = double.tryParse(text.replaceAll(',', '.'));
+      return value != null && value >= 0 ? value : null;
+    }
+
+    final updated = await showDialog<PaymentBreakdownLocal>(
+      context: context,
+      builder: (dialogContext) {
+        String? error;
+        return StatefulBuilder(
+          builder: (context, setDialogState) {
+            Widget amountField(
+              String label,
+              TextEditingController controller,
+              Color color,
+            ) {
+              return TextField(
+                controller: controller,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                textAlign: TextAlign.right,
+                decoration: InputDecoration(
+                  labelText: label,
+                  labelStyle: TextStyle(color: color),
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+              );
+            }
+
+            return Directionality(
+              textDirection: ui.TextDirection.rtl,
+              child: AlertDialog(
+                title: const Text('تعديل تفاصيل المدفوعات'),
+                content: SingleChildScrollView(
+                  child: SizedBox(
+                    width: 420.w,
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        TextField(
+                          controller: clientCtrl,
+                          textAlign: TextAlign.right,
+                          decoration: const InputDecoration(
+                            labelText: 'اسم العميل',
+                            prefixIcon: Icon(Icons.person_outline),
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                        ),
+                        SizedBox(height: 12.h),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: amountField(
+                                  'محفظة', walletCtrl, Colors.orange.shade800),
+                            ),
+                            SizedBox(width: 8.w),
+                            Expanded(
+                              child: amountField(
+                                  'نقدي', cashCtrl, Colors.green.shade800),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 10.h),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: amountField('أنستاباي', instapayCtrl,
+                                  Colors.purple.shade800),
+                            ),
+                            SizedBox(width: 8.w),
+                            Expanded(
+                              child: amountField(
+                                  'تحويل بنكي', bankCtrl, Colors.blue.shade800),
+                            ),
+                          ],
+                        ),
+                        SizedBox(height: 10.h),
+                        TextField(
+                          controller: notesCtrl,
+                          textAlign: TextAlign.right,
+                          maxLines: 2,
+                          decoration: const InputDecoration(
+                            labelText: 'ملاحظات',
+                            border: OutlineInputBorder(),
+                            isDense: true,
+                          ),
+                        ),
+                        if (error != null) ...[
+                          SizedBox(height: 8.h),
+                          Text(error!,
+                              style: const TextStyle(color: Colors.red)),
+                        ],
+                      ],
+                    ),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.pop(dialogContext),
+                    child: const Text('إلغاء'),
+                  ),
+                  ElevatedButton(
+                    onPressed: () {
+                      final wallet = parseAmount(walletCtrl);
+                      final cash = parseAmount(cashCtrl);
+                      final instapay = parseAmount(instapayCtrl);
+                      final bankTransfer = parseAmount(bankCtrl);
+                      if (clientCtrl.text.trim().isEmpty) {
+                        setDialogState(() => error = 'يرجى إدخال اسم العميل');
+                        return;
+                      }
+                      if (wallet == null ||
+                          cash == null ||
+                          instapay == null ||
+                          bankTransfer == null) {
+                        setDialogState(() => error = 'يوجد مبلغ غير صحيح');
+                        return;
+                      }
+                      if (wallet + cash + instapay + bankTransfer <= 0) {
+                        setDialogState(() =>
+                            error = 'أدخل مبلغاً في طريقة دفع واحدة على الأقل');
+                        return;
+                      }
+                      Navigator.pop(
+                        dialogContext,
+                        PaymentBreakdownLocal(
+                          id: entry.id,
+                          date: entry.date,
+                          wallet: wallet,
+                          cash: cash,
+                          instapay: instapay,
+                          bankTransfer: bankTransfer,
+                          notes: notesCtrl.text.trim(),
+                          timestamp: DateTime.now(),
+                          invoiceId: entry.invoiceId,
+                          invoiceNumber: entry.invoiceNumber,
+                          clientName: clientCtrl.text.trim(),
+                        ),
+                      );
+                    },
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade800,
+                      foregroundColor: Colors.white,
+                    ),
+                    child: const Text('حفظ'),
+                  ),
+                ],
+              ),
+            );
+          },
+        );
+      },
+    );
+
+    clientCtrl.dispose();
+    walletCtrl.dispose();
+    cashCtrl.dispose();
+    instapayCtrl.dispose();
+    bankCtrl.dispose();
+    notesCtrl.dispose();
+
+    if (updated == null) return;
+    await PaymentBreakdownRepository.instance.updateBreakdown(updated);
+    if (!mounted) return;
+    _loadData();
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تم تعديل تفاصيل المدفوعات')),
+    );
   }
 
   @override
@@ -218,10 +428,14 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
                   // Grand Total Banner
                   Container(
                     width: double.infinity,
-                    padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
+                    padding:
+                        EdgeInsets.symmetric(horizontal: 16.w, vertical: 12.h),
                     decoration: BoxDecoration(
                       gradient: LinearGradient(
-                        colors: [Colors.orange.shade800, Colors.orange.shade600],
+                        colors: [
+                          Colors.orange.shade800,
+                          Colors.orange.shade600
+                        ],
                         begin: Alignment.centerRight,
                         end: Alignment.centerLeft,
                       ),
@@ -273,50 +487,108 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
                   ? Center(
                       child: Text(
                         'لا توجد عمليات مدفوعات مسجلة لهذه الفترة',
-                        style: TextStyle(fontSize: 14.sp, color: Colors.grey.shade600),
+                        style: TextStyle(
+                            fontSize: 14.sp, color: Colors.grey.shade600),
                       ),
                     )
                   : ListView.builder(
-                      padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+                      padding:
+                          EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
                       itemCount: _entries.length,
                       itemBuilder: (context, index) {
-                        final entry = _entries[_entries.length - 1 - index]; // Newest first
-                        final total = entry.wallet + entry.cash + entry.instapay + entry.bankTransfer;
+                        final entry = _entries[index];
+                        final total = entry.wallet +
+                            entry.cash +
+                            entry.instapay +
+                            entry.bankTransfer;
 
                         return Card(
                           margin: EdgeInsets.only(bottom: 8.h),
-                          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(10.r)),
+                          shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(10.r)),
                           child: Padding(
                             padding: EdgeInsets.all(12.w),
                             child: Column(
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 Row(
-                                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                                  mainAxisAlignment:
+                                      MainAxisAlignment.spaceBetween,
                                   children: [
-                                    Text(
-                                      '${dateFormat.format(entry.date)}  •  ${timeFormat.format(entry.date)}',
-                                      style: TextStyle(
-                                        fontSize: 12.sp,
-                                        color: Colors.grey.shade700,
-                                        fontWeight: FontWeight.w500,
+                                    Expanded(
+                                      child: Text(
+                                        '${dateFormat.format(entry.date)}  •  ${timeFormat.format(entry.date)}',
+                                        style: TextStyle(
+                                          fontSize: 12.sp,
+                                          color: Colors.grey.shade700,
+                                          fontWeight: FontWeight.w500,
+                                        ),
                                       ),
                                     ),
-                                    Text(
-                                      '${total.toStringAsFixed(2)} ج.م',
-                                      style: TextStyle(
-                                        fontSize: 15.sp,
-                                        fontWeight: FontWeight.bold,
-                                        color: Colors.orange.shade800,
+                                    Row(
+                                      mainAxisSize: MainAxisSize.min,
+                                      children: [
+                                        Text(
+                                          '${total.toStringAsFixed(2)} ج.م',
+                                          style: TextStyle(
+                                            fontSize: 15.sp,
+                                            fontWeight: FontWeight.bold,
+                                            color: Colors.orange.shade800,
+                                          ),
+                                        ),
+                                        SizedBox(width: 4.w),
+                                        IconButton(
+                                          tooltip: 'تعديل',
+                                          visualDensity: VisualDensity.compact,
+                                          onPressed: () => _editEntry(entry),
+                                          icon: Icon(Icons.edit_outlined,
+                                              color: Colors.grey.shade700,
+                                              size: 20.sp),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                                SizedBox(height: 4.h),
+                                Row(
+                                  children: [
+                                    Icon(Icons.person_outline,
+                                        size: 17.sp,
+                                        color: Colors.orange.shade800),
+                                    SizedBox(width: 5.w),
+                                    Expanded(
+                                      child: Text(
+                                        entry.clientName.trim().isNotEmpty
+                                            ? entry.clientName
+                                            : 'غير مرتبط بعميل',
+                                        style: TextStyle(
+                                          fontSize: 13.sp,
+                                          fontWeight: FontWeight.bold,
+                                          color:
+                                              entry.clientName.trim().isNotEmpty
+                                                  ? Colors.black87
+                                                  : Colors.grey.shade600,
+                                        ),
+                                        overflow: TextOverflow.ellipsis,
                                       ),
                                     ),
+                                    if (entry.invoiceNumber.isNotEmpty)
+                                      Text(
+                                        'فاتورة #${entry.invoiceNumber}',
+                                        style: TextStyle(
+                                          fontSize: 11.sp,
+                                          color: Colors.grey.shade600,
+                                        ),
+                                      ),
                                   ],
                                 ),
                                 if (entry.notes.isNotEmpty) ...[
                                   SizedBox(height: 4.h),
                                   Text(
                                     entry.notes,
-                                    style: TextStyle(fontSize: 12.sp, color: Colors.grey.shade600),
+                                    style: TextStyle(
+                                        fontSize: 12.sp,
+                                        color: Colors.grey.shade600),
                                   ),
                                 ],
                                 SizedBox(height: 8.h),
@@ -325,13 +597,17 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
                                   runSpacing: 6.h,
                                   children: [
                                     if (entry.wallet > 0)
-                                      _buildChannelBadge('محفظة', entry.wallet, Colors.orange),
+                                      _buildChannelBadge(
+                                          'محفظة', entry.wallet, Colors.orange),
                                     if (entry.cash > 0)
-                                      _buildChannelBadge('نقدي', entry.cash, Colors.green),
+                                      _buildChannelBadge(
+                                          'نقدي', entry.cash, Colors.green),
                                     if (entry.instapay > 0)
-                                      _buildChannelBadge('أنستاباي', entry.instapay, Colors.purple),
+                                      _buildChannelBadge('أنستاباي',
+                                          entry.instapay, Colors.purple),
                                     if (entry.bankTransfer > 0)
-                                      _buildChannelBadge('تحويل بنكي', entry.bankTransfer, Colors.blue),
+                                      _buildChannelBadge('تحويل بنكي',
+                                          entry.bankTransfer, Colors.blue),
                                   ],
                                 ),
                               ],

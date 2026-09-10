@@ -1,5 +1,4 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
-import '../repositories/supplier_repository.dart';
 import '../sync/connectivity_service.dart';
 import 'invoice_number_utils.dart';
 
@@ -15,10 +14,16 @@ class SupplierInvoiceBalanceSyncService {
         return 1;
       case 'buying_payment':
         return 2;
-      case 'voucher':
+      case 'buying_return':
+      case 'return':
         return 3;
-      default:
+      case 'buying_return_payment':
+      case 'return_payment':
         return 4;
+      case 'voucher':
+        return 5;
+      default:
+        return 6;
     }
   }
 
@@ -72,6 +77,12 @@ class SupplierInvoiceBalanceSyncService {
     final supplierRef = _firestore.collection('suppliers').doc(trimmed);
     final supplierSnap = await supplierRef.get();
     if (!supplierSnap.exists) return;
+    final supplierData = supplierSnap.data() as Map<String, dynamic>? ?? {};
+    final supplierName =
+        (supplierData['name'] ?? supplierData['supplierName'] ?? '')
+            .toString()
+            .trim()
+            .toLowerCase();
 
     final results = await Future.wait([
       supplierRef.collection('buying invoices').get(),
@@ -80,11 +91,22 @@ class SupplierInvoiceBalanceSyncService {
           .collection('supplier_vouchers')
           .where('supplierId', isEqualTo: trimmed)
           .get(),
+      _firestore.collection('buying invoices').get(),
+      supplierRef.collection('returnBuyingInvoices').get(),
     ]);
 
-    final buyingDocs = results[0].docs;
+    final subcollectionBuyingDocs = results[0].docs;
     final historyDocs = results[1].docs;
     final voucherDocs = results[2].docs;
+    final rootBuyingDocs = results[3].docs.where((doc) {
+      final data = doc.data() as Map<String, dynamic>? ?? {};
+      final rootSupplierId = data['supplierId']?.toString().trim() ?? '';
+      if (rootSupplierId.isNotEmpty) return rootSupplierId == trimmed;
+      final rootSupplierName =
+          data['supplierName']?.toString().trim().toLowerCase() ?? '';
+      return supplierName.isNotEmpty && rootSupplierName == supplierName;
+    });
+    final returnDocs = results[4].docs;
 
     String canonicalInvoiceId(QueryDocumentSnapshot doc) {
       final data = doc.data() as Map<String, dynamic>? ?? {};
@@ -93,6 +115,18 @@ class SupplierInvoiceBalanceSyncService {
       final storedId = data['id']?.toString().trim() ?? '';
       return storedId.isNotEmpty ? storedId : doc.id;
     }
+
+    final buyingByIdentity = <String, QueryDocumentSnapshot>{};
+    for (final doc in [...subcollectionBuyingDocs, ...rootBuyingDocs]) {
+      final data = doc.data() as Map<String, dynamic>? ?? {};
+      final invoiceNumber = data['invoiceNumber']?.toString().trim() ?? '';
+      final canonicalId = canonicalInvoiceId(doc);
+      final identity = invoiceNumber.isNotEmpty
+          ? 'number:$invoiceNumber'
+          : 'id:$canonicalId';
+      buyingByIdentity.putIfAbsent(identity, () => doc);
+    }
+    final buyingDocs = buyingByIdentity.values.toList();
 
     String? resolveInvoiceId(String historyInvoiceId, String invoiceNumber) {
       for (final invoice in buyingDocs) {
@@ -117,6 +151,25 @@ class SupplierInvoiceBalanceSyncService {
       return null;
     }
 
+    String? resolveReturnId(String historyInvoiceId, String invoiceNumber) {
+      for (final invoice in returnDocs) {
+        final data = invoice.data() as Map<String, dynamic>? ?? {};
+        final canonicalId = canonicalInvoiceId(invoice);
+        final currentNumber = data['invoiceNumber']?.toString().trim() ?? '';
+        if (historyInvoiceId.isNotEmpty &&
+            (historyInvoiceId == canonicalId ||
+                historyInvoiceId == invoice.id)) {
+          return canonicalId;
+        }
+        if (invoiceNumber.isNotEmpty &&
+            currentNumber.isNotEmpty &&
+            invoiceNumber == currentNumber) {
+          return canonicalId;
+        }
+      }
+      return null;
+    }
+
     List<QueryDocumentSnapshot> sortAndDeduplicateHistory(
       List<QueryDocumentSnapshot> docs,
     ) {
@@ -125,15 +178,27 @@ class SupplierInvoiceBalanceSyncService {
       return sorted.where((doc) {
         final data = doc.data() as Map<String, dynamic>? ?? {};
         final type = data['type']?.toString() ?? '';
-        if (type != 'buying' && type != 'buying_payment') return true;
+        final isBuying = type == 'buying' || type == 'buying_payment';
+        final isReturn = type == 'buying_return' ||
+            type == 'return' ||
+            type == 'buying_return_payment' ||
+            type == 'return_payment';
+        if (!isBuying && !isReturn) return true;
         final invId = data['invoiceId']?.toString().trim() ?? '';
         final invNum = data['invoiceNumber']?.toString().trim() ?? '';
-        final resolvedId = resolveInvoiceId(invId, invNum);
+        final resolvedId = isReturn
+            ? resolveReturnId(invId, invNum)
+            : resolveInvoiceId(invId, invNum);
         final identity = resolvedId ??
             (invNum.isNotEmpty
                 ? 'number:$invNum'
                 : (invId.isNotEmpty ? 'id:$invId' : 'doc:${doc.id}'));
-        return seen.add('$identity:$type');
+        final canonicalType = type == 'return'
+            ? 'buying_return'
+            : type == 'return_payment'
+                ? 'buying_return_payment'
+                : type;
+        return seen.add('$identity:$canonicalType');
       }).toList();
     }
 
@@ -144,6 +209,8 @@ class SupplierInvoiceBalanceSyncService {
     final Map<String, QueryDocumentSnapshot> historyBuyingDocs = {};
     final Map<String, QueryDocumentSnapshot> historyBuyingPaymentDocs = {};
     final Map<String, QueryDocumentSnapshot> historyVoucherDocs = {};
+    final Map<String, QueryDocumentSnapshot> historyReturnDocs = {};
+    final Map<String, QueryDocumentSnapshot> historyReturnPaymentDocs = {};
 
     for (final doc in historyDocs) {
       final data = doc.data() as Map<String, dynamic>;
@@ -169,6 +236,16 @@ class SupplierInvoiceBalanceSyncService {
       } else if (type == 'voucher' || type == 'opening') {
         if (vId.isNotEmpty && vouchersMap.containsKey(vId)) {
           historyVoucherDocs.putIfAbsent(vId, () => doc);
+        }
+      } else if (type == 'buying_return' || type == 'return') {
+        final resolvedId = resolveReturnId(invId, invNum);
+        if (resolvedId != null) {
+          historyReturnDocs.putIfAbsent(resolvedId, () => doc);
+        }
+      } else if (type == 'buying_return_payment' || type == 'return_payment') {
+        final resolvedId = resolveReturnId(invId, invNum);
+        if (resolvedId != null) {
+          historyReturnPaymentDocs.putIfAbsent(resolvedId, () => doc);
         }
       }
     }
@@ -247,6 +324,73 @@ class SupplierInvoiceBalanceSyncService {
           opCount++;
           await commitBatchIfNeeded();
         }
+      }
+    }
+
+    // Align purchase-return records. A return reduces what is owed, while any
+    // cash refund recorded on it increases the running balance again.
+    for (final doc in returnDocs) {
+      final invoiceId = canonicalInvoiceId(doc);
+      final data = doc.data() as Map<String, dynamic>;
+      final totalSum = invoiceNum(data['totalSum']);
+      final paidAmount = invoiceNum(data['paidAmount']);
+      final invoiceNumber = data['invoiceNumber']?.toString() ?? '';
+      final timestamp = data['date'] ?? FieldValue.serverTimestamp();
+
+      final returnHistory = historyReturnDocs[invoiceId];
+      if (returnHistory == null) {
+        final ref = supplierRef
+            .collection('balanceHistory')
+            .doc('${invoiceId}_buying_return');
+        batch.set(ref, {
+          'enteredBalance': totalSum,
+          'balanceBefore': 0.0,
+          'timestamp': timestamp,
+          'type': 'buying_return',
+          'invoiceId': invoiceId,
+          'invoiceNumber': invoiceNumber,
+        });
+        opCount++;
+        await commitBatchIfNeeded();
+      } else if ((invoiceNum((returnHistory.data()
+                      as Map<String, dynamic>)['enteredBalance']) -
+                  totalSum)
+              .abs() >
+          0.001) {
+        batch.update(returnHistory.reference, {'enteredBalance': totalSum});
+        opCount++;
+        await commitBatchIfNeeded();
+      }
+
+      final paymentHistory = historyReturnPaymentDocs[invoiceId];
+      if (paidAmount > 0 && paymentHistory == null) {
+        final ref = supplierRef
+            .collection('balanceHistory')
+            .doc('${invoiceId}_buying_return_pay');
+        batch.set(ref, {
+          'enteredBalance': paidAmount,
+          'balanceBefore': 0.0,
+          'timestamp': timestamp,
+          'type': 'buying_return_payment',
+          'invoiceId': invoiceId,
+          'invoiceNumber': invoiceNumber,
+        });
+        opCount++;
+        await commitBatchIfNeeded();
+      } else if (paidAmount > 0 && paymentHistory != null) {
+        final current = invoiceNum(
+            (paymentHistory.data() as Map<String, dynamic>)['enteredBalance']);
+        if ((current - paidAmount).abs() > 0.001) {
+          batch.update(paymentHistory.reference, {
+            'enteredBalance': paidAmount,
+          });
+          opCount++;
+          await commitBatchIfNeeded();
+        }
+      } else if (paidAmount <= 0 && paymentHistory != null) {
+        batch.delete(paymentHistory.reference);
+        opCount++;
+        await commitBatchIfNeeded();
       }
     }
 
@@ -374,6 +518,18 @@ class SupplierInvoiceBalanceSyncService {
           opCount++;
           await commitBatchIfNeeded();
         }
+      } else if (type == 'buying_return' || type == 'return') {
+        if (resolveReturnId(invId, invNum) == null) {
+          batch.delete(doc.reference);
+          opCount++;
+          await commitBatchIfNeeded();
+        }
+      } else if (type == 'buying_return_payment' || type == 'return_payment') {
+        if (resolveReturnId(invId, invNum) == null) {
+          batch.delete(doc.reference);
+          opCount++;
+          await commitBatchIfNeeded();
+        }
       } else if (type == 'voucher' || type == 'opening') {
         if (vId.isNotEmpty && !vouchersMap.containsKey(vId)) {
           batch.delete(doc.reference);
@@ -432,6 +588,10 @@ class SupplierInvoiceBalanceSyncService {
         running += entered;
       } else if (type == 'buying_payment') {
         running -= entered;
+      } else if (type == 'buying_return' || type == 'return') {
+        running -= entered;
+      } else if (type == 'buying_return_payment' || type == 'return_payment') {
+        running += entered;
       } else if (type == 'opening' || type == 'voucher') {
         final isIncrease = type == 'opening'
             ? direction != '\u0639\u0644\u064a\u0647'
@@ -459,7 +619,6 @@ class SupplierInvoiceBalanceSyncService {
       {'totalBalance': running, 'balance': running},
       SetOptions(merge: true),
     );
-    await SupplierRepository.instance.updateLocalBalance(trimmed, running);
 
     WriteBatch finalBatch = _firestore.batch();
     var finalOpCount = 0;

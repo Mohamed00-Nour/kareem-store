@@ -188,7 +188,8 @@ class SupplierStatementPdfService {
         center,
   }) async {
     final logoFile = HeaderHelper.getLogoFile(settings);
-    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final logoPdfImage =
+        logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
     final headerLines = HeaderHelper.getHeaderLines(settings);
     final snap = await FirebaseFirestore.instance
         .collection('suppliers')
@@ -418,7 +419,8 @@ class SupplierStatementPdfService {
     required String emptyMessage,
   }) async {
     final logoFile = HeaderHelper.getLogoFile(settings);
-    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final logoPdfImage =
+        logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
     final headerLines = HeaderHelper.getHeaderLines(settings);
     final snap = await FirebaseFirestore.instance
         .collection('suppliers')
@@ -553,9 +555,9 @@ class SupplierStatementPdfService {
                         children: [
                           d((p['product'] ?? '').toString()),
                           d(p['amount']?.toString() ?? ''),
-                          d(invoiceAmount(p['buyingPrice'] ??
-                              p['selectedPrice'] ??
-                              p['price'])),
+                          d(invoiceAmount(invoiceBuyingLineUnitPrice(
+                            Map<String, dynamic>.from(p as Map),
+                          ))),
                           d(invoiceAmount(p['total'] ?? p['totalCost'])),
                         ],
                       ),

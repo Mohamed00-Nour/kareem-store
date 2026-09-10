@@ -5,6 +5,11 @@ import 'package:hive/hive.dart';
 import '../Services/party_rename_service.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Widgets/app_responsive.dart';
+import '../local_db/models/supplier_local.dart';
+import '../repositories/balance_history_repository.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/supplier_repository.dart';
+import '../sync/connectivity_service.dart';
 import 'DeletedSuppliersPage.dart';
 import 'SupplierInvoicesPage.dart';
 
@@ -126,26 +131,53 @@ class _SupplierInfoCard extends StatelessWidget {
 class _SupplierListPageState extends State<SupplierListPage> {
   String _searchQuery = '';
   Box<String>? _deletedSuppliersBox;
+  List<SupplierLocal> _suppliers = [];
+  bool _isSyncing = false;
 
   @override
   void initState() {
     super.initState();
     _initializeHive();
-    _reconcileSupplierBalances();
+    _loadFromHive();
+    _backgroundSync();
   }
 
-  Future<void> _reconcileSupplierBalances() async {
+  void _loadFromHive() {
+    final suppliers = SupplierRepository.instance.getAll();
+    if (!mounted) return;
+    setState(() => _suppliers = suppliers);
+  }
+
+  Future<void> _backgroundSync() async {
+    if (!ConnectivityService.instance.isOnline) return;
+    if (mounted) setState(() => _isSyncing = true);
     try {
-      final suppliers =
-          await FirebaseFirestore.instance.collection('suppliers').get();
-      for (final supplier in suppliers.docs) {
+      await ConnectivityService.instance.forceSync();
+      await SupplierRepository.instance.deltaSync();
+      await InvoiceRepository.instance.deltaSyncBuying();
+      final suppliers = SupplierRepository.instance.getAll();
+      for (final supplier in suppliers) {
         try {
-          await SupplierInvoiceBalanceSyncService.syncForSupplier(supplier.id);
+          await SupplierInvoiceBalanceSyncService.syncForSupplier(
+            supplier.id,
+          );
+          await BalanceHistoryRepository.instance.fullSyncForSupplier(
+            supplier.id,
+          );
+          await InvoiceRepository.instance.syncBuyingReturnsForSupplier(
+            supplier.id,
+            supplierName: supplier.name,
+          );
         } catch (_) {
           // Keep checking the remaining suppliers if one legacy record is bad.
         }
       }
-    } catch (_) {}
+      _loadFromHive();
+    } catch (_) {
+      // Cached Hive data remains visible when synchronization fails.
+    } finally {
+      if (mounted) setState(() => _isSyncing = false);
+    }
   }
 
   Future<void> _initializeHive() async {
@@ -156,6 +188,7 @@ class _SupplierListPageState extends State<SupplierListPage> {
       setState(() {
         _deletedSuppliersBox = box;
       });
+      _loadFromHive();
     }
   }
 
@@ -268,6 +301,10 @@ class _SupplierListPageState extends State<SupplierListPage> {
           .collection('suppliers')
           .doc(supplierId)
           .delete();
+      await SupplierRepository.instance.deleteLocal(supplierId);
+      await BalanceHistoryRepository.instance
+          .deleteForParent('supplier', supplierId);
+      _loadFromHive();
       // Also remove from local hidden list if present
       _deletedSuppliersBox?.delete(supplierId);
       if (mounted) {
@@ -287,8 +324,7 @@ class _SupplierListPageState extends State<SupplierListPage> {
     }
   }
 
-  void _showSupplierOptionsSheet(
-      String supplierId, String currentName) {
+  void _showSupplierOptionsSheet(String supplierId, String currentName) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -341,8 +377,7 @@ class _SupplierListPageState extends State<SupplierListPage> {
                 },
               ),
               ListTile(
-                leading:
-                    const Icon(Icons.delete_forever, color: Colors.red),
+                leading: const Icon(Icons.delete_forever, color: Colors.red),
                 title: const Text(
                   'حذف نهائي من قاعدة البيانات',
                   style: TextStyle(color: Colors.red),
@@ -449,6 +484,20 @@ class _SupplierListPageState extends State<SupplierListPage> {
         ),
         iconTheme: const IconThemeData(color: Colors.white),
         actions: [
+          if (_isSyncing)
+            const Padding(
+              padding: EdgeInsets.symmetric(horizontal: 12),
+              child: Center(
+                child: SizedBox(
+                  width: 18,
+                  height: 18,
+                  child: CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                ),
+              ),
+            ),
           IconButton(
             icon: const Icon(Icons.delete, color: Colors.white),
             onPressed: _deletedSuppliersBox == null
@@ -500,30 +549,14 @@ class _SupplierListPageState extends State<SupplierListPage> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('suppliers')
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (!snapshot.hasData || _deletedSuppliersBox == null) {
-                  return Center(
-                    child: CircularProgressIndicator(
-                      color: Colors.black.withOpacity(0.7),
-                    ),
-                  );
-                }
-
-                final allSuppliers = snapshot.data!.docs;
+            child: Builder(
+              builder: (context) {
                 final filteredSuppliers = _searchQuery.isEmpty
-                    ? allSuppliers
-                    : allSuppliers.where((supplier) {
-                        final name =
-                            supplier['name']?.toString().toLowerCase() ?? '';
-                        return name.contains(_searchQuery.toLowerCase());
-                      }).toList();
-                final visibleSuppliers = filteredSuppliers
-                    .where((s) => !_deletedSuppliersBox!.containsKey(s.id))
-                    .toList();
+                    ? _suppliers
+                    : SupplierRepository.instance.search(_searchQuery);
+                final visibleSuppliers = filteredSuppliers.where((supplier) {
+                  return _deletedSuppliersBox?.containsKey(supplier.id) != true;
+                }).toList();
 
                 if (visibleSuppliers.isEmpty) {
                   return const Center(child: Text('لا يوجد موردين'));
@@ -540,23 +573,27 @@ class _SupplierListPageState extends State<SupplierListPage> {
                   itemCount: visibleSuppliers.length,
                   itemBuilder: (context, index) {
                     final supplier = visibleSuppliers[index];
-                    final data = supplier.data() as Map<String, dynamic>;
-                    final name = data['name']?.toString() ?? supplier.id;
-                    final balance = (data['totalBalance'] ?? 0.0).toDouble();
-                    final phone = data['phone']?.toString() ?? '';
+                    final name = supplier.name;
+                    final balance = BalanceHistoryRepository.instance
+                        .calculateSupplierBalance(
+                      supplier.id,
+                      fallback: supplier.balance,
+                    );
+                    final phone = supplier.phone;
 
                     return _SupplierInfoCard(
                       name: name,
                       balance: balance,
                       phone: phone,
-                      onTap: () {
-                        Navigator.push(
+                      onTap: () async {
+                        await Navigator.push(
                           context,
                           MaterialPageRoute(
                             builder: (context) =>
                                 SupplierInvoicesPage(supplierId: supplier.id),
                           ),
                         );
+                        _loadFromHive();
                       },
                       onLongPress: () {
                         _showSupplierOptionsSheet(supplier.id, name);

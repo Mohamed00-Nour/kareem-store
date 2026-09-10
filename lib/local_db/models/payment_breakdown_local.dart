@@ -28,6 +28,17 @@ class PaymentBreakdownLocal extends HiveObject {
   @HiveField(7)
   DateTime timestamp;
 
+  /// The sales invoice this informational breakdown belongs to.
+  /// Empty for records created by older app versions.
+  @HiveField(8, defaultValue: '')
+  String invoiceId;
+
+  @HiveField(9, defaultValue: '')
+  String invoiceNumber;
+
+  @HiveField(10, defaultValue: '')
+  String clientName;
+
   PaymentBreakdownLocal({
     required this.id,
     required this.date,
@@ -37,6 +48,9 @@ class PaymentBreakdownLocal extends HiveObject {
     this.bankTransfer = 0.0,
     this.notes = '',
     required this.timestamp,
+    this.invoiceId = '',
+    this.invoiceNumber = '',
+    this.clientName = '',
   });
 
   Map<String, dynamic> toFirestore() {
@@ -49,6 +63,9 @@ class PaymentBreakdownLocal extends HiveObject {
       'bankTransfer': bankTransfer,
       'notes': notes,
       'timestamp': timestamp.toIso8601String(),
+      'invoiceId': invoiceId,
+      'invoiceNumber': invoiceNumber,
+      'clientName': clientName,
     };
   }
 
@@ -68,6 +85,9 @@ class PaymentBreakdownLocal extends HiveObject {
       bankTransfer: (data['bankTransfer'] as num?)?.toDouble() ?? 0.0,
       notes: (data['notes'] ?? '').toString(),
       timestamp: parseDate(data['timestamp']),
+      invoiceId: (data['invoiceId'] ?? '').toString(),
+      invoiceNumber: (data['invoiceNumber'] ?? '').toString(),
+      clientName: (data['clientName'] ?? '').toString(),
     );
   }
 }
