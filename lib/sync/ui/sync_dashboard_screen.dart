@@ -80,6 +80,7 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
     const labels = {
       'createInvoice': 'إنشاء فاتورة مبيعات',
       'editInvoice': 'تعديل فاتورة',
+      'updateInvoiceSpecial': 'تحديث تمييز فاتورة',
       'deleteInvoice': 'حذف فاتورة',
       'adjustClientBalance': 'تعديل رصيد عميل',
       'adjustSupplierBalance': 'تعديل رصيد مورد',

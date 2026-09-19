@@ -17,7 +17,9 @@ import 'package:kareem_store/sync/sync_queue_manager.dart';
 import 'package:kareem_store/repositories/invoice_repository.dart';
 import 'package:kareem_store/repositories/box_repository.dart';
 import 'package:kareem_store/repositories/balance_history_repository.dart';
+import 'package:kareem_store/repositories/client_repository.dart';
 import 'package:kareem_store/Services/invoice_number_utils.dart';
+import 'package:kareem_store/Services/invoice_special_service.dart';
 import 'package:kareem_store/sync/batch_sync_engine.dart';
 import 'package:kareem_store/sync/invoice_sync_normalizer.dart';
 
@@ -263,6 +265,49 @@ void main() {
   // ── BalanceHistoryRepository ────────────────────────────────────────────
 
   group('BalanceHistoryRepository', () {
+    test('sales client lookup uses the same ledger balance as clients screen',
+        () async {
+      const clientId = 'client_shared_balance';
+      const clientName = 'عميل الرصيد الموحد';
+      await clientsBox.put(
+        clientId,
+        ClientLocal(
+          id: clientId,
+          name: clientName,
+          balance: 9999.0,
+          updatedAt: DateTime.now(),
+        ),
+      );
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: 'shared_opening',
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: 7500.0,
+          type: 'opening',
+          timestamp: DateTime(2026, 9, 1),
+        ),
+      );
+      await BalanceHistoryRepository.instance.upsertLocal(
+        BalanceHistoryLocal(
+          id: 'shared_payment',
+          parentId: clientId,
+          parentType: 'client',
+          enteredBalance: 250.0,
+          type: 'deduction',
+          timestamp: DateTime(2026, 9, 2),
+        ),
+      );
+
+      final clientsScreenBalance =
+          ClientRepository.instance.computeLiveBalanceFromHive(clientId);
+      final salesScreenBalance =
+          ClientRepository.instance.currentBalanceByName(clientName);
+
+      expect(clientsScreenBalance, 7250.0);
+      expect(salesScreenBalance, clientsScreenBalance);
+    });
+
     test('Stores and retrieves balance history entries ordered by date',
         () async {
       final invoice = InvoiceLocal(
@@ -559,6 +604,47 @@ void main() {
   group('SyncQueueManager', () {
     setUp(() async {
       await Hive.box<SyncQueueItem>(HiveBoxNames.syncQueue).clear();
+    });
+
+    test('starring a sales invoice updates Hive before queueing cloud sync',
+        () async {
+      const invoiceId = 'invoice_special_hive_first';
+      await invoicesBox.put(
+        invoiceId,
+        InvoiceLocal(
+          id: invoiceId,
+          invoiceNumber: 901,
+          date: DateTime(2026, 9, 19),
+          isSpecial: false,
+          updatedAt: DateTime.now(),
+        ),
+      );
+
+      await InvoiceSpecialService.setSpecial(
+        collection: InvoiceSpecialService.salesCollection,
+        docId: invoiceId,
+        clientName: null,
+        special: true,
+      );
+
+      expect(invoicesBox.get(invoiceId)?.isSpecial, isTrue);
+      final pending = SyncQueueManager.instance.getPending();
+      expect(pending, hasLength(1));
+      expect(pending.single.operationType, 'updateInvoiceSpecial');
+      expect(
+        SyncQueueManager.decodePayload(pending.single),
+        containsPair('isSpecial', true),
+      );
+
+      final edited = invoicesBox.get(invoiceId)!;
+      edited.totalSum = 4321.0;
+      await invoicesBox.put(invoiceId, edited);
+      final specialInvoices =
+          InvoiceSpecialService.getSpecialInvoicesFromHive();
+      final refreshed = specialInvoices.firstWhere(
+        (invoice) => invoice['id'] == invoiceId,
+      );
+      expect(refreshed['totalSum'], 4321.0);
     });
 
     test('enqueue adds an item with status=pending', () async {

@@ -164,10 +164,19 @@ class InvoiceRepository {
 
   Future<void> fullSyncSales() async {
     final snap = await _fs.collection('invoices').get();
+    final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
+      operationType: 'updateInvoiceSpecial',
+      idKey: 'invoiceId',
+    );
     final Map<String, InvoiceLocal> map = {};
     for (final doc in snap.docs) {
-      map[doc.id] =
+      final remote =
           InvoiceLocal.fromFirestore(doc.id, doc.data(), defaultType: 'sale');
+      final local = invoicesBox.get(doc.id);
+      if (pendingSpecialIds.contains(doc.id) && local != null) {
+        remote.isSpecial = local.isSpecial;
+      }
+      map[doc.id] = remote;
     }
     await invoicesBox.putAll(map);
     await appMetaBox.put(
@@ -180,10 +189,19 @@ class InvoiceRepository {
 
   Future<void> fullSyncReturns() async {
     final snap = await _fs.collection('returnInvoices').get();
+    final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
+      operationType: 'updateInvoiceSpecial',
+      idKey: 'invoiceId',
+    );
     final Map<String, InvoiceLocal> map = {};
     for (final doc in snap.docs) {
-      map[doc.id] =
+      final remote =
           InvoiceLocal.fromFirestore(doc.id, doc.data(), defaultType: 'return');
+      final local = returnInvoicesBox.get(doc.id);
+      if (pendingSpecialIds.contains(doc.id) && local != null) {
+        remote.isSpecial = local.isSpecial;
+      }
+      map[doc.id] = remote;
     }
     await returnInvoicesBox.putAll(map);
     await appMetaBox.put(

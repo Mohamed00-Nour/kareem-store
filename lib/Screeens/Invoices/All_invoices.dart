@@ -9,6 +9,7 @@ import '../../Services/invoice_special_service.dart';
 import '../../Services/sales_invoice_actions_service.dart';
 import '../../repositories/invoice_repository.dart';
 import '../../local_db/models/invoice_local.dart';
+import '../../sync/sync_queue_manager.dart';
 import 'InvoiceDetailPage.dart';
 
 class InvoiceListPage extends StatefulWidget {
@@ -123,10 +124,17 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
       map[loc.id] = loc.toMap();
     }
 
-    // 2. Overlay remote docs and update Hive local cache
+    final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
+      operationType: 'updateInvoiceSpecial',
+      idKey: 'invoiceId',
+    );
+
+    // 2. Overlay remote docs and update Hive local cache. A pending local star
+    // change wins until its queued Firestore update has completed.
     for (final doc in remoteDocs) {
       final id = doc['id']?.toString() ?? '';
       if (id.isNotEmpty) {
+        if (pendingSpecialIds.contains(id) && map.containsKey(id)) continue;
         map[id] = doc;
         if (widget.collection == 'returnInvoices') {
           InvoiceRepository.instance.upsertReturnLocal(id, doc);
@@ -274,12 +282,15 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   Future<void> _navigateToInvoiceDetail(Map<String, dynamic> invoice) async {
     final payload = Map<String, dynamic>.from(invoice);
     payload['_sourceCollection'] = widget.collection;
-    await Navigator.push<bool>(
+    final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
         builder: (context) => InvoiceDetailPage(invoice: payload),
       ),
     );
+    if (changed == true && mounted) {
+      _loadFromLocalCache();
+    }
   }
 
   void _handleDeleteAction(int index) {

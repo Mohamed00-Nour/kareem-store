@@ -72,7 +72,7 @@ class InvoiceCubit extends Cubit<InvoiceState> {
   }
 
   Future<double> fetchClientBalance(String clientName) async {
-    return ClientRepository.instance.findByName(clientName)?.balance ?? 0.0;
+    return ClientRepository.instance.currentBalanceByName(clientName);
   }
 
   void setClientInfo(String clientName, double balance, String paidAmountText) {

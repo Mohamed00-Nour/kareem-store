@@ -6,6 +6,7 @@ part 'sync_queue_item.g.dart';
 enum SyncOperationType {
   createInvoice,
   editInvoice,
+  updateInvoiceSpecial,
   deleteInvoice,
   createReturn,
   deleteReturn,

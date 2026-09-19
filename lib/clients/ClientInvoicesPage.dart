@@ -14,6 +14,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Screeens/DecreaseProductPage.dart';
 import '../Services/client_invoice_balance_sync_service.dart';
+import '../Services/client_invoice_running_balance_service.dart';
 import '../Services/client_statement_pdf_service.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/invoice_stock_service.dart';
@@ -2101,52 +2102,40 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   /// Combines sales invoices, return invoices, and payment entries sorted newest first,
   /// with dynamically calculated chronological running balances.
   List<_InvoiceEntry> get _allMergedInvoices {
+    final sales =
+        _invoices.map((doc) => Map<String, dynamic>.from(doc.data)).toList();
+    final returns = _returnInvoices
+        .map((doc) => Map<String, dynamic>.from(doc.data))
+        .toList();
+    final payments =
+        _payments.map((doc) => Map<String, dynamic>.from(doc.data)).toList();
+
+    ClientInvoiceRunningBalanceService.apply(
+      salesInvoices: sales,
+      returnInvoices: returns,
+      payments: payments,
+    );
+
     final List<_InvoiceEntry> merged = [
-      ..._invoices.map((d) => _InvoiceEntry(
-          id: d.id,
-          data: Map<String, dynamic>.from(d.data),
-          kind: _EntryKind.invoice)),
-      ..._returnInvoices.map((d) => _InvoiceEntry(
-          id: d.id,
-          data: Map<String, dynamic>.from(d.data),
-          kind: _EntryKind.returnInvoice)),
-      ..._payments.map((d) => _InvoiceEntry(
-          id: d.id,
-          data: Map<String, dynamic>.from(d.data),
-          kind: _EntryKind.payment)),
+      for (var i = 0; i < _invoices.length; i++)
+        _InvoiceEntry(
+          id: _invoices[i].id,
+          data: sales[i],
+          kind: _EntryKind.invoice,
+        ),
+      for (var i = 0; i < _returnInvoices.length; i++)
+        _InvoiceEntry(
+          id: _returnInvoices[i].id,
+          data: returns[i],
+          kind: _EntryKind.returnInvoice,
+        ),
+      for (var i = 0; i < _payments.length; i++)
+        _InvoiceEntry(
+          id: _payments[i].id,
+          data: payments[i],
+          kind: _EntryKind.payment,
+        ),
     ];
-
-    // Sort ascending by date to compute chronological running balances
-    merged.sort((a, b) => _entryDate(a).compareTo(_entryDate(b)));
-
-    var running = 0.0;
-    for (final entry in merged) {
-      final data = entry.data;
-      data['_computedPrevBalance'] = running;
-
-      if (entry.kind == _EntryKind.invoice) {
-        final total = invoiceNum(data['totalSum']);
-        final paid = invoiceNum(data['paidAmount']);
-        running += (total - paid);
-      } else if (entry.kind == _EntryKind.returnInvoice) {
-        final total = invoiceNum(data['totalSum']);
-        final paid = invoiceNum(data['paidAmount']);
-        running -= (total - paid);
-      } else if (entry.kind == _EntryKind.payment) {
-        final type = data['type']?.toString() ?? '';
-        // Invoice paidAmount is already accounted for in invoice/return entries
-        if (type == 'sale_payment' || type == 'return_payment') continue;
-
-        final entered = invoiceNum(
-            data['enteredBalance'] ?? data['amount'] ?? data['value']);
-        if (type == 'opening' || type == 'addition' || type == 'sale') {
-          running += entered;
-        } else if (type == 'deduction' || type == 'return') {
-          running -= entered;
-        }
-      }
-      data['_computedRemainingOwed'] = running;
-    }
 
     // Sort descending (newest first) for UI display
     merged.sort((a, b) => _entryDate(b).compareTo(_entryDate(a)));

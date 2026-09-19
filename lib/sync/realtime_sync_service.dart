@@ -73,9 +73,14 @@ class RealtimeSyncService {
   void _listenToSalesInvoices() {
     final sub = _fs.collection('invoices').snapshots().listen(
       (snapshot) {
+        final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
+          operationType: 'updateInvoiceSpecial',
+          idKey: 'invoiceId',
+        );
         for (final change in snapshot.docChanges) {
           final docId = change.doc.id;
           final data = change.doc.data();
+          if (pendingSpecialIds.contains(docId)) continue;
           if (change.type == DocumentChangeType.removed) {
             InvoiceRepository.instance.deleteSaleLocal(docId);
           } else if (data != null) {
@@ -142,9 +147,14 @@ class RealtimeSyncService {
   void _listenToReturnInvoices() {
     final sub = _fs.collection('returnInvoices').snapshots().listen(
       (snapshot) {
+        final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
+          operationType: 'updateInvoiceSpecial',
+          idKey: 'invoiceId',
+        );
         for (final change in snapshot.docChanges) {
           final docId = change.doc.id;
           final data = change.doc.data();
+          if (pendingSpecialIds.contains(docId)) continue;
           if (change.type == DocumentChangeType.removed) {
             InvoiceRepository.instance.deleteReturnLocal(docId);
           } else if (data != null) {

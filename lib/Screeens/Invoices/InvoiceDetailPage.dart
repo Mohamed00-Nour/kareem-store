@@ -1,4 +1,3 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -9,6 +8,7 @@ import '../../Services/sales_invoice_actions_service.dart';
 import '../../Services/whatsapp_invoice_share_service.dart';
 import '../../Widgets/invoice_action_buttons.dart';
 import '../../Widgets/invoice_display_widgets.dart';
+import '../../repositories/invoice_repository.dart';
 import '../DecreaseProductPage.dart';
 
 class InvoiceDetailPage extends StatefulWidget {
@@ -39,23 +39,28 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
   @override
   void initState() {
     super.initState();
-    _invoice = Map<String, dynamic>.from(widget.invoice);
+    _invoice = SalesInvoiceActionsService.buildClientPagePayload(
+      widget.invoice,
+    );
     _isSpecial = InvoiceSpecialService.isSpecial(_invoice);
     _loadUserRole();
   }
 
-  Future<void> _reloadInvoiceFromFirestore() async {
+  Future<void> _reloadInvoiceFromHive() async {
     if (_rootInvoiceId.isEmpty) return;
     setState(() => _reloadInProgress = true);
     try {
-      final doc = await FirebaseFirestore.instance
-          .collection(_sourceCollection)
-          .doc(_rootInvoiceId)
-          .get();
-      if (!doc.exists || !mounted) return;
-      final data = Map<String, dynamic>.from(doc.data()!);
-      data['id'] = doc.id;
+      final local = _sourceCollection == InvoiceSpecialService.returnCollection
+          ? InvoiceRepository.instance.getReturnById(_rootInvoiceId)
+          : InvoiceRepository.instance.getSaleById(_rootInvoiceId);
+      if (local == null || !mounted) return;
+      var data = Map<String, dynamic>.from(local.toMap());
       data['_sourceCollection'] = _sourceCollection;
+      final clientSubDocId = invoice['_clientSubDocId']?.toString();
+      if (clientSubDocId != null && clientSubDocId.isNotEmpty) {
+        data['_clientSubDocId'] = clientSubDocId;
+      }
+      data = SalesInvoiceActionsService.buildClientPagePayload(data);
       setState(() {
         _invoice = data;
         _isSpecial = InvoiceSpecialService.isSpecial(data);
@@ -63,7 +68,7 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('تعذر تحديث بيانات الفاتورة: $e')),
+        SnackBar(content: Text('تعذر تحديث بيانات الفاتورة المحلية: $e')),
       );
     } finally {
       if (mounted) setState(() => _reloadInProgress = false);
@@ -88,6 +93,9 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
         docId: _rootInvoiceId,
         clientName: _clientId,
         special: next,
+        clientId: invoice['clientId']?.toString(),
+        invoiceData: invoice,
+        clientSubDocId: invoice['_clientSubDocId']?.toString(),
       );
       if (!mounted) return;
       setState(() {
@@ -167,7 +175,7 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
       ),
     );
     if (changed == true && mounted) {
-      await _reloadInvoiceFromFirestore();
+      await _reloadInvoiceFromHive();
       if (!mounted) return;
       setState(() => _notifyParentOnPop = true);
       ScaffoldMessenger.of(context).showSnackBar(

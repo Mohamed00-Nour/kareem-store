@@ -133,6 +133,9 @@ class BatchSyncEngine {
       case 'editInvoice':
         await _syncEditInvoice(payload, operationId);
         break;
+      case 'updateInvoiceSpecial':
+        await _syncUpdateInvoiceSpecial(payload);
+        break;
       case 'deleteInvoice':
         await _syncDeleteInvoice(payload, operationId);
         break;
@@ -204,6 +207,51 @@ class BatchSyncEngine {
   }
 
   // ── Operation Handlers ────────────────────────────────────────────────────
+
+  Future<void> _syncUpdateInvoiceSpecial(Map<String, dynamic> payload) async {
+    final collection = payload['collection']?.toString() ?? '';
+    final invoiceId = payload['invoiceId']?.toString().trim() ?? '';
+    if ((collection != 'invoices' && collection != 'returnInvoices') ||
+        invoiceId.isEmpty) {
+      throw ArgumentError('updateInvoiceSpecial payload is invalid');
+    }
+
+    final special = payload['isSpecial'] == true;
+    final clientId = payload['clientId']?.toString().trim() ?? '';
+    final clientSubDocId = payload['clientSubDocId']?.toString().trim() ?? '';
+    final batch = _fs.batch();
+    batch.set(
+      _fs.collection(collection).doc(invoiceId),
+      {'isSpecial': special},
+      SetOptions(merge: true),
+    );
+
+    if (clientId.isNotEmpty) {
+      DocumentReference<Map<String, dynamic>>? clientInvoiceRef;
+      final clientInvoices =
+          _fs.collection('clients').doc(clientId).collection(collection);
+      if (clientSubDocId.isNotEmpty) {
+        clientInvoiceRef = clientInvoices.doc(clientSubDocId);
+      } else {
+        final query = await clientInvoices
+            .where('invoiceId', isEqualTo: invoiceId)
+            .limit(1)
+            .get();
+        if (query.docs.isNotEmpty) {
+          clientInvoiceRef = query.docs.first.reference;
+        }
+      }
+      if (clientInvoiceRef != null) {
+        batch.set(
+          clientInvoiceRef,
+          {'isSpecial': special},
+          SetOptions(merge: true),
+        );
+      }
+    }
+
+    await batch.commit();
+  }
 
   Future<void> _syncUpsertPaymentBreakdown(Map<String, dynamic> payload) async {
     final id = payload['id']?.toString() ?? '';

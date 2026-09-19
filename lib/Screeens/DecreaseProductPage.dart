@@ -1577,7 +1577,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   double _getClientBalanceSync(String clientName) {
     final name = clientName.trim();
     if (name.isEmpty) return 0.0;
-    return ClientRepository.instance.findByName(name)?.balance ?? 0.0;
+    return ClientRepository.instance.currentBalanceByName(name);
   }
 
   /// Async wrapper kept for compatibility with checkout sheet interface.
@@ -2717,13 +2717,9 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
                       _balance = null;
                       _loading = true;
                     });
-                    final doc = await FirebaseFirestore.instance
-                        .collection('clients')
-                        .doc(val)
-                        .get();
+                    final balance = await _fetchClientBalance(val ?? '');
                     setQ(() {
-                      _balance =
-                          doc.exists ? (doc['balance'] ?? 0.0).toDouble() : 0.0;
+                      _balance = balance;
                       _loading = false;
                     });
                   },

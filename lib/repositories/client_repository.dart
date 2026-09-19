@@ -18,27 +18,23 @@ class ClientRepository {
 
   // ── Cache helpers ─────────────────────────────────────────────────────────
 
-  /// Compute live running balance for a client directly from local Hive transaction history.
+  /// Returns the same ledger-derived balance used by the clients screen.
+  ///
+  /// The stored client balance is only a fallback for clients whose transaction
+  /// history has not been cached yet.
   double computeLiveBalanceFromHive(String clientId) {
-    final history = BalanceHistoryRepository.instance.getForClient(clientId);
-    if (history.isEmpty) {
-      final existing = clientsBox.get(clientId);
-      return existing?.balance ?? 0.0;
-    }
-    double running = 0.0;
-    for (final bh in history) {
-      final type = bh.type;
-      final isIncrease = type == 'sale' ||
-          type == 'addition' ||
-          type == 'opening' ||
-          type == 'return_payment';
-      if (isIncrease) {
-        running += bh.enteredBalance;
-      } else {
-        running -= bh.enteredBalance;
-      }
-    }
-    return running;
+    final existing = clientsBox.get(clientId);
+    return BalanceHistoryRepository.instance.calculateClientBalance(
+      clientId,
+      fallback: existing?.balance ?? 0.0,
+    );
+  }
+
+  /// Resolves a client by name and returns their ledger-derived current balance.
+  double currentBalanceByName(String clientName) {
+    final client = findByName(clientName);
+    if (client == null) return 0.0;
+    return computeLiveBalanceFromHive(client.id);
   }
 
   /// All clients from local cache. Returns stored balances — no live recomputation.

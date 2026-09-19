@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -5,6 +7,8 @@ import 'package:intl/intl.dart';
 
 import '../../Services/invoice_number_utils.dart';
 import '../../Services/invoice_special_service.dart';
+import '../../Services/sales_invoice_actions_service.dart';
+import '../../local_db/hive_init.dart';
 import 'InvoiceDetailPage.dart';
 
 /// Lists sales and return invoices marked as special (مميزة).
@@ -20,39 +24,57 @@ class _SpecialInvoicesPageState extends State<SpecialInvoicesPage> {
   final List<Map<String, dynamic>> _filtered = [];
   final TextEditingController _searchController = TextEditingController();
   bool _isFetching = true;
+  StreamSubscription? _salesInvoiceSubscription;
+  StreamSubscription? _returnInvoiceSubscription;
 
   @override
   void initState() {
     super.initState();
-    _fetch();
     _searchController.addListener(_applyFilter);
+    _salesInvoiceSubscription =
+        invoicesBox.watch().listen((_) => _loadFromHive());
+    _returnInvoiceSubscription =
+        returnInvoicesBox.watch().listen((_) => _loadFromHive());
+    _loadFromHive();
   }
 
   @override
   void dispose() {
     _searchController.dispose();
+    _salesInvoiceSubscription?.cancel();
+    _returnInvoiceSubscription?.cancel();
     super.dispose();
   }
 
-  Future<void> _fetch() async {
-    setState(() => _isFetching = true);
-    try {
-      final list = await InvoiceSpecialService.fetchSpecialInvoices();
-      if (!mounted) return;
-      setState(() {
-        _invoices
-          ..clear()
-          ..addAll(list);
-        _applyFilter();
-        _isFetching = false;
-      });
-    } catch (e) {
-      if (!mounted) return;
-      setState(() => _isFetching = false);
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('خطأ في تحميل الفواتير: $e')),
-      );
-    }
+  void _loadFromHive() {
+    if (!mounted) return;
+    final list = InvoiceSpecialService.getSpecialInvoicesFromHive()
+        .map(SalesInvoiceActionsService.buildClientPagePayload)
+        .toList();
+    final q = _searchController.text.trim().toLowerCase();
+    setState(() {
+      _invoices
+        ..clear()
+        ..addAll(list);
+      _filtered
+        ..clear()
+        ..addAll(_filter(list, q));
+      _isFetching = false;
+    });
+  }
+
+  Future<void> _fetch() async => _loadFromHive();
+
+  Iterable<Map<String, dynamic>> _filter(
+    Iterable<Map<String, dynamic>> source,
+    String query,
+  ) {
+    return source.where((inv) {
+      if (query.isEmpty) return true;
+      final client = inv['clientName']?.toString().toLowerCase() ?? '';
+      final number = inv['invoiceNumber']?.toString() ?? '';
+      return client.contains(query) || number.contains(query);
+    });
   }
 
   void _applyFilter() {
@@ -60,12 +82,7 @@ class _SpecialInvoicesPageState extends State<SpecialInvoicesPage> {
     setState(() {
       _filtered
         ..clear()
-        ..addAll(_invoices.where((inv) {
-          if (q.isEmpty) return true;
-          final client = inv['clientName']?.toString().toLowerCase() ?? '';
-          final num = inv['invoiceNumber']?.toString() ?? '';
-          return client.contains(q) || num.contains(q);
-        }));
+        ..addAll(_filter(_invoices, q));
     });
   }
 
@@ -84,7 +101,7 @@ class _SpecialInvoicesPageState extends State<SpecialInvoicesPage> {
         builder: (_) => InvoiceDetailPage(invoice: invoice),
       ),
     );
-    if (changed == true) _fetch();
+    if (changed == true) _loadFromHive();
   }
 
   @override

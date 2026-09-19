@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'invoice_number_utils.dart';
 import 'invoice_special_service.dart';
 import 'invoice_stock_service.dart';
+import 'client_invoice_running_balance_service.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/balance_history_repository.dart';
@@ -11,8 +12,72 @@ import '../sync/sync_queue_manager.dart';
 
 /// Delete / lookup sales invoices in [invoices] and client subcollections.
 class SalesInvoiceActionsService {
-  static Future<DocumentSnapshot<Map<String, dynamic>>?>
-      findClientSubInvoice({
+  /// Returns the invoice with the exact running-balance fields used by the
+  /// client invoices page. All data is read from the same local repositories,
+  /// so this also works while offline.
+  static Map<String, dynamic> buildClientPagePayload(
+    Map<String, dynamic> invoice,
+  ) {
+    final fallback = Map<String, dynamic>.from(invoice);
+    final rootId = rootInvoiceIdFrom(fallback);
+    final clientName = fallback['clientName']?.toString().trim() ?? '';
+    var clientId = fallback['clientId']?.toString().trim() ?? '';
+
+    final localClient = (clientId.isNotEmpty
+            ? ClientRepository.instance.getById(clientId)
+            : null) ??
+        ClientRepository.instance.findByName(clientName);
+    clientId = localClient?.id ?? clientId;
+    if (clientId.isEmpty) return fallback;
+
+    final sales = InvoiceRepository.instance
+        .getSalesByClient(clientId, clientName: clientName)
+        .map((item) => Map<String, dynamic>.from(item.toMap()))
+        .toList();
+    final returns = InvoiceRepository.instance
+        .getReturnsByClient(clientId, clientName: clientName)
+        .map((item) => Map<String, dynamic>.from(item.toMap()))
+        .toList();
+    final payments = BalanceHistoryRepository.instance
+        .getForClient(clientId)
+        .where((item) => item.type != 'sale' && item.type != 'return')
+        .map((item) => Map<String, dynamic>.from(item.toMap()))
+        .toList();
+
+    final isReturn = invoiceIsReturn(fallback) ||
+        fallback['_sourceCollection']?.toString() == 'returnInvoices';
+    final candidates = isReturn ? returns : sales;
+
+    bool isTarget(Map<String, dynamic> candidate) {
+      final candidateId = rootInvoiceIdFrom(candidate);
+      if (rootId.isNotEmpty && candidateId == rootId) return true;
+      final invoiceNumber = fallback['invoiceNumber']?.toString().trim() ?? '';
+      return invoiceNumber.isNotEmpty &&
+          candidate['invoiceNumber']?.toString().trim() == invoiceNumber;
+    }
+
+    var targetIndex = candidates.indexWhere(isTarget);
+    if (targetIndex < 0) {
+      candidates.add(fallback);
+      targetIndex = candidates.length - 1;
+    }
+
+    ClientInvoiceRunningBalanceService.apply(
+      salesInvoices: sales,
+      returnInvoices: returns,
+      payments: payments,
+    );
+
+    final clientPageData = candidates[targetIndex];
+    return <String, dynamic>{
+      ...fallback,
+      ...clientPageData,
+      if (rootId.isNotEmpty) 'id': rootId,
+      'clientId': clientId,
+    };
+  }
+
+  static Future<DocumentSnapshot<Map<String, dynamic>>?> findClientSubInvoice({
     required String clientId,
     required String rootInvoiceId,
   }) async {
@@ -119,12 +184,15 @@ class SalesInvoiceActionsService {
     // 4. Update client balance in Hive
     if (clientId.isNotEmpty) {
       final unpaid = totalSum - paidAmount;
-      final localClient = ClientRepository.instance.getById(clientId) ?? ClientRepository.instance.findByName(clientName);
+      final localClient = ClientRepository.instance.getById(clientId) ??
+          ClientRepository.instance.findByName(clientName);
       if (localClient != null) {
         final newBal = localClient.balance - unpaid;
-        await ClientRepository.instance.updateLocalBalance(localClient.id, newBal);
+        await ClientRepository.instance
+            .updateLocalBalance(localClient.id, newBal);
       }
-      await BalanceHistoryRepository.instance.deleteByInvoiceId('client', clientId, rootInvoiceId);
+      await BalanceHistoryRepository.instance
+          .deleteByInvoiceId('client', clientId, rootInvoiceId);
     }
 
     // 5. Enqueue background deletion to Firebase with complete payload
@@ -143,4 +211,3 @@ class SalesInvoiceActionsService {
     ConnectivityService.instance.forceSync();
   }
 }
-

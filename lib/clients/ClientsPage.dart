@@ -3403,8 +3403,8 @@ class _ClientListPageState extends State<_ClientListPage> {
             .map((c) => <String, dynamic>{
                   'id': c.id,
                   'clientName': c.name,
-                  'balance': BalanceHistoryRepository.instance
-                      .calculateClientBalance(c.id, fallback: c.balance),
+                  'balance': ClientRepository.instance
+                      .computeLiveBalanceFromHive(c.id),
                   'phone': c.phone,
                 })
             .toList();
