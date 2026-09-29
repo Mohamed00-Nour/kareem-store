@@ -185,10 +185,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       // Hydrate guarded caches without assigning or repairing financial balances.
       await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
       await ClientRepository.instance.deltaSync();
-      await BalanceHistoryRepository.instance
-          .fullSyncForClient(widget.clientId);
-      await InvoiceRepository.instance.deltaSyncSales();
-      await InvoiceRepository.instance.deltaSyncReturns();
 
       await _fetchClientName();
 
@@ -1892,13 +1888,6 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     _historySubscription?.cancel();
     _historySubscription =
         balanceHistoryBox.watch().listen((_) => _loadFromLocalCache());
-    if (ConnectivityService.instance.isOnline) {
-      BalanceHistoryRepository.instance
-          .fullSyncForClient(widget.clientId)
-          .catchError((Object e) {
-        appMetaBox.put('cloudRefreshError', e.toString());
-      });
-    }
   }
 
   static int _typePriorityAscending(String type) {

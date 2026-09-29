@@ -6,6 +6,9 @@ import '../utils/entity_name_normalizer.dart';
 import 'balance_history_repository.dart';
 import '../Services/customer_balance_store.dart';
 import '../sync/cloud_snapshot_guard.dart';
+import '../sync/cloud_refresh_gate.dart';
+import '../sync/firestore_read_diagnostics.dart';
+import '../sync/firestore_sync_checkpoint.dart';
 import '../sync/local_operation_journal.dart';
 
 /// Repository for Client data.
@@ -78,26 +81,31 @@ class ClientRepository {
 
   /// Full sync — downloads all clients from Firestore into Hive.
   Future<void> fullSync() async {
-    final startedAt = DateTime.now();
     final snap = await _fs.collection('clients').get();
+    FirestoreReadDiagnostics.queryResult(
+      'clients (full)',
+      snap.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       await hydrateCloud(doc.id, doc.data());
     }
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+    );
     await appMetaBox.put(
-        HiveMetaKeys.lastClientSyncAt, startedAt.toIso8601String());
+        HiveMetaKeys.lastClientSyncAt, checkpoint.toIso8601String());
   }
 
   Future<void> hydrateCloud(String id, Map<String, dynamic>? data) async {
-    final events = <String, Map<String, dynamic>>{};
-    if (data != null && data.containsKey('financialBaseBalance')) {
-      final snapshot = await _fs
-          .collection('clients')
-          .doc(id)
-          .collection('financialOperations')
-          .get();
-      for (final doc in snapshot.docs) events[doc.id] = doc.data();
-    }
-    await mergeCloud(id, data, events: events);
+    // Financial events are imported by the sequenced receipt feed. During a
+    // first-install compatibility bootstrap they are read once with a single
+    // collection-group query. Querying this subcollection for every customer
+    // created an N+1 startup pattern and repeated the same history on profile
+    // refreshes.
+    await mergeCloud(id, data);
   }
 
   Future<void> mergeCloud(String id, Map<String, dynamic>? data,
@@ -126,25 +134,39 @@ class ClientRepository {
 
   /// Fetches client profile changes after the initial compatibility baseline.
   /// Financial changes arrive through the sequenced receipt feed.
-  Future<void> deltaSync() async {
+  Future<void> deltaSync() => CloudRefreshGate.run(
+        'clients.delta',
+        _deltaSync,
+      );
+
+  Future<void> _deltaSync() async {
     final raw = appMetaBox.get(HiveMetaKeys.lastClientSyncAt)?.toString();
     final cursor = DateTime.tryParse(raw ?? '');
     if (cursor == null) {
       await fullSync();
       return;
     }
-    final startedAt = DateTime.now();
     final snap = await _fs
         .collection('clients')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(cursor))
+        .where('updatedAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'clients where updatedAt >= cursor',
+      snap.docs.length,
+      trigger: 'client profile delta',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       await hydrateCloud(doc.id, doc.data());
     }
-    await appMetaBox.put(
-      HiveMetaKeys.lastClientSyncAt,
-      startedAt.toIso8601String(),
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+      floor: cursor,
     );
+    await appMetaBox.put(
+        HiveMetaKeys.lastClientSyncAt, checkpoint.toIso8601String());
   }
 
   /// Upsert a single client into the local cache.

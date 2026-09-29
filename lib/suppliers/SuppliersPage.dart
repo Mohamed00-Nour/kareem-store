@@ -10,7 +10,6 @@ import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../Services/quick_entity_creation_service.dart';
-import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/supplier_payment_service.dart';
 import '../repositories/supplier_repository.dart';
 import '../repositories/supplier_voucher_repository.dart';
@@ -351,17 +350,6 @@ class _SupplierOpeningBalancesPageState
       await ConnectivityService.instance.forceSync();
       await SupplierPaymentService.instance.refreshVoucherCounterFromCloud();
       await SupplierRepository.instance.deltaSync();
-      await InvoiceRepository.instance.deltaSyncBuying();
-      for (final supplier in SupplierRepository.instance.getAll()) {
-        await SupplierInvoiceBalanceSyncService.syncForSupplier(supplier.id);
-        await BalanceHistoryRepository.instance.fullSyncForSupplier(
-          supplier.id,
-        );
-        await InvoiceRepository.instance.syncBuyingReturnsForSupplier(
-          supplier.id,
-          supplierName: supplier.name,
-        );
-      }
       _loadFromHive();
     } catch (_) {
       // Keep displaying the cached supplier ledger.

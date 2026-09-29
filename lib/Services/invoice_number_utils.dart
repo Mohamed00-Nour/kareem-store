@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:intl/intl.dart';
 import '../local_db/hive_init.dart';
+import '../sync/firestore_read_diagnostics.dart';
 
 /// Parses invoice / product numeric fields stored as [num] or [String] in Firestore.
 double invoiceNum(dynamic value) => invoiceTryParseAmount(value) ?? 0.0;
@@ -426,6 +427,12 @@ class LocalInvoiceCounter {
           .orderBy('invoiceNumber', descending: true)
           .limit(1)
           .get();
+      FirestoreReadDiagnostics.queryResult(
+        'invoices orderBy invoiceNumber desc limit 1',
+        salesQuery.docs.length,
+        trigger: 'invoice counter seed',
+        fromCache: salesQuery.metadata.isFromCache,
+      );
       if (salesQuery.docs.isNotEmpty) {
         final remoteMax =
             (salesQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
@@ -442,6 +449,12 @@ class LocalInvoiceCounter {
           .orderBy('invoiceNumber', descending: true)
           .limit(1)
           .get();
+      FirestoreReadDiagnostics.queryResult(
+        'returnInvoices orderBy invoiceNumber desc limit 1',
+        returnQuery.docs.length,
+        trigger: 'invoice counter seed',
+        fromCache: returnQuery.metadata.isFromCache,
+      );
       if (returnQuery.docs.isNotEmpty) {
         final remoteMax =
             (returnQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;
@@ -458,6 +471,12 @@ class LocalInvoiceCounter {
           .orderBy('invoiceNumber', descending: true)
           .limit(1)
           .get();
+      FirestoreReadDiagnostics.queryResult(
+        'buying invoices orderBy invoiceNumber desc limit 1',
+        buyingQuery.docs.length,
+        trigger: 'invoice counter seed',
+        fromCache: buyingQuery.metadata.isFromCache,
+      );
       if (buyingQuery.docs.isNotEmpty) {
         final remoteMax =
             (buyingQuery.docs.first['invoiceNumber'] as num?)?.toInt() ?? 0;

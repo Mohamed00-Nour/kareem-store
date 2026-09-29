@@ -4,6 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'sync/connectivity_service.dart';
 import 'sync/sync_queue_manager.dart';
 import 'repositories/product_repository.dart';
+import 'repositories/department_repository.dart';
 import 'Widgets/paginated_firestore_history_table.dart';
 
 class EditProductPage extends StatefulWidget {
@@ -83,34 +84,36 @@ class _EditProductPageState extends State<EditProductPage> {
   }
 
   Future<void> _loadDepartments() async {
-    try {
-      if (!ConnectivityService.instance.isOnline) return;
-      QuerySnapshot querySnapshot =
-          await FirebaseFirestore.instance.collection('departments').get();
-      setState(() {
-        _departments = querySnapshot.docs
-            .map((doc) => doc['name'] as String)
-            .toSet()
-            .toList();
-        if (!_departments.contains(_selectedDepartment)) {
-          _selectedDepartment = null;
-        }
-      });
-    } catch (e) {
-      print('Error loading departments: $e');
-    }
+    final departments = DepartmentRepository.instance
+        .getAll()
+        .map((department) => department.name)
+        .toSet()
+        .toList();
+    if (!mounted) return;
+    setState(() {
+      _departments = departments;
+      if (!_departments.contains(_selectedDepartment)) {
+        _selectedDepartment = null;
+      }
+    });
   }
 
   Future<void> _addDepartment() async {
     if (_departmentController.text.isNotEmpty) {
       String newDepartment = _departmentController.text;
       try {
-        await FirebaseFirestore.instance
-            .collection('departments')
-            .add({'name': newDepartment});
+        final id =
+            FirebaseFirestore.instance.collection('departments').doc().id;
+        final data = {'id': id, 'name': newDepartment.trim()};
+        await DepartmentRepository.instance.upsertLocal(id, data);
+        await SyncQueueManager.instance.enqueue(
+          operationType: 'createDepartment',
+          payload: {'id': id, 'data': data},
+        );
+        ConnectivityService.instance.forceSync();
         setState(() {
-          _departments.add(newDepartment);
-          _selectedDepartment = newDepartment;
+          _departments.add(newDepartment.trim());
+          _selectedDepartment = newDepartment.trim();
           _departmentController.clear();
         });
       } catch (e) {

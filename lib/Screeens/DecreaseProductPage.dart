@@ -28,6 +28,7 @@ import 'g_Nav.dart';
 import '../Widgets/app_bar_navigation.dart';
 import 'home_page.dart';
 import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/product_repository.dart';
 import '../local_db/hive_init.dart';
@@ -1509,13 +1510,21 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     if (updates.isEmpty) return;
 
     try {
-      final query = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: product.name)
-          .limit(1)
-          .get();
-      if (query.docs.isEmpty) return;
-      await query.docs.first.reference.update(updates);
+      final productId = await _resolveProductDocId(product);
+      if (productId == null) return;
+      final cached = ProductRepository.instance.getById(productId);
+      if (cached == null) return;
+      await ProductRepository.instance.upsertLocal(productId, {
+        ...cached.toMap(),
+        ...updates,
+        'id': productId,
+        'updatedAt': DateTime.now(),
+      });
+      await SyncQueueManager.instance.enqueue(
+        operationType: 'editProduct',
+        payload: {'productId': productId, 'data': updates},
+      );
+      unawaited(ConnectivityService.instance.forceSync());
 
       if (!mounted) return;
       setState(() {
@@ -1556,34 +1565,21 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   }
 
   Future<String?> _resolveProductDocId(Product product) async {
-    if (product.id.isNotEmpty) {
-      final doc = await FirebaseFirestore.instance
-          .collection('products')
-          .doc(product.id)
-          .get();
-      if (doc.exists) return product.id;
+    if (product.id.isNotEmpty &&
+        ProductRepository.instance.getById(product.id) != null) {
+      return product.id;
     }
-    final query = await FirebaseFirestore.instance
-        .collection('products')
-        .where('name', isEqualTo: product.name)
-        .limit(1)
-        .get();
-    if (query.docs.isEmpty) return null;
-    return query.docs.first.id;
+    return ProductRepository.instance.findByName(product.name)?.id;
   }
 
   Future<Product?> _refreshProductFromFirestore(
     String productId, {
     String? previousName,
   }) async {
-    final doc = await FirebaseFirestore.instance
-        .collection('products')
-        .doc(productId)
-        .get();
-    if (!doc.exists) return null;
-
-    final data = Map<String, dynamic>.from(doc.data()!);
-    data['id'] = doc.id;
+    final cached = ProductRepository.instance.getById(productId);
+    if (cached == null) return null;
+    final data = Map<String, dynamic>.from(cached.toMap());
+    data['id'] = productId;
     final updated = Product.fromMap(data);
 
     if (!mounted) return updated;
@@ -1635,17 +1631,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     }
 
     final previousName = product.name;
-    final snap = await FirebaseFirestore.instance
-        .collection('products')
-        .doc(productId)
-        .get();
-    if (!snap.exists || !mounted) return null;
+    final cached = ProductRepository.instance.getById(productId);
+    if (cached == null || !mounted) return null;
 
     await Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => EditProductPage(
           productId: productId,
-          productData: snap.data()!,
+          productData: cached.toMap(),
         ),
       ),
     );

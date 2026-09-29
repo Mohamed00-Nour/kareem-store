@@ -71,9 +71,6 @@ class _SupplierBalanceHistoryPageState
       await SupplierInvoiceBalanceSyncService.syncForSupplier(
         widget.supplierId,
       );
-      await BalanceHistoryRepository.instance.fullSyncForSupplier(
-        widget.supplierId,
-      );
       _loadFromLocalCache();
     } catch (_) {
       // The Hive ledger remains authoritative and visible offline.

@@ -111,4 +111,25 @@ class CustomerBalanceStore {
       await client.save();
     }
   }
+
+  /// Replaces this device's provisional event with the transaction result
+  /// acknowledged by the server. Conflict-aware invoice deletion can change
+  /// the reversal amount when another device edited the invoice first.
+  static Future<void> acceptAcknowledgedEvent(
+      String id, String operationId, Map<String, dynamic> data) async {
+    final safeData = hiveSafeMap(data);
+    if (!hasBase(id)) {
+      await appMetaBox.put('deferredCustomerEvent:$id:$operationId', safeData);
+      await appMetaBox.flush();
+      return;
+    }
+    await appMetaBox.put(eventKey(id, operationId), safeData);
+    await appMetaBox.flush();
+    final client = clientsBox.get(id);
+    if (client != null) {
+      client.balance = balance(id);
+      await client.save();
+      await clientsBox.flush();
+    }
+  }
 }

@@ -4,6 +4,8 @@ import '../local_db/models/product_local.dart';
 import '../sync/sync_queue_manager.dart';
 import '../utils/entity_name_normalizer.dart';
 import '../sync/cloud_snapshot_guard.dart';
+import '../sync/firestore_read_diagnostics.dart';
+import '../sync/firestore_sync_checkpoint.dart';
 import '../sync/local_operation_journal.dart';
 
 /// Repository for Product data.
@@ -90,13 +92,22 @@ class ProductRepository {
   /// Performs a **full** initial sync from Firestore → Hive.
   /// Only call this once (first launch or after clearing app data).
   Future<void> fullSync() async {
-    final startedAt = DateTime.now();
     final snap = await _fs.collection('products').get();
+    FirestoreReadDiagnostics.queryResult(
+      'products (full)',
+      snap.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       await mergeCloud(doc.id, doc.data());
     }
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+    );
     await appMetaBox.put(
-        HiveMetaKeys.lastProductSyncAt, startedAt.toIso8601String());
+        HiveMetaKeys.lastProductSyncAt, checkpoint.toIso8601String());
   }
 
   Future<void> mergeCloud(String id, Map<String, dynamic>? data) =>
@@ -120,18 +131,26 @@ class ProductRepository {
       await fullSync();
       return;
     }
-    final startedAt = DateTime.now();
     final snap = await _fs
         .collection('products')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(cursor))
+        .where('updatedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'products where updatedAt >= cursor',
+      snap.docs.length,
+      trigger: 'product delta',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       await mergeCloud(doc.id, doc.data());
     }
-    await appMetaBox.put(
-      HiveMetaKeys.lastProductSyncAt,
-      startedAt.toIso8601String(),
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+      floor: cursor,
     );
+    await appMetaBox.put(
+        HiveMetaKeys.lastProductSyncAt, checkpoint.toIso8601String());
   }
 
   /// Updates a single product in the local cache (call after saving to Firestore).
@@ -158,7 +177,10 @@ class ProductRepository {
 
   /// Updates product quantity in both local cache and Firestore.
   Future<void> updateQuantity(String docId, double newQty) async {
-    await _fs.collection('products').doc(docId).update({'quantity': newQty});
+    await _fs.collection('products').doc(docId).update({
+      'quantity': newQty,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
     final existing = productsBox.get(docId);
     if (existing != null) {
       existing.quantity = newQty;

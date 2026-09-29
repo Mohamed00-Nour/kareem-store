@@ -66,14 +66,29 @@ class QuoteListPage extends StatelessWidget {
             return const Center(
                 child: Text('لا توجد عروض أسعار محفوظة محلياً'));
 
-          return ListView.builder(
-            padding: EdgeInsets.fromLTRB(12.w, 12.h, 12.w, 90.h),
-            itemCount: localQuotes.length,
-            itemBuilder: (context, i) {
-              final quote = localQuotes[i];
-              return _QuoteCard(
-                quoteId: quote.id,
-                data: quote.toMap(),
+          return LayoutBuilder(
+            builder: (context, constraints) {
+              final horizontalPadding = constraints.maxWidth < 600 ? 8.w : 16.w;
+              return Center(
+                child: ConstrainedBox(
+                  constraints: const BoxConstraints(maxWidth: 1100),
+                  child: ListView.builder(
+                    padding: EdgeInsets.fromLTRB(
+                      horizontalPadding,
+                      12.h,
+                      horizontalPadding,
+                      90.h,
+                    ),
+                    itemCount: localQuotes.length,
+                    itemBuilder: (context, i) {
+                      final quote = localQuotes[i];
+                      return _QuoteCard(
+                        quoteId: quote.id,
+                        data: quote.toMap(),
+                      );
+                    },
+                  ),
+                ),
               );
             },
           );
@@ -361,6 +376,10 @@ class _QuoteCardState extends State<_QuoteCard> {
       (p) => ((p['discount'] as num?)?.toDouble() ?? 0.0) > 0,
     );
 
+    if (MediaQuery.sizeOf(context).width < 600) {
+      return _buildCompactProducts(rows, qtySum, hasAnyDiscount);
+    }
+
     if (!hasAnyDiscount) {
       return Table(
         border: TableBorder.all(color: Colors.grey.shade400, width: 0.8),
@@ -448,6 +467,169 @@ class _QuoteCardState extends State<_QuoteCard> {
     );
   }
 
+  Widget _buildCompactProducts(
+    List<Map<String, dynamic>> rows,
+    double qtySum,
+    bool hasAnyDiscount,
+  ) {
+    Widget metric(String label, String value, {Color? color}) {
+      return Container(
+        padding: EdgeInsets.symmetric(horizontal: 8.w, vertical: 5.h),
+        decoration: BoxDecoration(
+          color: (color ?? Colors.grey.shade700).withValues(alpha: 0.08),
+          borderRadius: BorderRadius.circular(7.r),
+        ),
+        child: Text(
+          '$label: $value',
+          style: TextStyle(
+            fontSize: 12.sp,
+            color: color ?? Colors.black87,
+            fontWeight: FontWeight.w600,
+          ),
+        ),
+      );
+    }
+
+    return Column(
+      children: [
+        for (final product in rows)
+          Container(
+            width: double.infinity,
+            margin: EdgeInsets.only(bottom: 7.h),
+            padding: EdgeInsets.all(9.r),
+            decoration: BoxDecoration(
+              color: Colors.orange.withValues(alpha: 0.08),
+              border: Border.all(color: Colors.orange.shade200),
+              borderRadius: BorderRadius.circular(9.r),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  invoiceProductName(product),
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 13.sp,
+                    fontWeight: FontWeight.bold,
+                  ),
+                ),
+                SizedBox(height: 7.h),
+                Wrap(
+                  spacing: 6.w,
+                  runSpacing: 6.h,
+                  alignment: WrapAlignment.start,
+                  children: [
+                    metric('الكمية', invoiceQty(product['amount'])),
+                    metric(
+                      'السعر',
+                      invoiceAmount(
+                        product['selectedPrice'] ?? product['price'],
+                      ),
+                    ),
+                    if (hasAnyDiscount && invoiceNum(product['discount']) > 0)
+                      metric(
+                        'الخصم',
+                        invoiceAmount(product['discount']),
+                        color: Colors.red.shade700,
+                      ),
+                    metric(
+                      'الإجمالي',
+                      invoiceAmount(product['total']),
+                      color: Colors.orange.shade900,
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        Align(
+          alignment: Alignment.centerRight,
+          child: metric('إجمالي الكمية', invoiceQty(qtySum)),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildActions() {
+    return Wrap(
+      spacing: 2.w,
+      runSpacing: 6.h,
+      crossAxisAlignment: WrapCrossAlignment.center,
+      alignment: WrapAlignment.end,
+      children: [
+        IconButton(
+          icon: const Icon(Icons.print_outlined, color: Colors.black87),
+          tooltip: 'طباعة',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => InvoicePrintUi.printInvoice(
+            context,
+            widget.data,
+            clientId: (widget.data['clientName']?.toString() ?? '').isNotEmpty
+                ? widget.data['clientName'].toString()
+                : null,
+          ),
+        ),
+        IconButton(
+          icon: FaIcon(
+            FontAwesomeIcons.whatsapp,
+            color: Colors.green.shade700,
+            size: 20.sp,
+          ),
+          tooltip: 'مشاركة في واتساب',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => WhatsappInvoiceShareService.showShareOptions(
+            context,
+            invoice: widget.data,
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.edit, color: Colors.blue),
+          tooltip: 'تعديل عرض السعر',
+          visualDensity: VisualDensity.compact,
+          onPressed: _editQuote,
+        ),
+        IconButton(
+          icon: _deleting
+              ? SizedBox(
+                  width: 16.w,
+                  height: 16.w,
+                  child: const CircularProgressIndicator(strokeWidth: 2),
+                )
+              : const Icon(Icons.delete, color: Colors.red),
+          tooltip: 'حذف',
+          visualDensity: VisualDensity.compact,
+          onPressed: _deleting ? null : _delete,
+        ),
+        ElevatedButton.icon(
+          style: ElevatedButton.styleFrom(
+            backgroundColor: Colors.orange.shade800,
+            foregroundColor: Colors.white,
+            padding: EdgeInsets.symmetric(horizontal: 10.w, vertical: 6.h),
+            visualDensity: VisualDensity.compact,
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(8.r),
+            ),
+          ),
+          onPressed: _executing ? null : _execute,
+          icon: _executing
+              ? SizedBox(
+                  width: 14.w,
+                  height: 14.w,
+                  child: const CircularProgressIndicator(
+                    strokeWidth: 2,
+                    color: Colors.white,
+                  ),
+                )
+              : Icon(Icons.play_circle_outline, size: 16.sp),
+          label: Text(
+            'تنفيذ',
+            style: TextStyle(fontSize: 12.sp, fontWeight: FontWeight.bold),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     final clientName = widget.data['clientName']?.toString() ?? 'بدون اسم';
@@ -470,133 +652,89 @@ class _QuoteCardState extends State<_QuoteCard> {
           crossAxisAlignment: CrossAxisAlignment.start,
           children: [
             // ── Header Row ────────────────────────────────────────────────
-            Row(
-              children: [
-                Expanded(
-                  child: InkWell(
-                    onTap: () => setState(() => _isExpanded = !_isExpanded),
-                    borderRadius: BorderRadius.circular(6.r),
-                    child: Padding(
-                      padding: EdgeInsets.symmetric(vertical: 4.h),
-                      child: Row(
-                        children: [
-                          Icon(
-                            Icons.description_outlined,
-                            size: 20.sp,
-                            color: Colors.orange.shade800,
-                          ),
-                          SizedBox(width: 8.w),
-                          Expanded(
-                            child: Column(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Text(
-                                  clientName,
-                                  style: TextStyle(
-                                    fontSize: 15.sp,
-                                    fontWeight: FontWeight.bold,
-                                    color: Colors.black87,
-                                  ),
+            LayoutBuilder(
+              builder: (context, constraints) {
+                final compact = constraints.maxWidth < 620;
+                final summary = InkWell(
+                  onTap: () => setState(() => _isExpanded = !_isExpanded),
+                  borderRadius: BorderRadius.circular(6.r),
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(vertical: 4.h),
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.description_outlined,
+                          size: 20.sp,
+                          color: Colors.orange.shade800,
+                        ),
+                        SizedBox(width: 8.w),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Text(
+                                clientName,
+                                style: TextStyle(
+                                  fontSize: 15.sp,
+                                  fontWeight: FontWeight.bold,
+                                  color: Colors.black87,
                                 ),
-                                SizedBox(height: 2.h),
-                                Text(
-                                  'إجمالي العرض: ${invoiceAmount(totalSum)} ج.م',
-                                  style: TextStyle(
-                                    fontSize: 13.sp,
-                                    color: Colors.orange.shade900,
-                                    fontWeight: FontWeight.w600,
-                                  ),
+                              ),
+                              SizedBox(height: 2.h),
+                              Text(
+                                'إجمالي العرض: ${invoiceAmount(totalSum)} ج.م',
+                                style: TextStyle(
+                                  fontSize: 13.sp,
+                                  color: Colors.orange.shade900,
+                                  fontWeight: FontWeight.w600,
                                 ),
-                              ],
-                            ),
+                              ),
+                            ],
                           ),
-                          Icon(
-                            _isExpanded
-                                ? Icons.keyboard_arrow_up
-                                : Icons.keyboard_arrow_down,
-                            color: Colors.orange.shade800,
-                            size: 24.sp,
-                          ),
-                          SizedBox(width: 6.w),
-                        ],
-                      ),
+                        ),
+                        Icon(
+                          _isExpanded
+                              ? Icons.keyboard_arrow_up
+                              : Icons.keyboard_arrow_down,
+                          color: Colors.orange.shade800,
+                          size: 24.sp,
+                        ),
+                        SizedBox(width: 6.w),
+                      ],
                     ),
                   ),
-                ),
-                // ── Toolbar Actions ────────────────────────────────────────
-                Row(
-                  mainAxisSize: MainAxisSize.min,
+                );
+
+                if (compact) {
+                  return Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      summary,
+                      SizedBox(height: 6.h),
+                      Align(
+                        alignment: Alignment.centerRight,
+                        child: _buildActions(),
+                      ),
+                    ],
+                  );
+                }
+
+                return Row(
                   children: [
-                    IconButton(
-                      icon: const Icon(Icons.print_outlined,
-                          color: Colors.black87),
-                      tooltip: 'طباعة',
-                      onPressed: () => InvoicePrintUi.printInvoice(
-                        context,
-                        widget.data,
-                        clientId: clientName.isNotEmpty ? clientName : null,
-                      ),
-                    ),
-                    IconButton(
-                      icon: FaIcon(
-                        FontAwesomeIcons.whatsapp,
-                        color: Colors.green.shade700,
-                        size: 20.sp,
-                      ),
-                      tooltip: 'مشاركة في واتساب',
-                      onPressed: () =>
-                          WhatsappInvoiceShareService.showShareOptions(
-                        context,
-                        invoice: widget.data,
-                      ),
-                    ),
-                    IconButton(
-                      icon: const Icon(Icons.edit, color: Colors.blue),
-                      tooltip: 'تعديل عرض السعر',
-                      onPressed: _editQuote,
-                    ),
-                    IconButton(
-                      icon: _deleting
-                          ? SizedBox(
-                              width: 16.w,
-                              height: 16.w,
-                              child: const CircularProgressIndicator(
-                                  strokeWidth: 2))
-                          : const Icon(Icons.delete, color: Colors.red),
-                      tooltip: 'حذف',
-                      onPressed: _deleting ? null : _delete,
-                    ),
-                    SizedBox(width: 4.w),
-                    ElevatedButton.icon(
-                      style: ElevatedButton.styleFrom(
-                        backgroundColor: Colors.orange.shade800,
-                        foregroundColor: Colors.white,
-                        padding: EdgeInsets.symmetric(
-                            horizontal: 10.w, vertical: 6.h),
-                        shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(8.r)),
-                      ),
-                      onPressed: _executing ? null : _execute,
-                      icon: _executing
-                          ? SizedBox(
-                              width: 14.w,
-                              height: 14.w,
-                              child: const CircularProgressIndicator(
-                                  strokeWidth: 2, color: Colors.white))
-                          : Icon(Icons.play_circle_outline, size: 16.sp),
-                      label: Text('تنفيذ',
-                          style: TextStyle(
-                              fontSize: 12.sp, fontWeight: FontWeight.bold)),
-                    ),
+                    Expanded(child: summary),
+                    SizedBox(width: 8.w),
+                    _buildActions(),
                   ],
-                ),
-              ],
+                );
+              },
             ),
 
             // ── Expanded Content ──────────────────────────────────────────
             if (_isExpanded) ...[
               Divider(height: 16.h, color: Colors.grey.shade300),
-              Row(
+              Wrap(
+                spacing: 16.w,
+                runSpacing: 4.h,
                 children: [
                   Text('التاريخ: ${_dateStr()}',
                       style: TextStyle(fontSize: 13.sp, color: Colors.black54)),
@@ -619,80 +757,79 @@ class _QuoteCardState extends State<_QuoteCard> {
               // ── Summary Footer ──────────────────────────────────────────
               Padding(
                 padding: EdgeInsets.only(top: 10.h),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            Text(
-                              'الرصيد السابق: ${invoiceAmount(previousBalance)}',
-                              style: TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(width: 16.w),
-                            Text(
-                              'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
-                              style: TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (invoiceDiscount > 0)
-                          Padding(
-                            padding: EdgeInsets.only(top: 2.h),
-                            child: Text(
-                              'خصم الفاتورة: ${invoiceAmount(invoiceDiscount)}',
-                              style: TextStyle(
-                                fontSize: 13.sp,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.red,
-                              ),
-                            ),
-                          ),
-                        Padding(
-                          padding: EdgeInsets.only(top: 2.h),
-                          child: Text(
-                            'المدفوع: ${invoiceAmount(paidAmount)}',
-                            style: TextStyle(
-                              fontSize: 14.sp,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.green.shade700,
-                            ),
-                          ),
-                        ),
-                        Padding(
-                          padding: EdgeInsets.only(top: 2.h),
-                          child: Text(
-                            'المتبقي من الفاتورة: ${invoiceAmount(invoiceRemaining)}',
+                child: Align(
+                  alignment: Alignment.centerRight,
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.end,
+                    children: [
+                      Wrap(
+                        alignment: WrapAlignment.end,
+                        spacing: 16.w,
+                        runSpacing: 4.h,
+                        children: [
+                          Text(
+                            'الرصيد السابق: ${invoiceAmount(previousBalance)}',
                             style: TextStyle(
                               fontSize: 13.sp,
                               fontWeight: FontWeight.bold,
-                              color: Colors.orange.shade800,
                             ),
                           ),
-                        ),
-                        Padding(
-                          padding: EdgeInsets.only(top: 2.h),
-                          child: Text(
-                            'المتبقي عليكم: ${invoiceAmount(remainingOwed)}',
+                          Text(
+                            'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
                             style: TextStyle(
                               fontSize: 13.sp,
                               fontWeight: FontWeight.bold,
-                              color: Colors.redAccent,
+                            ),
+                          ),
+                        ],
+                      ),
+                      if (invoiceDiscount > 0)
+                        Padding(
+                          padding: EdgeInsets.only(top: 2.h),
+                          child: Text(
+                            'خصم الفاتورة: ${invoiceAmount(invoiceDiscount)}',
+                            style: TextStyle(
+                              fontSize: 13.sp,
+                              fontWeight: FontWeight.bold,
+                              color: Colors.red,
                             ),
                           ),
                         ),
-                      ],
-                    ),
-                  ],
+                      Padding(
+                        padding: EdgeInsets.only(top: 2.h),
+                        child: Text(
+                          'المدفوع: ${invoiceAmount(paidAmount)}',
+                          style: TextStyle(
+                            fontSize: 14.sp,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.green.shade700,
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.only(top: 2.h),
+                        child: Text(
+                          'المتبقي من الفاتورة: ${invoiceAmount(invoiceRemaining)}',
+                          style: TextStyle(
+                            fontSize: 13.sp,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.orange.shade800,
+                          ),
+                        ),
+                      ),
+                      Padding(
+                        padding: EdgeInsets.only(top: 2.h),
+                        child: Text(
+                          'المتبقي عليكم: ${invoiceAmount(remainingOwed)}',
+                          style: TextStyle(
+                            fontSize: 13.sp,
+                            fontWeight: FontWeight.bold,
+                            color: Colors.redAccent,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ],

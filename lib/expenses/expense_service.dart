@@ -5,6 +5,7 @@ import '../local_db/hive_init.dart';
 import '../repositories/expense_repository.dart';
 import '../sync/sync_queue_manager.dart';
 import '../sync/connectivity_service.dart';
+import '../sync/firestore_read_diagnostics.dart';
 import '../models/Expenses.dart';
 
 class ExpenseService {
@@ -20,9 +21,72 @@ class ExpenseService {
   static CollectionReference<Map<String, dynamic>> get _categories =>
       _db.collection('expense_categories');
 
+  static StreamController<QuerySnapshot<Map<String, dynamic>>>?
+      _categoryController;
+  static StreamSubscription<QuerySnapshot<Map<String, dynamic>>>?
+      _categorySubscription;
+
+  /// All category consumers on the expenses screen share one Firestore
+  /// listener. The upstream listener is cancelled when the last dialog/screen
+  /// consumer leaves, so rebuilding widgets cannot multiply subscriptions.
+  static Stream<QuerySnapshot<Map<String, dynamic>>>
+      _sharedCategorySnapshots() {
+    _categoryController ??=
+        StreamController<QuerySnapshot<Map<String, dynamic>>>.broadcast(
+      onListen: _startCategoryListener,
+      onCancel: _stopCategoryListener,
+    );
+    return _categoryController!.stream;
+  }
+
+  static void _startCategoryListener() {
+    if (_categorySubscription != null) return;
+    const identity = 'expense_categories';
+    const trigger = 'shared expense category listener';
+    FirestoreReadDiagnostics.listenerAttached(identity, trigger: trigger);
+    _categorySubscription = _categories.snapshots().listen(
+      (snapshot) {
+        FirestoreReadDiagnostics.listenerSnapshot(
+          identity,
+          snapshot.docs.length,
+          trigger: trigger,
+          fromCache: snapshot.metadata.isFromCache,
+          changes: snapshot.docChanges.length,
+        );
+        _categoryController?.add(snapshot);
+      },
+      onError: (Object error, StackTrace stackTrace) {
+        FirestoreReadDiagnostics.queryError(
+          identity,
+          error,
+          trigger: trigger,
+        );
+        _categoryController?.addError(error, stackTrace);
+      },
+    );
+  }
+
+  static void _stopCategoryListener() {
+    final subscription = _categorySubscription;
+    _categorySubscription = null;
+    if (subscription != null) {
+      unawaited(subscription.cancel());
+      FirestoreReadDiagnostics.listenerDetached(
+        'expense_categories',
+        trigger: 'shared expense category listener',
+      );
+    }
+  }
+
   static Future<void> ensureDefaultCategories() async {
     try {
       final snap = await _categories.limit(1).get();
+      FirestoreReadDiagnostics.queryResult(
+        'expense_categories limit 1',
+        snap.docs.length,
+        trigger: 'ensure defaults',
+        fromCache: snap.metadata.isFromCache,
+      );
       if (snap.docs.isNotEmpty) return;
       final batch = _db.batch();
       for (final name in defaultCategories) {
@@ -38,7 +102,7 @@ class ExpenseService {
   }
 
   static Stream<List<String>> categoriesStream() {
-    return _categories.snapshots().map((snap) {
+    return _sharedCategorySnapshots().map((snap) {
       final names = snap.docs
           .map((d) => d.data()['name']?.toString() ?? '')
           .where((n) => n.isNotEmpty)
@@ -54,6 +118,12 @@ class ExpenseService {
     try {
       final existing =
           await _categories.where('name', isEqualTo: trimmed).get();
+      FirestoreReadDiagnostics.queryResult(
+        'expense_categories where name == value',
+        existing.docs.length,
+        trigger: 'add expense category',
+        fromCache: existing.metadata.isFromCache,
+      );
       if (existing.docs.isNotEmpty) return;
       await _categories.add({
         'name': trimmed,
@@ -70,7 +140,7 @@ class ExpenseService {
   }
 
   static Stream<QuerySnapshot<Map<String, dynamic>>> categoriesDocsStream() {
-    return _categories.snapshots();
+    return _sharedCategorySnapshots();
   }
 
   static Stream<List<Expenses>> expensesStream() {

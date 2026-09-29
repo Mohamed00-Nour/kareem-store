@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../Services/invoice_number_utils.dart';
+import 'firestore_read_diagnostics.dart';
 
 abstract class FinancialTransaction {
   Future<Map<String, dynamic>?> read(String path);
@@ -26,44 +27,108 @@ abstract class FinancialCloudStore {
 
 class FirestoreFinancialCloudStore implements FinancialCloudStore {
   @override
-  Future<Map<String, dynamic>?> readDocument(String path) async =>
-      (await FirebaseFirestore.instance.doc(path).get()).data();
+  Future<Map<String, dynamic>?> readDocument(String path) async {
+    try {
+      final snapshot = await FirebaseFirestore.instance.doc(path).get();
+      FirestoreReadDiagnostics.queryResult(
+        'document $path',
+        snapshot.exists ? 1 : 0,
+        trigger: 'post-upload financial refresh',
+        fromCache: snapshot.metadata.isFromCache,
+      );
+      return snapshot.data();
+    } catch (error) {
+      FirestoreReadDiagnostics.queryError(
+        'document $path',
+        error,
+        trigger: 'post-upload financial refresh',
+      );
+      rethrow;
+    }
+  }
+
   @override
   Future<Map<String, Map<String, dynamic>>> readCustomerEvents(
       String clientId) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(clientId)
-        .collection('financialOperations')
-        .get();
-    return {for (final doc in snap.docs) doc.id: doc.data()};
+    const trigger = 'legacy balance compatibility fallback';
+    final identity = 'clients/$clientId/financialOperations full scan';
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('clients')
+          .doc(clientId)
+          .collection('financialOperations')
+          .get();
+      FirestoreReadDiagnostics.queryResult(
+        identity,
+        snap.docs.length,
+        trigger: trigger,
+        fromCache: snap.metadata.isFromCache,
+      );
+      return {for (final doc in snap.docs) doc.id: doc.data()};
+    } catch (error) {
+      FirestoreReadDiagnostics.queryError(
+        identity,
+        error,
+        trigger: trigger,
+      );
+      rethrow;
+    }
   }
 
   @override
   Future<Map<String, Map<String, dynamic>>> readSupplierEvents(
       String supplierId) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(supplierId)
-        .collection('financialOperations')
-        .get();
-    return {for (final doc in snap.docs) doc.id: doc.data()};
+    const trigger = 'legacy balance compatibility fallback';
+    final identity = 'suppliers/$supplierId/financialOperations full scan';
+    try {
+      final snap = await FirebaseFirestore.instance
+          .collection('suppliers')
+          .doc(supplierId)
+          .collection('financialOperations')
+          .get();
+      FirestoreReadDiagnostics.queryResult(
+        identity,
+        snap.docs.length,
+        trigger: trigger,
+        fromCache: snap.metadata.isFromCache,
+      );
+      return {for (final doc in snap.docs) doc.id: doc.data()};
+    } catch (error) {
+      FirestoreReadDiagnostics.queryError(
+        identity,
+        error,
+        trigger: trigger,
+      );
+      rethrow;
+    }
   }
 
   @override
   Future<Map<String, dynamic>> transaction(
           Future<Map<String, dynamic>> Function(FinancialTransaction tx)
               action) =>
-      FirebaseFirestore.instance
-          .runTransaction((tx) => action(_FirestoreTransaction(tx)));
+      FirebaseFirestore.instance.runTransaction((tx) {
+        // Firestore can re-run this callback after contention. Recording each
+        // invocation makes retries visible without uploading telemetry.
+        FirestoreReadDiagnostics.transactionAttempt('financial upload');
+        return action(_FirestoreTransaction(tx));
+      });
 }
 
 class _FirestoreTransaction implements FinancialTransaction {
   final Transaction transaction;
   _FirestoreTransaction(this.transaction);
   @override
-  Future<Map<String, dynamic>?> read(String path) async =>
-      (await transaction.get(FirebaseFirestore.instance.doc(path))).data();
+  Future<Map<String, dynamic>?> read(String path) async {
+    final snapshot =
+        await transaction.get(FirebaseFirestore.instance.doc(path));
+    FirestoreReadDiagnostics.transactionRead(
+      path,
+      exists: snapshot.exists,
+    );
+    return snapshot.data();
+  }
+
   @override
   void write(String path, Map<String, dynamic> data) =>
       transaction.set(FirebaseFirestore.instance.doc(path), _cloudDates(data));
@@ -107,13 +172,56 @@ class FinancialCloudUploader {
           Map<String, dynamic>.from(payload['customerDeltas'] as Map);
       final supplierDeltas = Map<String, dynamic>.from(
           payload['supplierDeltas'] as Map? ?? const {});
+      final preloaded = <String, Map<String, dynamic>?>{};
+      final operationType = payload['operationType']?.toString() ?? '';
+      if (operationType == 'deleteBuyingInvoice' &&
+          payload['financialFormat'] == 2) {
+        final invoiceId = payload['invoiceId']?.toString().trim() ?? '';
+        if (invoiceId.isEmpty) {
+          throw StateError('Invalid purchase invoice id');
+        }
+        final rootPath = 'buying invoices/$invoiceId';
+        final latestInvoice = await tx.read(rootPath);
+        preloaded[rootPath] = latestInvoice;
+        _rebaseBuyingInvoiceDelete(
+          operationId: operationId,
+          payload: payload,
+          writes: writes,
+          supplierDeltas: supplierDeltas,
+          latestInvoice: latestInvoice,
+        );
+      } else if (const {
+            'deleteInvoice',
+            'deleteReturn',
+            'deleteReturnInvoice',
+          }.contains(operationType) &&
+          payload['financialFormat'] == 2) {
+        final invoiceId = payload['invoiceId']?.toString().trim() ?? '';
+        if (invoiceId.isEmpty) {
+          throw StateError('Invalid customer invoice id');
+        }
+        final isReturn = operationType != 'deleteInvoice';
+        final collection = isReturn ? 'returnInvoices' : 'invoices';
+        final rootPath = '$collection/$invoiceId';
+        final latestInvoice = await tx.read(rootPath);
+        preloaded[rootPath] = latestInvoice;
+        _rebaseCustomerInvoiceDelete(
+          operationId: operationId,
+          payload: payload,
+          writes: writes,
+          customerDeltas: deltas,
+          latestInvoice: latestInvoice,
+          isReturn: isReturn,
+        );
+      }
       final paths = <String>{
         ...writes.map((w) => w['path'] as String),
         ...deltas.keys.map((id) => 'clients/$id'),
         ...supplierDeltas.keys.map((id) => 'suppliers/$id')
       };
-      final before = <String, Map<String, dynamic>?>{};
+      final before = <String, Map<String, dynamic>?>{...preloaded};
       for (final path in paths) {
+        if (before.containsKey(path)) continue;
         before[path] = await tx.read(path);
       }
       final after = <String, Map<String, dynamic>>{};
@@ -252,6 +360,325 @@ class FinancialCloudUploader {
       });
       return receipt;
     });
+  }
+
+  /// A delete is the user's intent for the invoice currently stored in the
+  /// cloud, even if another device edited it after this device queued the
+  /// action. Rebuild all financial reversals from that latest invoice while
+  /// still inside the atomic transaction. This avoids both a needless conflict
+  /// and the much worse alternative of applying stale stock/cash/balance data.
+  static void _rebaseBuyingInvoiceDelete({
+    required String operationId,
+    required Map<String, dynamic> payload,
+    required List<Map<String, dynamic>> writes,
+    required Map<String, dynamic> supplierDeltas,
+    required Map<String, dynamic>? latestInvoice,
+  }) {
+    final invoiceId = payload['invoiceId'].toString();
+
+    bool isProductEffect(String path) {
+      final parts = path.split('/');
+      return parts.isNotEmpty && parts.first == 'products';
+    }
+
+    bool isCashEffect(String path) {
+      final parts = path.split('/');
+      return parts.isNotEmpty && parts.first == 'box';
+    }
+
+    bool isInvoiceCopy(String path) {
+      final parts = path.split('/');
+      return parts.length == 4 &&
+          parts[0] == 'suppliers' &&
+          parts[2] == 'buying invoices' &&
+          parts[3] == invoiceId;
+    }
+
+    void removeConflictExpectation(Map<String, dynamic> write) {
+      write
+        ..remove('expectedOperationId')
+        ..remove('expectedFinancialState')
+        ..remove('expectedFields');
+    }
+
+    void putWrite(Map<String, dynamic> write) {
+      final path = write['path'] as String;
+      final index = writes.indexWhere((item) => item['path'] == path);
+      if (index < 0) {
+        writes.add(write);
+      } else {
+        writes[index] = write;
+      }
+    }
+
+    // The old payload's product and cash increments describe the stale local
+    // invoice. They are replaced below from the latest cloud invoice.
+    writes.removeWhere((write) {
+      final path = write['path']?.toString() ?? '';
+      return isProductEffect(path) || isCashEffect(path);
+    });
+
+    for (final write in writes) {
+      final path = write['path']?.toString() ?? '';
+      if (path == 'buying invoices/$invoiceId' || isInvoiceCopy(path)) {
+        removeConflictExpectation(write);
+      }
+    }
+
+    // Keep an event for every supplier that the local delete previously
+    // affected. A zero delta lets the acknowledged cloud result replace that
+    // stale local event when the latest invoice belongs to another supplier or
+    // was already deleted elsewhere.
+    for (final supplierId in supplierDeltas.keys.toList()) {
+      supplierDeltas[supplierId] = 0.0;
+    }
+
+    final activeInvoice =
+        latestInvoice != null && latestInvoice['_deleted'] != true;
+    if (!activeInvoice) return;
+
+    final supplierId = latestInvoice['supplierId']?.toString().trim() ?? '';
+    if (supplierId.isEmpty) {
+      throw StateError('Invalid supplier on latest purchase invoice');
+    }
+    final total = invoiceNum(latestInvoice['totalSum']);
+    final paid = invoiceNum(latestInvoice['paidAmount']);
+    supplierDeltas[supplierId] =
+        invoiceNum(supplierDeltas[supplierId]) - (total - paid);
+
+    putWrite({
+      'path': 'buying invoices/$invoiceId',
+      'data': <String, dynamic>{},
+      'increments': <String, dynamic>{},
+      'deleted': true,
+      'mustBeAbsent': false,
+    });
+    putWrite({
+      'path': 'suppliers/$supplierId/buying invoices/$invoiceId',
+      'data': <String, dynamic>{},
+      'increments': <String, dynamic>{},
+      'deleted': true,
+      'mustBeAbsent': false,
+    });
+    for (final suffix in const ['buying', 'pay']) {
+      putWrite({
+        'path': 'suppliers/$supplierId/balanceHistory/${invoiceId}_$suffix',
+        'data': <String, dynamic>{},
+        'increments': <String, dynamic>{},
+        'deleted': true,
+        'mustBeAbsent': false,
+      });
+    }
+
+    final quantities = <String, double>{};
+    for (final raw in latestInvoice['products'] as List? ?? const []) {
+      if (raw is! Map) continue;
+      final line = Map<String, dynamic>.from(raw);
+      final productId =
+          (line['id'] ?? line['productId'])?.toString().trim() ?? '';
+      if (productId.isEmpty) {
+        throw StateError(
+            'Product missing immutable id in latest purchase invoice');
+      }
+      final quantity = invoiceNum(
+        line['amount'] ?? line['quantity'] ?? line['count'] ?? line['qty'],
+      );
+      if (quantity <= 0) continue;
+      quantities[productId] = (quantities[productId] ?? 0) + quantity;
+    }
+    for (final entry in quantities.entries) {
+      putWrite({
+        'path': 'products/${entry.key}',
+        'data': <String, dynamic>{},
+        'increments': {'quantity': -entry.value},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+      putWrite({
+        'path': 'products/${entry.key}/changes/$operationId',
+        'data': {
+          'date': payload['timestamp'],
+          'amount': entry.value,
+          'type': 'decrease',
+          'invoiceNumber': latestInvoice['invoiceNumber'],
+        },
+        'increments': <String, dynamic>{},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+    }
+
+    if (paid != 0) {
+      putWrite({
+        'path': 'box/mainBox',
+        'data': <String, dynamic>{},
+        'increments': {'value': paid},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+      putWrite({
+        'path': 'box/mainBox/changes/$operationId',
+        'data': {
+          'date': payload['timestamp'],
+          'value': paid.abs(),
+          'type': 'addition',
+          'name': 'حذف فاتورة مشتريات',
+        },
+        'increments': <String, dynamic>{},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+    }
+  }
+
+  /// Rebuilds a sale/return deletion from the newest cloud invoice. Sales and
+  /// returns have opposite balance, stock, and cash signs, so [isReturn]
+  /// controls every reversal from one shared calculation.
+  static void _rebaseCustomerInvoiceDelete({
+    required String operationId,
+    required Map<String, dynamic> payload,
+    required List<Map<String, dynamic>> writes,
+    required Map<String, dynamic> customerDeltas,
+    required Map<String, dynamic>? latestInvoice,
+    required bool isReturn,
+  }) {
+    final invoiceId = payload['invoiceId'].toString();
+    final collection = isReturn ? 'returnInvoices' : 'invoices';
+
+    bool isProductOrCashEffect(String path) {
+      final root = path.split('/').first;
+      return root == 'products' || root == 'box';
+    }
+
+    bool isInvoiceCopy(String path) {
+      final parts = path.split('/');
+      return parts.length == 4 &&
+          parts[0] == 'clients' &&
+          parts[2] == collection;
+    }
+
+    void putWrite(Map<String, dynamic> write) {
+      final path = write['path'] as String;
+      final index = writes.indexWhere((item) => item['path'] == path);
+      if (index < 0) {
+        writes.add(write);
+      } else {
+        writes[index] = write;
+      }
+    }
+
+    writes.removeWhere(
+        (write) => isProductOrCashEffect(write['path']?.toString() ?? ''));
+    for (final write in writes) {
+      final path = write['path']?.toString() ?? '';
+      if (path == '$collection/$invoiceId' || isInvoiceCopy(path)) {
+        write
+          ..remove('expectedOperationId')
+          ..remove('expectedFinancialState')
+          ..remove('expectedFields');
+      }
+    }
+    for (final clientId in customerDeltas.keys.toList()) {
+      customerDeltas[clientId] = 0.0;
+    }
+
+    if (latestInvoice == null || latestInvoice['_deleted'] == true) return;
+    final clientId = latestInvoice['clientId']?.toString().trim() ?? '';
+    if (clientId.isEmpty) {
+      throw StateError('Invalid customer on latest invoice');
+    }
+    final sign = isReturn ? -1.0 : 1.0;
+    final total = invoiceNum(latestInvoice['totalSum']);
+    final paid = invoiceNum(latestInvoice['paidAmount']);
+    customerDeltas[clientId] =
+        invoiceNum(customerDeltas[clientId]) - sign * (total - paid);
+
+    putWrite({
+      'path': '$collection/$invoiceId',
+      'data': <String, dynamic>{},
+      'increments': <String, dynamic>{},
+      'deleted': true,
+      'mustBeAbsent': false,
+    });
+    putWrite({
+      'path': 'clients/$clientId/$collection/$invoiceId',
+      'data': <String, dynamic>{},
+      'increments': <String, dynamic>{},
+      'deleted': true,
+      'mustBeAbsent': false,
+    });
+    final historySuffixes =
+        isReturn ? const ['return', 'return_pay'] : const ['sale', 'pay'];
+    for (final suffix in historySuffixes) {
+      putWrite({
+        'path': 'clients/$clientId/balanceHistory/${invoiceId}_$suffix',
+        'data': <String, dynamic>{},
+        'increments': <String, dynamic>{},
+        'deleted': true,
+        'mustBeAbsent': false,
+      });
+    }
+
+    final quantities = <String, double>{};
+    for (final raw in latestInvoice['products'] as List? ?? const []) {
+      if (raw is! Map) continue;
+      final line = Map<String, dynamic>.from(raw);
+      final productId =
+          (line['id'] ?? line['productId'])?.toString().trim() ?? '';
+      if (productId.isEmpty) {
+        throw StateError('Product missing immutable id in latest invoice');
+      }
+      final quantity = invoiceNum(
+        line['amount'] ?? line['quantity'] ?? line['count'] ?? line['qty'],
+      );
+      if (quantity <= 0) continue;
+      quantities[productId] = (quantities[productId] ?? 0) + quantity;
+    }
+    for (final entry in quantities.entries) {
+      final stockDelta = sign * entry.value;
+      putWrite({
+        'path': 'products/${entry.key}',
+        'data': <String, dynamic>{},
+        'increments': {'quantity': stockDelta},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+      putWrite({
+        'path': 'products/${entry.key}/changes/$operationId',
+        'data': {
+          'date': payload['timestamp'],
+          'amount': entry.value,
+          'type': stockDelta >= 0 ? 'increase' : 'decrease',
+          'invoiceNumber': latestInvoice['invoiceNumber'],
+        },
+        'increments': <String, dynamic>{},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+    }
+
+    final cashDelta = -sign * paid;
+    if (cashDelta != 0) {
+      putWrite({
+        'path': 'box/mainBox',
+        'data': <String, dynamic>{},
+        'increments': {'value': cashDelta},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+      putWrite({
+        'path': 'box/mainBox/changes/$operationId',
+        'data': {
+          'date': payload['timestamp'],
+          'value': cashDelta.abs(),
+          'type': cashDelta >= 0 ? 'addition' : 'subtraction',
+          'name': payload['description'],
+        },
+        'increments': <String, dynamic>{},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+    }
   }
 }
 

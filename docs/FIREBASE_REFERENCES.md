@@ -1,5 +1,9 @@
 # Firebase reference map
 
+This file is a historical static search aid. For verified active read paths,
+their triggers and bounds, and the optimizations implemented on 2026-09-29,
+see [FIRESTORE_READ_OPTIMIZATION.md](FIRESTORE_READ_OPTIMIZATION.md).
+
 Generated from non-generated Dart source on 2026-09-27, before the supplier-stage migration. It records 466 collection/collection-group, transaction, batch and Storage reference locations; changed files can have shifted line numbers or removed references. This static search aid includes background adapters and older possibly unreachable modules; it does not classify every row as an active blocking read/write. Method labels are approximate. See [OFFLINE_BALANCE_AUDIT.md](OFFLINE_BALANCE_AUDIT.md) for the current inspected operation inventory. Field values, keys and user data are omitted.
 
 | File:line | Nearby method (approximate) | Reference |

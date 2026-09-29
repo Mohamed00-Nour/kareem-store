@@ -1,5 +1,10 @@
 # Offline customer and supplier balances: implementation and review
 
+The subsequent read audit preserves this financial contract while replacing
+repeated history scans with Hive views, incremental catch-up, and the sequenced
+receipt feed. See
+[FIRESTORE_READ_OPTIMIZATION.md](FIRESTORE_READ_OPTIMIZATION.md).
+
 Investigated 2026-09-27. No production Firebase data was read, written, repaired, or reconciled. Tests use disposable Hive directories and an atomic in-memory cloud backend. This document distinguishes source-confirmed defects from unverified production scenarios.
 
 ## Confirmed defects and their fixes

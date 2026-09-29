@@ -16,6 +16,7 @@ import '../repositories/quote_repository.dart';
 import '../repositories/supplier_repository.dart';
 import '../repositories/supplier_voucher_repository.dart';
 import 'financial_cloud_store.dart';
+import 'firestore_read_diagnostics.dart';
 import 'local_operation_journal.dart';
 
 /// Imports cloud changes into Hive without reopening every business collection
@@ -89,6 +90,12 @@ class RealtimeSyncService {
   Future<int> _runCompatibilityBaseline() async {
     final headSnapshot =
         await _fs.doc(FinancialCloudUploader.feedHeadPath).get();
+    FirestoreReadDiagnostics.queryResult(
+      FinancialCloudUploader.feedHeadPath,
+      headSnapshot.exists ? 1 : 0,
+      trigger: 'compatibility bootstrap head',
+      fromCache: headSnapshot.metadata.isFromCache,
+    );
     final head = (headSnapshot.data()?['lastSequence'] as num?)?.toInt() ?? 0;
 
     await DataSyncService.instance
@@ -96,9 +103,38 @@ class RealtimeSyncService {
     final syncError = appMetaBox.get('cloudRefreshError');
     if (syncError != null) throw StateError(syncError.toString());
 
-    // DataSyncService hydrates balance events but legacy statement rows live in
-    // a separate collection group. Import those once for a new installation.
+    // Import historical financial events once for a new installation. This is
+    // one collection-group query rather than one subcollection query per party.
+    // The document count is inherently proportional to historical operations;
+    // later launches use only sequenced receipts.
+    final operations = await _fs.collectionGroup('financialOperations').get();
+    FirestoreReadDiagnostics.queryResult(
+      'collectionGroup(financialOperations)',
+      operations.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: operations.metadata.isFromCache,
+    );
+    for (final doc in operations.docs) {
+      final parent = doc.reference.parent.parent;
+      if (parent == null) continue;
+      if (parent.parent.id == 'clients') {
+        await LocalOperationJournal.exclusive(() =>
+            CustomerBalanceStore.importEvent(parent.id, doc.id, doc.data()));
+      } else if (parent.parent.id == 'suppliers') {
+        await LocalOperationJournal.exclusive(() =>
+            SupplierBalanceStore.importEvent(parent.id, doc.id, doc.data()));
+      }
+    }
+
+    // Legacy statement rows live in a separate collection group. Import those
+    // once for a new installation.
     final histories = await _fs.collectionGroup('balanceHistory').get();
+    FirestoreReadDiagnostics.queryResult(
+      'collectionGroup(balanceHistory)',
+      histories.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: histories.metadata.isFromCache,
+    );
     for (final doc in histories.docs) {
       final parent = doc.reference.parent.parent;
       if (parent == null) continue;
@@ -121,7 +157,17 @@ class RealtimeSyncService {
         .collection('financial_operation_receipts')
         .where('sequence', isGreaterThan: cursor)
         .orderBy('sequence');
+    const identity = 'financial_operation_receipts sequence > cursor';
+    const trigger = 'realtime financial feed';
+    FirestoreReadDiagnostics.listenerAttached(identity, trigger: trigger);
     _subscriptions.add(query.snapshots().listen((snapshot) {
+      FirestoreReadDiagnostics.listenerSnapshot(
+        identity,
+        snapshot.docs.length,
+        trigger: trigger,
+        fromCache: snapshot.metadata.isFromCache,
+        changes: snapshot.docChanges.length,
+      );
       // Stream callbacks do not await async listeners. Chain snapshots so a
       // later receipt can never advance the cursor past a failed earlier one.
       _receiptWork = _receiptWork.then((_) async {
@@ -157,7 +203,14 @@ class RealtimeSyncService {
       ..sort((a, b) => a.split('/').length.compareTo(b.split('/').length));
     for (final path in paths) {
       if (!_isLocallyCachedPath(path)) continue;
-      final data = (await _fs.doc(path).get()).data();
+      final snapshot = await _fs.doc(path).get();
+      FirestoreReadDiagnostics.queryResult(
+        'receipt path $path',
+        snapshot.exists ? 1 : 0,
+        trigger: 'realtime receipt import',
+        fromCache: snapshot.metadata.isFromCache,
+      );
+      final data = snapshot.data();
       await _mergePath(path, data);
     }
 
@@ -166,10 +219,16 @@ class RealtimeSyncService {
         : receiptId;
     for (final rawId in receipt['customerIds'] as List? ?? const []) {
       final clientId = rawId.toString();
-      final event = (await _fs
-              .doc('clients/$clientId/financialOperations/$operationId')
-              .get())
-          .data();
+      final eventSnapshot = await _fs
+          .doc('clients/$clientId/financialOperations/$operationId')
+          .get();
+      FirestoreReadDiagnostics.queryResult(
+        'client financial operation by id',
+        eventSnapshot.exists ? 1 : 0,
+        trigger: 'realtime receipt import',
+        fromCache: eventSnapshot.metadata.isFromCache,
+      );
+      final event = eventSnapshot.data();
       if (event != null) {
         await LocalOperationJournal.exclusive(() =>
             CustomerBalanceStore.importEvent(clientId, operationId, event));
@@ -177,10 +236,16 @@ class RealtimeSyncService {
     }
     for (final rawId in receipt['supplierIds'] as List? ?? const []) {
       final supplierId = rawId.toString();
-      final event = (await _fs
-              .doc('suppliers/$supplierId/financialOperations/$operationId')
-              .get())
-          .data();
+      final eventSnapshot = await _fs
+          .doc('suppliers/$supplierId/financialOperations/$operationId')
+          .get();
+      FirestoreReadDiagnostics.queryResult(
+        'supplier financial operation by id',
+        eventSnapshot.exists ? 1 : 0,
+        trigger: 'realtime receipt import',
+        fromCache: eventSnapshot.metadata.isFromCache,
+      );
+      final event = eventSnapshot.data();
       if (event != null) {
         await LocalOperationJournal.exclusive(() =>
             SupplierBalanceStore.importEvent(supplierId, operationId, event));
@@ -266,11 +331,21 @@ class RealtimeSyncService {
     if (cursor != null) {
       query = query.where(
         'updatedAt',
-        isGreaterThan: Timestamp.fromDate(cursor),
+        isGreaterThanOrEqualTo: Timestamp.fromDate(cursor),
       );
     }
+    const identity = 'products where updatedAt >= cursor';
+    const trigger = 'realtime product feed';
+    FirestoreReadDiagnostics.listenerAttached(identity, trigger: trigger);
     _subscriptions.add(query.snapshots().listen(
       (snapshot) async {
+        FirestoreReadDiagnostics.listenerSnapshot(
+          identity,
+          snapshot.docs.length,
+          trigger: trigger,
+          fromCache: snapshot.metadata.isFromCache,
+          changes: snapshot.docChanges.length,
+        );
         try {
           DateTime? newest;
           for (final change in snapshot.docChanges) {
@@ -316,10 +391,21 @@ class RealtimeSyncService {
   }
 
   Future<void> stopListening() async {
+    final hadSubscriptions = _subscriptions.isNotEmpty;
     for (final sub in _subscriptions) {
       await sub.cancel();
     }
     _subscriptions.clear();
+    if (hadSubscriptions) {
+      FirestoreReadDiagnostics.listenerDetached(
+        'financial_operation_receipts sequence > cursor',
+        trigger: 'realtime financial feed',
+      );
+      FirestoreReadDiagnostics.listenerDetached(
+        'products where updatedAt >= cursor',
+        trigger: 'realtime product feed',
+      );
+    }
     _isListening = false;
   }
 }

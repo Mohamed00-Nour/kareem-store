@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/department_local.dart';
+import '../sync/firestore_read_diagnostics.dart';
+import '../sync/firestore_sync_checkpoint.dart';
 
 /// Repository for Departments.
 ///
@@ -30,8 +32,13 @@ class DepartmentRepository {
   }
 
   Future<void> fullSync() async {
-    final startedAt = DateTime.now();
     final snap = await _fs.collection('departments').get();
+    FirestoreReadDiagnostics.queryResult(
+      'departments (full)',
+      snap.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: snap.metadata.isFromCache,
+    );
     final Map<String, DepartmentLocal> map = {};
     for (final doc in snap.docs) {
       if (doc.data()['_deleted'] != true) {
@@ -40,10 +47,12 @@ class DepartmentRepository {
     }
     await departmentsBox.clear();
     await departmentsBox.putAll(map);
-    await appMetaBox.put(
-      HiveMetaKeys.lastDepartmentSyncAt,
-      startedAt.toIso8601String(),
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
     );
+    await appMetaBox.put(
+        HiveMetaKeys.lastDepartmentSyncAt, checkpoint.toIso8601String());
   }
 
   Future<void> deltaSync() async {
@@ -53,11 +62,17 @@ class DepartmentRepository {
       await fullSync();
       return;
     }
-    final startedAt = DateTime.now();
     final snap = await _fs
         .collection('departments')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(cursor))
+        .where('updatedAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'departments where updatedAt >= cursor',
+      snap.docs.length,
+      trigger: 'department delta',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       if (doc.data()['_deleted'] == true) {
         await deleteLocal(doc.id);
@@ -65,9 +80,12 @@ class DepartmentRepository {
         await upsertLocal(doc.id, doc.data());
       }
     }
-    await appMetaBox.put(
-      HiveMetaKeys.lastDepartmentSyncAt,
-      startedAt.toIso8601String(),
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+      floor: cursor,
     );
+    await appMetaBox.put(
+        HiveMetaKeys.lastDepartmentSyncAt, checkpoint.toIso8601String());
   }
 }

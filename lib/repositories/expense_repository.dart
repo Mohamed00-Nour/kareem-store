@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/expense_local.dart';
+import '../sync/firestore_read_diagnostics.dart';
+import '../sync/firestore_sync_checkpoint.dart';
 
 /// Repository for Expenses and Expense Categories.
 ///
@@ -41,6 +43,12 @@ class ExpenseRepository {
 
   Future<void> fullSync() async {
     final snap = await _fs.collection('expenses').get();
+    FirestoreReadDiagnostics.queryResult(
+      'expenses (full)',
+      snap.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: snap.metadata.isFromCache,
+    );
     final Map<String, ExpenseLocal> map = {};
     for (final doc in snap.docs) {
       final data = doc.data();
@@ -50,8 +58,12 @@ class ExpenseRepository {
     }
     await expensesBox.clear();
     await expensesBox.putAll(map);
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['time', 'updatedAt'],
+    );
     await appMetaBox.put(
-        HiveMetaKeys.lastExpenseSyncAt, DateTime.now().toIso8601String());
+        HiveMetaKeys.lastExpenseSyncAt, checkpoint.toIso8601String());
   }
 
   Future<void> deltaSync() async {
@@ -64,8 +76,14 @@ class ExpenseRepository {
     final lastSync = DateTime.parse(lastSyncStr);
     final snap = await _fs
         .collection('expenses')
-        .where('time', isGreaterThan: Timestamp.fromDate(lastSync))
+        .where('time', isGreaterThanOrEqualTo: Timestamp.fromDate(lastSync))
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'expenses where time >= cursor',
+      snap.docs.length,
+      trigger: 'expense delta',
+      fromCache: snap.metadata.isFromCache,
+    );
 
     for (final doc in snap.docs) {
       final data = doc.data();
@@ -75,7 +93,12 @@ class ExpenseRepository {
         await expensesBox.put(doc.id, ExpenseLocal.fromFirestore(doc.id, data));
       }
     }
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['time'],
+      floor: lastSync,
+    );
     await appMetaBox.put(
-        HiveMetaKeys.lastExpenseSyncAt, DateTime.now().toIso8601String());
+        HiveMetaKeys.lastExpenseSyncAt, checkpoint.toIso8601String());
   }
 }

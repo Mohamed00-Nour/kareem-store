@@ -6,6 +6,7 @@ import '../Services/customer_balance_store.dart';
 import '../Services/supplier_balance_store.dart';
 import '../sync/cloud_snapshot_guard.dart';
 import '../sync/local_operation_journal.dart';
+import '../sync/firestore_read_diagnostics.dart';
 
 /// Repository for Client & Supplier Balance History entries.
 ///
@@ -356,6 +357,12 @@ class BalanceHistoryRepository {
         .doc(clientId)
         .collection('balanceHistory')
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'clients/$clientId/balanceHistory (full)',
+      snap.docs.length,
+      trigger: 'explicit legacy history refresh',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs)
       await mergeCloudClientHistory(clientId, doc.id, doc.data());
   }
@@ -366,6 +373,12 @@ class BalanceHistoryRepository {
         .doc(supplierId)
         .collection('balanceHistory')
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'suppliers/$supplierId/balanceHistory (full)',
+      snap.docs.length,
+      trigger: 'explicit legacy history refresh',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       await mergeCloudSupplierHistory(supplierId, doc.id, doc.data());
     }

@@ -6,6 +6,8 @@ import 'package:hive/hive.dart';
 import '../local_db/models/payment_breakdown_local.dart';
 import '../local_db/hive_init.dart';
 import '../sync/connectivity_service.dart';
+import '../sync/firestore_read_diagnostics.dart';
+import '../sync/firestore_sync_checkpoint.dart';
 import '../sync/sync_queue_manager.dart';
 
 class PaymentBreakdownRepository {
@@ -177,7 +179,6 @@ class PaymentBreakdownRepository {
   /// can remove its local Hive copy without rescanning the collection.
   Future<void> fullSyncFromFirestore() async {
     if (!ConnectivityService.instance.isOnline) return;
-    final startedAt = DateTime.now();
     try {
       final cursor = appMetaBox.get(
         HiveMetaKeys.lastPaymentBreakdownSyncAt,
@@ -187,10 +188,20 @@ class PaymentBreakdownRepository {
       if (cursor != null) {
         query = query.where(
           'updatedAt',
-          isGreaterThan: Timestamp.fromDate(DateTime.parse(cursor)),
+          isGreaterThanOrEqualTo: Timestamp.fromDate(DateTime.parse(cursor)),
         );
       }
       final snap = await query.get();
+      FirestoreReadDiagnostics.queryResult(
+        cursor == null
+            ? 'payment_breakdowns (full)'
+            : 'payment_breakdowns where updatedAt >= cursor',
+        snap.docs.length,
+        trigger: cursor == null
+            ? 'compatibility bootstrap'
+            : 'payment breakdown delta',
+        fromCache: snap.metadata.isFromCache,
+      );
 
       for (final doc in snap.docs) {
         final data = doc.data();
@@ -201,10 +212,14 @@ class PaymentBreakdownRepository {
           await upsertLocal(local);
         }
       }
-      await appMetaBox.put(
-        HiveMetaKeys.lastPaymentBreakdownSyncAt,
-        startedAt.toIso8601String(),
+      final previous = DateTime.tryParse(cursor ?? '');
+      final checkpoint = FirestoreSyncCheckpoint.newest(
+        snap.docs.map((doc) => doc.data()),
+        const ['updatedAt'],
+        floor: previous,
       );
+      await appMetaBox.put(HiveMetaKeys.lastPaymentBreakdownSyncAt,
+          checkpoint.toIso8601String());
     } catch (e) {
       debugPrint('Error fetching payment breakdowns from Firestore: $e');
     }

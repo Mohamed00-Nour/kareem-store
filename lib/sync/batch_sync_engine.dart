@@ -12,6 +12,7 @@ import '../local_db/models/sync_queue_item.dart';
 import '../repositories/product_repository.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/supplier_repository.dart';
+import '../repositories/balance_history_repository.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import 'sync_queue_manager.dart';
 import 'sync_operation_diagnostics.dart';
@@ -83,12 +84,13 @@ class BatchSyncEngine {
     await SyncQueueManager.instance.markSyncing(item.operationId);
     try {
       final payload = SyncQueueManager.decodePayload(item);
+      Map<String, dynamic>? financialReceipt;
       if (payload['financialFormat'] == 2) {
-        final receipt = await FinancialCloudUploader.upload(item.operationId,
+        financialReceipt = await FinancialCloudUploader.upload(item.operationId,
                 payload, cloudStore ?? FirestoreFinancialCloudStore())
             .timeout(const Duration(seconds: 35));
         await LocalOperationJournal.exclusive(() async {
-          await CloudSnapshotGuard.acknowledge(receipt);
+          await CloudSnapshotGuard.acknowledge(financialReceipt!);
         });
       } else {
         if ([
@@ -119,12 +121,12 @@ class BatchSyncEngine {
         // Refresh after acknowledgement: listeners may have delivered a newer
         // snapshot while this path was protected by the pending operation.
         try {
-          await _refreshFinancialState(payload, item.operationId);
+          await _refreshFinancialState(
+              payload, item.operationId, financialReceipt!);
         } catch (error) {
           await appMetaBox.put('cloudRefreshError', error.toString());
         }
       }
-      _updateLastSyncMeta(item.operationType);
       return true;
     } catch (e) {
       await SyncQueueManager.instance.markFailed(
@@ -135,15 +137,31 @@ class BatchSyncEngine {
     }
   }
 
-  Future<void> _refreshFinancialState(
-      Map<String, dynamic> payload, String operationId) async {
+  Future<void> _refreshFinancialState(Map<String, dynamic> payload,
+      String operationId, Map<String, dynamic> receipt) async {
     final store = cloudStore ?? FirestoreFinancialCloudStore();
-    for (final write in payload['cloudWrites'] as List) {
-      final path = write['path'] as String;
+    final paths = <String>{
+      for (final write in payload['cloudWrites'] as List)
+        (write as Map)['path'].toString(),
+      ...(receipt['versions'] as Map? ?? const {})
+          .keys
+          .map((path) => path.toString()),
+    };
+    for (final path in paths) {
       final parts = path.split('/');
-      if (parts.length != 2) continue;
       final data =
           await store.readDocument(path).timeout(const Duration(seconds: 15));
+      if (parts.length == 4 && parts[2] == 'balanceHistory') {
+        if (parts[0] == 'clients') {
+          await BalanceHistoryRepository.instance
+              .mergeCloudClientHistory(parts[1], parts[3], data);
+        } else if (parts[0] == 'suppliers') {
+          await BalanceHistoryRepository.instance
+              .mergeCloudSupplierHistory(parts[1], parts[3], data);
+        }
+        continue;
+      }
+      if (parts.length != 2) continue;
       switch (parts[0]) {
         case 'products':
           await ProductRepository.instance.mergeCloud(parts[1], data);
@@ -170,13 +188,18 @@ class BatchSyncEngine {
           break;
       }
     }
-    for (final clientId in (payload['customerDeltas'] as Map).keys) {
+    final clientIds = <String>{
+      ...(payload['customerDeltas'] as Map).keys.map((id) => id.toString()),
+      ...(receipt['customerIds'] as List? ?? const [])
+          .map((id) => id.toString()),
+    };
+    for (final clientId in clientIds) {
       final event = await store
           .readDocument('clients/$clientId/financialOperations/$operationId')
           .timeout(const Duration(seconds: 15));
       await LocalOperationJournal.exclusive(() async {
         if (event != null) {
-          await CustomerBalanceStore.importEvent(
+          await CustomerBalanceStore.acceptAcknowledgedEvent(
               clientId.toString(), operationId, event);
         }
       });
@@ -200,15 +223,21 @@ class BatchSyncEngine {
         });
       }
     }
-    for (final supplierId
-        in (payload['supplierDeltas'] as Map? ?? const {}).keys) {
+    final supplierIds = <String>{
+      ...(payload['supplierDeltas'] as Map? ?? const {})
+          .keys
+          .map((id) => id.toString()),
+      ...(receipt['supplierIds'] as List? ?? const [])
+          .map((id) => id.toString()),
+    };
+    for (final supplierId in supplierIds) {
       final event = await store
           .readDocument(
               'suppliers/$supplierId/financialOperations/$operationId')
           .timeout(const Duration(seconds: 15));
       await LocalOperationJournal.exclusive(() async {
         if (event != null) {
-          await SupplierBalanceStore.importEvent(
+          await SupplierBalanceStore.acceptAcknowledgedEvent(
               supplierId.toString(), operationId, event);
         }
       });
@@ -231,17 +260,6 @@ class BatchSyncEngine {
           }
         });
       }
-    }
-  }
-
-  void _updateLastSyncMeta(String type) {
-    final now = DateTime.now().toIso8601String();
-    if (type.toLowerCase().contains('product')) {
-      appMetaBox.put(HiveMetaKeys.lastProductSyncAt, now);
-    } else if (type.toLowerCase().contains('supplier')) {
-      appMetaBox.put(HiveMetaKeys.lastSupplierSyncAt, now);
-    } else {
-      appMetaBox.put(HiveMetaKeys.lastClientSyncAt, now);
     }
   }
 
@@ -1382,6 +1400,7 @@ class BatchSyncEngine {
       quoteData['date'] = DateTime.parse(quoteData['date'] as String);
     }
     quoteData['createdAt'] = FieldValue.serverTimestamp();
+    quoteData['updatedAt'] = FieldValue.serverTimestamp();
 
     await _fs.collection('price_quotes').doc(quoteId).set(
           quoteData,
@@ -1408,6 +1427,7 @@ class BatchSyncEngine {
     if (invoiceData['date'] is String) {
       invoiceData['date'] = DateTime.parse(invoiceData['date'] as String);
     }
+    invoiceData['updatedAt'] = FieldValue.serverTimestamp();
 
     // The root document is written in the same atomic batch as stock and cash.
     // Its existence therefore proves this create was already applied.
@@ -1453,6 +1473,7 @@ class BatchSyncEngine {
       if (pRef != null) {
         final updateMap = <String, dynamic>{
           'quantity': FieldValue.increment(qty),
+          'updatedAt': FieldValue.serverTimestamp(),
         };
         if (product['newCostPrice'] != null) {
           updateMap['costPrice'] = syncDouble(product['newCostPrice']);
@@ -1511,6 +1532,7 @@ class BatchSyncEngine {
     if (invoiceData['date'] is String) {
       invoiceData['date'] = DateTime.parse(invoiceData['date'] as String);
     }
+    invoiceData['updatedAt'] = FieldValue.serverTimestamp();
     final oldProducts = normalizeProductLinesForSync(payload['oldProducts']);
     final newProducts = normalizeProductLinesForSync(payload['products']);
     final oldPaidAmount = syncDouble(payload['oldPaidAmount']);
@@ -1612,7 +1634,10 @@ class BatchSyncEngine {
       if (latest?['newSellingPrice3'] != null) {
         update['sellingPrice3'] = syncDouble(latest!['newSellingPrice3']);
       }
-      if (update.isNotEmpty) batch.update(entry.value, update);
+      if (update.isNotEmpty) {
+        update['updatedAt'] = FieldValue.serverTimestamp();
+        batch.update(entry.value, update);
+      }
     }
 
     final paidDelta = newPaidAmount - oldPaidAmount;
@@ -1905,7 +1930,10 @@ class BatchSyncEngine {
   Future<void> _syncDeleteQuote(Map<String, dynamic> payload) async {
     final String quoteId = payload['quoteId'];
     if (quoteId.isNotEmpty) {
-      await _fs.collection('price_quotes').doc(quoteId).delete();
+      await _fs.collection('price_quotes').doc(quoteId).set({
+        '_deleted': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     }
   }
 

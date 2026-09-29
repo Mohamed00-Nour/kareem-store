@@ -1,5 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
+import '../sync/firestore_read_diagnostics.dart';
+
 class PartyRenameException implements Exception {
   final String message;
   PartyRenameException(this.message);
@@ -24,6 +26,12 @@ class PartyRenameService {
 
     final oldRef = _firestore.collection('clients').doc(oldClientId);
     final oldSnap = await oldRef.get();
+    FirestoreReadDiagnostics.queryResult(
+      'clients/$oldClientId',
+      oldSnap.exists ? 1 : 0,
+      trigger: 'rename client',
+      fromCache: oldSnap.metadata.isFromCache,
+    );
     if (!oldSnap.exists) {
       throw PartyRenameException('العميل غير موجود');
     }
@@ -39,18 +47,28 @@ class PartyRenameService {
         .where('clientName', isEqualTo: trimmed)
         .limit(2)
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'clients where clientName == new name limit 2',
+      dup.docs.length,
+      trigger: 'rename client duplicate check',
+      fromCache: dup.metadata.isFromCache,
+    );
     for (final doc in dup.docs) {
       if (doc.id != oldClientId) {
         throw PartyRenameException('يوجد عميل بهذا الاسم بالفعل');
       }
     }
 
-    await oldRef.update({'clientName': trimmed});
+    await oldRef.update({
+      'clientName': trimmed,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
 
     final namesToUpdate = <String>{oldName}..removeWhere((n) => n.isEmpty);
     if (namesToUpdate.isNotEmpty) {
       await _updateClientNameInCollection('invoices', namesToUpdate, trimmed);
-      await _updateClientNameInCollection('returnInvoices', namesToUpdate, trimmed);
+      await _updateClientNameInCollection(
+          'returnInvoices', namesToUpdate, trimmed);
     }
   }
 
@@ -65,6 +83,12 @@ class PartyRenameService {
 
     final supplierRef = _firestore.collection('suppliers').doc(supplierId);
     final snap = await supplierRef.get();
+    FirestoreReadDiagnostics.queryResult(
+      'suppliers/$supplierId',
+      snap.exists ? 1 : 0,
+      trigger: 'rename supplier',
+      fromCache: snap.metadata.isFromCache,
+    );
     if (!snap.exists) {
       throw PartyRenameException('المورد غير موجود');
     }
@@ -77,13 +101,22 @@ class PartyRenameService {
         .where('name', isEqualTo: trimmed)
         .limit(2)
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'suppliers where name == new name limit 2',
+      dup.docs.length,
+      trigger: 'rename supplier duplicate check',
+      fromCache: dup.metadata.isFromCache,
+    );
     for (final doc in dup.docs) {
       if (doc.id != supplierId) {
         throw PartyRenameException('يوجد مورد بهذا الاسم بالفعل');
       }
     }
 
-    await supplierRef.update({'name': trimmed});
+    await supplierRef.update({
+      'name': trimmed,
+      'updatedAt': FieldValue.serverTimestamp(),
+    });
 
     if (oldName.isNotEmpty) {
       await _updateSupplierNameInBuyingInvoices(oldName, trimmed);
@@ -151,6 +184,12 @@ class PartyRenameService {
           .collection(collection)
           .where('clientName', isEqualTo: oldName)
           .get();
+      FirestoreReadDiagnostics.queryResult(
+        '$collection where clientName == old name',
+        snap.docs.length,
+        trigger: 'rename client references',
+        fromCache: snap.metadata.isFromCache,
+      );
       for (final doc in snap.docs) {
         docRefs.add(doc.reference);
       }
@@ -169,7 +208,10 @@ class PartyRenameService {
     }
 
     for (final ref in docRefs) {
-      batch.update(ref, {'clientName': newName});
+      batch.update(ref, {
+        'clientName': newName,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
       opCount++;
       if (opCount >= _maxBatchOps) {
         await commitBatch();
@@ -186,6 +228,12 @@ class PartyRenameService {
         .collection('buying invoices')
         .where('supplierName', isEqualTo: oldName)
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'buying invoices where supplierName == old name',
+      snap.docs.length,
+      trigger: 'rename supplier references',
+      fromCache: snap.metadata.isFromCache,
+    );
 
     if (snap.docs.isEmpty) return;
 
@@ -200,7 +248,10 @@ class PartyRenameService {
     }
 
     for (final doc in snap.docs) {
-      batch.update(doc.reference, {'supplierName': newName});
+      batch.update(doc.reference, {
+        'supplierName': newName,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
       opCount++;
       if (opCount >= _maxBatchOps) {
         await commitBatch();

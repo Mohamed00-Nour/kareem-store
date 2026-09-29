@@ -2,6 +2,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/supplier_local.dart';
 import '../sync/cloud_snapshot_guard.dart';
+import '../sync/cloud_refresh_gate.dart';
+import '../sync/firestore_read_diagnostics.dart';
+import '../sync/firestore_sync_checkpoint.dart';
 import '../sync/local_operation_journal.dart';
 import '../Services/supplier_balance_store.dart';
 import '../utils/entity_name_normalizer.dart';
@@ -83,51 +86,65 @@ class SupplierRepository {
 
   /// Full sync — downloads all suppliers from Firestore into Hive.
   Future<void> fullSync() async {
-    final startedAt = DateTime.now();
     final snap = await _fs.collection('suppliers').get();
+    FirestoreReadDiagnostics.queryResult(
+      'suppliers (full)',
+      snap.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       await hydrateCloud(doc.id, doc.data());
     }
-    await appMetaBox.put(
-      HiveMetaKeys.lastSupplierSyncAt,
-      startedAt.toIso8601String(),
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
     );
+    await appMetaBox.put(
+        HiveMetaKeys.lastSupplierSyncAt, checkpoint.toIso8601String());
   }
 
   /// Fetches supplier profile changes after the initial compatibility
   /// baseline. Financial changes arrive through the sequenced receipt feed.
-  Future<void> deltaSync() async {
+  Future<void> deltaSync() => CloudRefreshGate.run(
+        'suppliers.delta',
+        _deltaSync,
+      );
+
+  Future<void> _deltaSync() async {
     final raw = appMetaBox.get(HiveMetaKeys.lastSupplierSyncAt)?.toString();
     final cursor = DateTime.tryParse(raw ?? '');
     if (cursor == null) {
       await fullSync();
       return;
     }
-    final startedAt = DateTime.now();
     final snap = await _fs
         .collection('suppliers')
-        .where('updatedAt', isGreaterThan: Timestamp.fromDate(cursor))
+        .where('updatedAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
         .get();
+    FirestoreReadDiagnostics.queryResult(
+      'suppliers where updatedAt >= cursor',
+      snap.docs.length,
+      trigger: 'supplier profile delta',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       await hydrateCloud(doc.id, doc.data());
     }
-    await appMetaBox.put(
-      HiveMetaKeys.lastSupplierSyncAt,
-      startedAt.toIso8601String(),
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+      floor: cursor,
     );
+    await appMetaBox.put(
+        HiveMetaKeys.lastSupplierSyncAt, checkpoint.toIso8601String());
   }
 
   Future<void> hydrateCloud(String id, Map<String, dynamic>? data) async {
-    final events = <String, Map<String, dynamic>>{};
-    if (data != null && data.containsKey('financialBaseBalance')) {
-      final snap = await _fs
-          .collection('suppliers')
-          .doc(id)
-          .collection('financialOperations')
-          .get();
-      for (final doc in snap.docs) events[doc.id] = doc.data();
-    }
-    await mergeCloud(id, data, events: events);
+    // See ClientRepository.hydrateCloud. The receipt feed owns incremental
+    // financial events; bootstrap imports legacy events in one group query.
+    await mergeCloud(id, data);
   }
 
   Future<void> mergeCloud(String id, Map<String, dynamic>? data,

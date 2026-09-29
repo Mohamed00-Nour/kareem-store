@@ -276,6 +276,7 @@ class SyncQueueManager {
   }
 
   bool canRetry(SyncQueueItem item) {
+    if (canRebaseLatestInvoiceDelete(item)) return true;
     final category = item.errorCategory ??
         (item.status == 'failed'
             ? SyncFailureClassifier.inferCategory(item.lastError)
@@ -284,11 +285,33 @@ class SyncQueueManager {
   }
 
   bool canRetryAutomatically(SyncQueueItem item) {
+    if (canRebaseLatestInvoiceDelete(item)) return true;
     final category = item.errorCategory ??
         (item.status == 'failed'
             ? SyncFailureClassifier.inferCategory(item.lastError)
             : null);
     return SyncErrorCategories.canRetryAutomatically(category);
+  }
+
+  /// Version 2 invoice deletions are safe to retry after a conflict because
+  /// the uploader rebuilds their balance, stock, and cash reversals from the
+  /// latest cloud invoice inside the same transaction.
+  bool canRebaseLatestInvoiceDelete(SyncQueueItem item) {
+    if (!const {
+      'deleteInvoice',
+      'deleteReturn',
+      'deleteReturnInvoice',
+      'deleteBuyingInvoice',
+    }.contains(item.operationType)) return false;
+    try {
+      if (decodePayload(item)['financialFormat'] != 2) return false;
+      if (item.status != 'failed') return true;
+      final category = item.errorCategory ??
+          SyncFailureClassifier.inferCategory(item.lastError);
+      return category == SyncErrorCategories.conflict;
+    } catch (_) {
+      return false;
+    }
   }
 
   bool isReadyForAutomaticAttempt(SyncQueueItem item, DateTime now) {

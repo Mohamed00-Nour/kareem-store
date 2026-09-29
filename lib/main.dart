@@ -15,7 +15,7 @@ import 'Services/customer_balance_store.dart';
 import 'Services/supplier_balance_store.dart';
 import 'sync/local_operation_journal.dart';
 
-Future<void> main() async { //11:00
+Future<void> main() async {
   //9.38
   WidgetsFlutterBinding.ensureInitialized();
   final startupTimer = Stopwatch()..start();

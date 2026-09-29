@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../sync/firestore_read_diagnostics.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -487,6 +488,12 @@ class _ProductListPageState extends State<ProductListPage> {
         query = query.startAfterDocument(_lastDamagedDocument!);
       }
       final page = await query.get();
+      FirestoreReadDiagnostics.queryResult(
+        '$_damagedProductsCollection limit=$_damagedPageSize',
+        page.docs.length,
+        trigger: reset ? 'damaged products first page' : 'damaged products next page',
+        fromCache: page.metadata.isFromCache,
+      );
       if (!mounted) return;
       setState(() {
         _damagedDocuments.addAll(page.docs);

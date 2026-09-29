@@ -1,5 +1,9 @@
 # Project context: Kareem Store
 
+For the current Firestore read model, active query inventory, checkpoint rules,
+rollout prerequisites, and measurement procedure, see
+[FIRESTORE_READ_OPTIMIZATION.md](FIRESTORE_READ_OPTIMIZATION.md).
+
 Updated 2026-09-28 after the customer and supplier financial/offline fixes. This is a code-based orientation, not a production audit. See [OFFLINE_BALANCE_AUDIT.md](OFFLINE_BALANCE_AUDIT.md) for confirmed defects, migration limits, remaining offline work and historical review. No production Firebase data was accessed.
 
 ## Purpose and active features

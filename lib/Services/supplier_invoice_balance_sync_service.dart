@@ -1,8 +1,4 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-import '../repositories/balance_history_repository.dart';
-import '../repositories/invoice_repository.dart';
-import '../repositories/supplier_repository.dart';
+import '../sync/realtime_sync_service.dart';
 
 /// Compatibility hydrator for supplier pages.
 ///
@@ -11,16 +7,6 @@ import '../repositories/supplier_repository.dart';
 class SupplierInvoiceBalanceSyncService {
   static Future<void> syncForSupplier(String supplierId) async {
     if (supplierId.trim().isEmpty) return;
-    final firestore = FirebaseFirestore.instance;
-    final supplier =
-        await firestore.collection('suppliers').doc(supplierId).get();
-    if (supplier.exists) {
-      await SupplierRepository.instance
-          .hydrateCloud(supplierId, supplier.data());
-    }
-    await Future.wait([
-      BalanceHistoryRepository.instance.fullSyncForSupplier(supplierId),
-      InvoiceRepository.instance.syncBuyingReturnsForSupplier(supplierId),
-    ]);
+    await RealtimeSyncService.instance.startListening();
   }
 }

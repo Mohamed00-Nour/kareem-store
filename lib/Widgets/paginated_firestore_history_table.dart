@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../sync/firestore_read_diagnostics.dart';
 
 /// Bounded, user-driven reader for legacy Firestore history collections.
 ///
@@ -73,6 +74,12 @@ class _PaginatedFirestoreHistoryTableState
         query = query.startAfterDocument(_lastDocument!);
       }
       final page = await query.get();
+      FirestoreReadDiagnostics.queryResult(
+        '${widget.collection.path} limit ${widget.pageSize}',
+        page.docs.length,
+        trigger: reset ? 'history first page' : 'history next page',
+        fromCache: page.metadata.isFromCache,
+      );
       if (!mounted) return;
       setState(() {
         _documents.addAll(page.docs);

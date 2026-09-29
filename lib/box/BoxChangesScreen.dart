@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import '../sync/firestore_read_diagnostics.dart';
 
 class BoxChangesScreen extends StatefulWidget {
   const BoxChangesScreen({super.key});
@@ -86,6 +87,12 @@ class _BoxChangesScreenState extends State<BoxChangesScreen> {
 
     try {
       final page = await _query().get();
+      FirestoreReadDiagnostics.queryResult(
+        'box/mainBox/changes month=$_selectedYear-$_selectedMonth limit=$_pageSize',
+        page.docs.length,
+        trigger: reset ? 'cash history first page' : 'cash history next page',
+        fromCache: page.metadata.isFromCache,
+      );
       if (!mounted) return;
       setState(() {
         _changes.addAll(page.docs);

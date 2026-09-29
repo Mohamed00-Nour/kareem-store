@@ -681,6 +681,78 @@ void main() {
     expect(syncQueueBox.isEmpty, true);
     expect(cloud.documents['invoices/s']!['_deleted'], true);
   });
+  for (final isReturn in [false, true]) {
+    test(
+        '${isReturn ? 'return' : 'sales'} deletion rebases safely after a remote edit',
+        () async {
+      final collection = isReturn ? 'returnInvoices' : 'invoices';
+      final sign = isReturn ? -1.0 : 1.0;
+      await CustomerOperationService.saveInvoice(invoice(), isReturn: isReturn);
+      await drain();
+
+      await CustomerOperationService.deleteInvoice('s', isReturn: isReturn);
+      final deleteOperationId = syncQueueBox.values.single.operationId;
+      expectLocal(50, 10, 100);
+
+      final remoteInvoice = {
+        ...invoice(total: 180, paid: 30, quantity: 3),
+        'invoiceType': isReturn ? 'return' : 'sale',
+        '_deleted': false,
+        '_version':
+            (cloud.documents['$collection/s']!['_version'] as num).toInt() + 1,
+        '_operationId': 'remote-edit',
+      };
+      cloud.documents['$collection/s'] = remoteInvoice;
+      cloud.documents['clients/c/$collection/s'] =
+          Map<String, dynamic>.from(remoteInvoice);
+      final remoteBalance = 50 + sign * 150;
+      cloud.documents['clients/c'] = {
+        ...cloud.documents['clients/c']!,
+        'balance': remoteBalance,
+        '_version':
+            (cloud.documents['clients/c']!['_version'] as num).toInt() + 1,
+        '_operationId': 'remote-edit',
+      };
+      cloud.documents['products/p'] = {
+        ...cloud.documents['products/p']!,
+        'quantity': 10 - sign * 3,
+        '_version':
+            (cloud.documents['products/p']!['_version'] as num).toInt() + 1,
+        '_operationId': 'remote-edit',
+      };
+      cloud.documents['box/mainBox'] = {
+        ...cloud.documents['box/mainBox']!,
+        'value': 100 + sign * 30,
+        '_version':
+            (cloud.documents['box/mainBox']!['_version'] as num).toInt() + 1,
+        '_operationId': 'remote-edit',
+      };
+      final remoteEvent = {
+        'clientId': 'c',
+        'operationId': 'remote-edit',
+        'delta': sign * 70,
+        'description': 'Remote invoice edit',
+        'timestamp': date,
+      };
+      cloud.documents['clients/c/financialOperations/remote-edit'] =
+          remoteEvent;
+      await CustomerBalanceStore.importEvent('c', 'remote-edit', remoteEvent);
+
+      expect(CustomerBalanceStore.balance('c'), 50 + sign * 70);
+      await drain();
+
+      expect(syncQueueBox.isEmpty, isTrue);
+      expect(cloud.documents['$collection/s']!['_deleted'], isTrue);
+      expectCloud(50, 10, 100);
+      expect(
+          cloud.documents['clients/c/financialOperations/$deleteOperationId']![
+              'delta'],
+          -sign * 150);
+      expectLocal(50, 10, 100);
+      expect((isReturn ? returnInvoicesBox : invoicesBox).containsKey('s'),
+          isFalse);
+    });
+  }
   test('return and refund, edit and deletion reverse debt, stock and cash',
       () async {
     await CustomerOperationService.saveInvoice(

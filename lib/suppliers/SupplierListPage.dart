@@ -3,11 +3,9 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:hive/hive.dart';
 import '../Services/party_rename_service.dart';
-import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Widgets/app_responsive.dart';
 import '../local_db/models/supplier_local.dart';
 import '../repositories/balance_history_repository.dart';
-import '../repositories/invoice_repository.dart';
 import '../repositories/supplier_repository.dart';
 import '../sync/connectivity_service.dart';
 import 'DeletedSuppliersPage.dart';
@@ -154,24 +152,6 @@ class _SupplierListPageState extends State<SupplierListPage> {
     try {
       await ConnectivityService.instance.forceSync();
       await SupplierRepository.instance.deltaSync();
-      await InvoiceRepository.instance.deltaSyncBuying();
-      final suppliers = SupplierRepository.instance.getAll();
-      for (final supplier in suppliers) {
-        try {
-          await SupplierInvoiceBalanceSyncService.syncForSupplier(
-            supplier.id,
-          );
-          await BalanceHistoryRepository.instance.fullSyncForSupplier(
-            supplier.id,
-          );
-          await InvoiceRepository.instance.syncBuyingReturnsForSupplier(
-            supplier.id,
-            supplierName: supplier.name,
-          );
-        } catch (_) {
-          // Keep checking the remaining suppliers if one legacy record is bad.
-        }
-      }
       _loadFromHive();
     } catch (_) {
       // Cached Hive data remains visible when synchronization fails.

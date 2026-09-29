@@ -365,6 +365,91 @@ void main() {
     expect(cloud.documents['box/mainBox']!['value'], 1000);
   });
 
+  test('purchase deletion rebases safely when another device edited it',
+      () async {
+    await SupplierOperationService.saveBuyingInvoice(purchase());
+    await drain();
+
+    // This device deletes the version it currently has. The local response is
+    // immediate, while its upload remains queued.
+    await SupplierOperationService.deleteBuyingInvoice('purchase-1');
+    final deleteOperationId = syncQueueBox.values.single.operationId;
+    expect(SupplierBalanceStore.balance('supplier-1'), 50);
+    expect(productsBox.get('product-1')!.quantity, 10);
+    expect(boxCacheBox.get('mainBox')!.value, 1000);
+
+    // Before that upload reaches the server, another device edits the same
+    // invoice from 100/20/2 to 180/30/3.
+    final remoteInvoice = {
+      ...purchase(total: 180, paid: 30, quantity: 3),
+      '_deleted': false,
+      '_version':
+          (cloud.documents['buying invoices/purchase-1']!['_version'] as num)
+                  .toInt() +
+              1,
+      '_operationId': 'remote-edit',
+    };
+    cloud.documents['buying invoices/purchase-1'] = remoteInvoice;
+    cloud.documents['suppliers/supplier-1/buying invoices/purchase-1'] =
+        Map<String, dynamic>.from(remoteInvoice);
+    cloud.documents['suppliers/supplier-1'] = {
+      ...cloud.documents['suppliers/supplier-1']!,
+      'balance': 200.0,
+      'totalBalance': 200.0,
+      '_version': (cloud.documents['suppliers/supplier-1']!['_version'] as num)
+              .toInt() +
+          1,
+      '_operationId': 'remote-edit',
+    };
+    cloud.documents['products/product-1'] = {
+      ...cloud.documents['products/product-1']!,
+      'quantity': 13.0,
+      '_version':
+          (cloud.documents['products/product-1']!['_version'] as num).toInt() +
+              1,
+      '_operationId': 'remote-edit',
+    };
+    cloud.documents['box/mainBox'] = {
+      ...cloud.documents['box/mainBox']!,
+      'value': 970.0,
+      '_version':
+          (cloud.documents['box/mainBox']!['_version'] as num).toInt() + 1,
+      '_operationId': 'remote-edit',
+    };
+    final remoteEvent = {
+      'supplierId': 'supplier-1',
+      'operationId': 'remote-edit',
+      'delta': 70.0,
+      'description': 'Remote purchase edit',
+      'timestamp': DateTime(2026, 9, 29),
+    };
+    cloud.documents['suppliers/supplier-1/financialOperations/remote-edit'] =
+        remoteEvent;
+    await SupplierBalanceStore.importEvent(
+        'supplier-1', 'remote-edit', remoteEvent);
+
+    expect(SupplierBalanceStore.balance('supplier-1'), 120);
+    await drain();
+
+    // The queued delete reverses the latest server version, then replaces its
+    // provisional local -80 event with the acknowledged -150 event.
+    expect(syncQueueBox.isEmpty, isTrue);
+    expect(cloud.documents['buying invoices/purchase-1']!['_deleted'], isTrue);
+    expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], 50);
+    expect(cloud.documents['products/product-1']!['quantity'], 10);
+    expect(cloud.documents['box/mainBox']!['value'], 1000);
+    expect(
+        cloud.documents[
+                'suppliers/supplier-1/financialOperations/$deleteOperationId']![
+            'delta'],
+        -150);
+    expect(SupplierBalanceStore.balance('supplier-1'), 50);
+    expect(suppliersBox.get('supplier-1')!.balance, 50);
+    expect(productsBox.get('product-1')!.quantity, 10);
+    expect(boxCacheBox.get('mainBox')!.value, 1000);
+    expect(buyingInvoicesBox.containsKey('purchase-1'), isFalse);
+  });
+
   test('purchase printing uses the unsynced Hive edit', () async {
     final stale = purchase();
     await SupplierOperationService.saveBuyingInvoice(stale);

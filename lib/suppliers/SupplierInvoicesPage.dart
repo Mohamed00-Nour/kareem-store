@@ -157,15 +157,6 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
         widget.supplierId,
       );
       await SupplierRepository.instance.deltaSync();
-      final local = SupplierRepository.instance.getById(widget.supplierId);
-      await InvoiceRepository.instance.deltaSyncBuying();
-      await InvoiceRepository.instance.syncBuyingReturnsForSupplier(
-        widget.supplierId,
-        supplierName: local?.name,
-      );
-      await BalanceHistoryRepository.instance.fullSyncForSupplier(
-        widget.supplierId,
-      );
       _loadFromHive();
     } catch (_) {
       _loadFromHive();

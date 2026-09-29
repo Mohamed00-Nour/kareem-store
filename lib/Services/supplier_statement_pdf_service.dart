@@ -1,6 +1,5 @@
 import 'dart:io';
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
 import 'package:path_provider/path_provider.dart';
@@ -9,6 +8,9 @@ import 'package:pdf/widgets.dart' as pw;
 
 import '../models/invoice_app_footer.dart';
 import '../models/printer_settings.dart';
+import '../repositories/balance_history_repository.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/supplier_repository.dart';
 import 'header_helper.dart';
 import 'invoice_number_utils.dart';
 import 'printer_settings_service.dart';
@@ -26,14 +28,8 @@ class SupplierStatementPdfService {
     final endInclusive = DateTime(to.year, to.month, to.day, 23, 59, 59);
     final startInclusive = DateTime(from.year, from.month, from.day);
 
-    final supplierDoc = await FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(supplierId)
-        .get();
-    final supplierName = (supplierDoc.data()?['name'] ??
-            supplierDoc.data()?['supplierName'] ??
-            supplierId)
-        .toString();
+    final supplier = SupplierRepository.instance.getById(supplierId);
+    final supplierName = supplier?.name ?? supplierId;
 
     final amiriRegular = pw.Font.ttf(
         (await rootBundle.load('fonts/Amiri-Regular.ttf')).buffer.asByteData());
@@ -67,7 +63,7 @@ class SupplierStatementPdfService {
     final periodStr =
         'من ${DateFormat('dd/MM/yyyy').format(startInclusive)} إلى ${DateFormat('dd/MM/yyyy').format(endInclusive)}';
     final nowStr = DateFormat('dd/MM/yyyy hh:mm a').format(DateTime.now());
-    final settings = await PrinterSettingsService.load();
+    final settings = PrinterSettingsService.current;
     final invoiceFooter = settings.salesInvoiceFooter;
     final reportFooter = settings.a4ReportFooter;
 
@@ -86,12 +82,7 @@ class SupplierStatementPdfService {
 
     switch (type) {
       case SupplierStatementType.financial:
-        final supplierBalance = supplierDoc.exists
-            ? (supplierDoc.data()?['totalBalance'] ??
-                        supplierDoc.data()?['balance'] as num?)
-                    ?.toDouble() ??
-                0.0
-            : 0.0;
+        final supplierBalance = supplier?.balance ?? 0.0;
         await _addFinancialPages(
           pdf: pdf,
           supplierId: supplierId,
@@ -192,19 +183,11 @@ class SupplierStatementPdfService {
     final logoPdfImage =
         logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
     final headerLines = HeaderHelper.getHeaderLines(settings);
-    final snap = await FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(supplierId)
-        .collection('balanceHistory')
-        .orderBy('timestamp', descending: true)
-        .get();
-
     final payments = <Map<String, dynamic>>[];
-    for (final doc in snap.docs) {
-      final data = doc.data();
-      final ts = data['timestamp'] ?? data['date'];
-      if (ts is! Timestamp) continue;
-      final date = ts.toDate();
+    for (final entry
+        in BalanceHistoryRepository.instance.getForSupplier(supplierId)) {
+      final data = entry.toMap();
+      final date = entry.timestamp;
       if (date.isBefore(start) || date.isAfter(end)) continue;
       final entered = (data['enteredBalance'] as num?)?.toDouble() ??
           (data['amount'] as num?)?.toDouble() ??
@@ -258,7 +241,7 @@ class SupplierStatementPdfService {
         'description': description,
         'sign': sign,
         'type': type,
-        'timestamp': ts,
+        'timestamp': date,
       });
     }
 
@@ -266,8 +249,8 @@ class SupplierStatementPdfService {
       final tsA = a['timestamp'];
       final tsB = b['timestamp'];
       DateTime? dateA, dateB;
-      if (tsA is Timestamp) dateA = tsA.toDate();
-      if (tsB is Timestamp) dateB = tsB.toDate();
+      if (tsA is DateTime) dateA = tsA;
+      if (tsB is DateTime) dateB = tsB;
 
       if (dateA != null && dateB != null) {
         return dateB.compareTo(dateA);
@@ -432,20 +415,21 @@ class SupplierStatementPdfService {
     final logoPdfImage =
         logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
     final headerLines = HeaderHelper.getHeaderLines(settings);
-    final snap = await FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(supplierId)
-        .collection(invoicesSubcollection)
-        .orderBy('date', descending: true)
-        .get();
-
-    final invoices = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    for (final doc in snap.docs) {
-      final date = doc.data()['date'];
-      if (date is! Timestamp) continue;
-      final d = date.toDate();
+    final supplier = SupplierRepository.instance.getById(supplierId);
+    final localInvoices = invoicesSubcollection == 'returnBuyingInvoices'
+        ? InvoiceRepository.instance.getBuyingReturnsBySupplier(
+            supplierId,
+            supplierName: supplier?.name,
+          )
+        : InvoiceRepository.instance.getBuyingBySupplier(
+            supplierId,
+            supplierName: supplier?.name,
+          );
+    final invoices = <Map<String, dynamic>>[];
+    for (final invoice in localInvoices) {
+      final d = invoice.date;
       if (d.isBefore(start) || d.isAfter(end)) continue;
-      invoices.add(doc);
+      invoices.add(invoice.toMap());
     }
 
     if (invoices.isEmpty) {
@@ -469,15 +453,12 @@ class SupplierStatementPdfService {
       return;
     }
 
-    for (final doc in invoices) {
-      final data = Map<String, dynamic>.from(doc.data() as Map);
+    for (final invoice in invoices) {
+      final data = Map<String, dynamic>.from(invoice);
       final rawDate = data['date'];
-      final date = rawDate is Timestamp
-          ? rawDate.toDate()
-          : (rawDate is DateTime
-              ? rawDate
-              : (DateTime.tryParse(rawDate?.toString() ?? '') ??
-                  DateTime.now()));
+      final date = rawDate is DateTime
+          ? rawDate
+          : (DateTime.tryParse(rawDate?.toString() ?? '') ?? DateTime.now());
       final products = List<Map<String, dynamic>>.from(data['products'] ?? []);
       final totalSum = (data['totalSum'] as num?)?.toDouble() ?? 0.0;
       final paid = (data['paidAmount'] as num?)?.toDouble() ?? 0.0;

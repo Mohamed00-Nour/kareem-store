@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../local_db/hive_init.dart';
 import '../sync/cloud_snapshot_guard.dart';
+import '../sync/firestore_read_diagnostics.dart';
 import '../sync/local_operation_journal.dart';
 
 class SupplierVoucherRepository {
@@ -46,6 +47,12 @@ class SupplierVoucherRepository {
   static Future<void> fullSync() async {
     final snapshot =
         await FirebaseFirestore.instance.collection('supplier_vouchers').get();
+    FirestoreReadDiagnostics.queryResult(
+      'supplier_vouchers (full)',
+      snapshot.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: snapshot.metadata.isFromCache,
+    );
     for (final doc in snapshot.docs) {
       await mergeCloud(doc.id, doc.data());
     }

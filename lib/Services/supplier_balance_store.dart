@@ -76,4 +76,26 @@ class SupplierBalanceStore {
       await supplier.save();
     }
   }
+
+  /// Replaces this device's provisional local event with the event that was
+  /// committed by the server. This is intentionally separate from
+  /// [importEvent]: normal cloud events are immutable, while a conflict-aware
+  /// purchase deletion may be rebuilt from a newer cloud invoice.
+  static Future<void> acceptAcknowledgedEvent(
+      String id, String operationId, Map<String, dynamic> data) async {
+    final safeData = hiveSafeMap(data);
+    if (!hasBase(id)) {
+      await appMetaBox.put('deferredSupplierEvent:$id:$operationId', safeData);
+      await appMetaBox.flush();
+      return;
+    }
+    await appMetaBox.put(eventKey(id, operationId), safeData);
+    await appMetaBox.flush();
+    final supplier = suppliersBox.get(id);
+    if (supplier != null) {
+      supplier.balance = balance(id);
+      await supplier.save();
+      await suppliersBox.flush();
+    }
+  }
 }

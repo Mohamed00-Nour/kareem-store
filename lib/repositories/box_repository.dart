@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/box_local.dart';
+import '../sync/firestore_read_diagnostics.dart';
 import '../sync/cloud_snapshot_guard.dart';
 import '../sync/local_operation_journal.dart';
 
@@ -56,6 +57,12 @@ class BoxRepository {
   Future<void> fullSync() async {
     try {
       final doc = await _fs.collection('box').doc(_mainBoxId).get();
+      FirestoreReadDiagnostics.queryResult(
+        'box/mainBox',
+        doc.exists ? 1 : 0,
+        trigger: 'cash mirror refresh',
+        fromCache: doc.metadata.isFromCache,
+      );
       if (doc.exists && doc.data() != null) await mergeCloud(doc.data()!);
     } catch (_) {}
   }

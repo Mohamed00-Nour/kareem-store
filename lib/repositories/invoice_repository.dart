@@ -3,6 +3,9 @@ import 'package:hive/hive.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/invoice_local.dart';
 import '../sync/cloud_snapshot_guard.dart';
+import '../sync/cloud_refresh_gate.dart';
+import '../sync/firestore_read_diagnostics.dart';
+import '../sync/firestore_sync_checkpoint.dart';
 import '../sync/local_operation_journal.dart';
 
 /// Repository for Invoices (Sales, Returns, and Buying).
@@ -186,14 +189,54 @@ class InvoiceRepository {
 
   Future<void> fullSyncSales() async {
     final snap = await _fs.collection('invoices').get();
+    FirestoreReadDiagnostics.queryResult(
+      'invoices (full)',
+      snap.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       await mergeCloudInvoice('invoices', doc.id, doc.data());
     }
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+    );
     await appMetaBox.put(
-        HiveMetaKeys.lastInvoiceSyncAt, DateTime.now().toIso8601String());
+        HiveMetaKeys.lastInvoiceSyncAt, checkpoint.toIso8601String());
   }
 
-  Future<void> deltaSyncSales() => fullSyncSales();
+  Future<void> deltaSyncSales() => CloudRefreshGate.run(
+        'invoices.sales.delta',
+        _deltaSyncSales,
+      );
+
+  Future<void> _deltaSyncSales() async {
+    final raw = appMetaBox.get(HiveMetaKeys.lastInvoiceSyncAt)?.toString();
+    final cursor = DateTime.tryParse(raw ?? '');
+    if (cursor == null) return fullSyncSales();
+    final snap = await _fs
+        .collection('invoices')
+        .where('updatedAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
+        .get();
+    FirestoreReadDiagnostics.queryResult(
+      'invoices where updatedAt >= cursor',
+      snap.docs.length,
+      trigger: 'invoice delta',
+      fromCache: snap.metadata.isFromCache,
+    );
+    for (final doc in snap.docs) {
+      await mergeCloudInvoice('invoices', doc.id, doc.data());
+    }
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+      floor: cursor,
+    );
+    await appMetaBox.put(
+        HiveMetaKeys.lastInvoiceSyncAt, checkpoint.toIso8601String());
+  }
 
   Future<void> mergeCloudBuying(String id, Map<String, dynamic>? data) =>
       LocalOperationJournal.exclusive(() async {
@@ -208,20 +251,73 @@ class InvoiceRepository {
       });
   Future<void> fullSyncReturns() async {
     final snap = await _fs.collection('returnInvoices').get();
+    FirestoreReadDiagnostics.queryResult(
+      'returnInvoices (full)',
+      snap.docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: snap.metadata.isFromCache,
+    );
     for (final doc in snap.docs) {
       await mergeCloudInvoice('returnInvoices', doc.id, doc.data());
     }
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+    );
     await appMetaBox.put(
-        HiveMetaKeys.lastReturnInvoiceSyncAt, DateTime.now().toIso8601String());
+        HiveMetaKeys.lastReturnInvoiceSyncAt, checkpoint.toIso8601String());
   }
 
-  Future<void> deltaSyncReturns() => fullSyncReturns();
+  Future<void> deltaSyncReturns() => CloudRefreshGate.run(
+        'invoices.returns.delta',
+        _deltaSyncReturns,
+      );
+
+  Future<void> _deltaSyncReturns() async {
+    final raw =
+        appMetaBox.get(HiveMetaKeys.lastReturnInvoiceSyncAt)?.toString();
+    final cursor = DateTime.tryParse(raw ?? '');
+    if (cursor == null) return fullSyncReturns();
+    final snap = await _fs
+        .collection('returnInvoices')
+        .where('updatedAt',
+            isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
+        .get();
+    FirestoreReadDiagnostics.queryResult(
+      'returnInvoices where updatedAt >= cursor',
+      snap.docs.length,
+      trigger: 'invoice delta',
+      fromCache: snap.metadata.isFromCache,
+    );
+    for (final doc in snap.docs) {
+      await mergeCloudInvoice('returnInvoices', doc.id, doc.data());
+    }
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      snap.docs.map((doc) => doc.data()),
+      const ['updatedAt'],
+      floor: cursor,
+    );
+    await appMetaBox.put(
+        HiveMetaKeys.lastReturnInvoiceSyncAt, checkpoint.toIso8601String());
+  }
 
   Future<void> fullSyncBuying() async {
     final results = await Future.wait([
       _fs.collection('buying invoices').get(),
       _fs.collectionGroup('buying invoices').get(),
     ]);
+    FirestoreReadDiagnostics.queryResult(
+      'buying invoices root (full)',
+      results[0].docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: results[0].metadata.isFromCache,
+    );
+    FirestoreReadDiagnostics.queryResult(
+      'buying invoices legacy copies (full)',
+      results[1].docs.length,
+      trigger: 'compatibility bootstrap',
+      fromCache: results[1].metadata.isFromCache,
+    );
     // Process legacy supplier subcollection copies first. The canonical root
     // document wins when both copies have the same legacy version.
     for (final doc in [...results[1].docs, ...results[0].docs]) {
@@ -252,14 +348,93 @@ class InvoiceRepository {
       if (supplierId.isNotEmpty) data['supplierId'] = supplierId;
       await mergeCloudBuying(canonicalId, data);
     }
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      [...results[1].docs, ...results[0].docs].map((doc) => doc.data()),
+      const ['updatedAt'],
+    );
     await appMetaBox.put(
       HiveMetaKeys.lastBuyingInvoiceSyncAt,
-      DateTime.now().toIso8601String(),
+      checkpoint.toIso8601String(),
     );
   }
 
-  Future<void> deltaSyncBuying() async {
-    await fullSyncBuying();
+  Future<void> deltaSyncBuying() => CloudRefreshGate.run(
+        'invoices.buying.delta',
+        _deltaSyncBuying,
+      );
+
+  Future<void> _deltaSyncBuying() async {
+    final raw =
+        appMetaBox.get(HiveMetaKeys.lastBuyingInvoiceSyncAt)?.toString();
+    final cursor = DateTime.tryParse(raw ?? '');
+    if (cursor == null) return fullSyncBuying();
+    final results = await Future.wait([
+      _fs
+          .collection('buying invoices')
+          .where('updatedAt',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
+          .get(),
+      _fs
+          .collectionGroup('buying invoices')
+          .where('updatedAt',
+              isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
+          .get(),
+    ]);
+    FirestoreReadDiagnostics.queryResult(
+      'buying invoices root where updatedAt >= cursor',
+      results[0].docs.length,
+      trigger: 'invoice delta',
+      fromCache: results[0].metadata.isFromCache,
+    );
+    FirestoreReadDiagnostics.queryResult(
+      'buying invoices legacy copies where updatedAt >= cursor',
+      results[1].docs.length,
+      trigger: 'invoice delta',
+      fromCache: results[1].metadata.isFromCache,
+    );
+    await _mergeBuyingDocuments([...results[1].docs, ...results[0].docs]);
+    final checkpoint = FirestoreSyncCheckpoint.newest(
+      [...results[1].docs, ...results[0].docs].map((doc) => doc.data()),
+      const ['updatedAt'],
+      floor: cursor,
+    );
+    await appMetaBox.put(
+      HiveMetaKeys.lastBuyingInvoiceSyncAt,
+      checkpoint.toIso8601String(),
+    );
+  }
+
+  Future<void> _mergeBuyingDocuments(
+    Iterable<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) async {
+    for (final doc in docs) {
+      final data = Map<String, dynamic>.from(doc.data());
+      final linkedId = data['invoiceId']?.toString().trim() ?? '';
+      final storedId = data['id']?.toString().trim() ?? '';
+      final canonicalId = linkedId.isNotEmpty
+          ? linkedId
+          : (storedId.isNotEmpty ? storedId : doc.id);
+      final inferredSupplierId = doc.reference.parent.parent?.id.trim() ?? '';
+      var supplierId = data['supplierId']?.toString().trim().isNotEmpty == true
+          ? data['supplierId'].toString().trim()
+          : inferredSupplierId;
+      if (supplierId.isEmpty) {
+        final supplierName =
+            data['supplierName']?.toString().trim().toLowerCase() ?? '';
+        if (supplierName.isNotEmpty) {
+          for (final supplier in suppliersBox.values) {
+            if (supplier.name.trim().toLowerCase() == supplierName) {
+              supplierId = supplier.id;
+              break;
+            }
+          }
+        }
+      }
+      data['id'] = canonicalId;
+      data['invoiceId'] = canonicalId;
+      if (supplierId.isNotEmpty) data['supplierId'] = supplierId;
+      await mergeCloudBuying(canonicalId, data);
+    }
   }
 
   Future<void> syncBuyingReturnsForSupplier(

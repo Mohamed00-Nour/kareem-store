@@ -809,8 +809,7 @@ void main() {
       expect(jsonDecode(item.attemptHistoryJson), hasLength(1));
     });
 
-    test('legacy and conflict failures require review and cannot be retried',
-        () async {
+    test('legacy failures require review and cannot be retried', () async {
       final id = await SyncQueueManager.instance.enqueue(
         operationType: 'createInvoice',
         payload: {'clientId': 'c1', 'invoiceId': 'legacy'},
@@ -824,6 +823,53 @@ void main() {
       expect(item.status, 'failed');
       expect(item.errorCategory, SyncErrorCategories.legacy);
       expect(item.nextRetryAt, isNull);
+    });
+
+    test('only safe invoice-delete conflicts can be retried', () async {
+      final editId = await SyncQueueManager.instance.enqueue(
+        operationType: 'editBuyingInvoice',
+        payload: {
+          'financialFormat': 2,
+          'invoiceId': 'purchase-edit',
+        },
+      );
+      await SyncQueueManager.instance.markFailed(editId,
+          'Concurrent change to buying invoices/purchase-edit; review before retrying');
+      expect(SyncQueueManager.instance.canRetry(syncQueueBox.get(editId)!),
+          isFalse);
+
+      final deleteId = await SyncQueueManager.instance.enqueue(
+        operationType: 'deleteBuyingInvoice',
+        payload: {
+          'financialFormat': 2,
+          'invoiceId': 'purchase-delete',
+        },
+      );
+      await SyncQueueManager.instance.markFailed(deleteId,
+          'Concurrent change to buying invoices/purchase-delete; review before retrying');
+      final deleteItem = syncQueueBox.get(deleteId)!;
+      expect(SyncQueueManager.instance.canRetry(deleteItem), isTrue);
+      expect(
+          SyncQueueManager.instance.canRetryAutomatically(deleteItem), isTrue);
+      expect(await SyncQueueManager.instance.resetToPending(deleteId), isTrue);
+      expect(syncQueueBox.get(deleteId)!.status, 'pending');
+
+      for (final operationType in [
+        'deleteInvoice',
+        'deleteReturn',
+      ]) {
+        final id = await SyncQueueManager.instance.enqueue(
+          operationType: operationType,
+          payload: {
+            'financialFormat': 2,
+            'invoiceId': '$operationType-fixture',
+          },
+        );
+        await SyncQueueManager.instance.markFailed(
+            id, 'Concurrent change to invoice; review before retrying');
+        expect(
+            SyncQueueManager.instance.canRetry(syncQueueBox.get(id)!), isTrue);
+      }
     });
 
     test('per-operation retry does not reset another failed operation',
