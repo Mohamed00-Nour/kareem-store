@@ -1,213 +1,325 @@
 import 'dart:async';
+
 import 'package:cloud_firestore/cloud_firestore.dart';
-import 'package:flutter/foundation.dart';
 
-import '../repositories/product_repository.dart';
-import '../repositories/invoice_repository.dart';
+import '../Services/customer_balance_store.dart';
+import '../Services/supplier_balance_store.dart';
+import '../local_db/hive_init.dart';
+import '../repositories/balance_history_repository.dart';
+import '../repositories/box_repository.dart';
 import '../repositories/client_repository.dart';
+import '../repositories/customer_voucher_repository.dart';
+import '../repositories/data_sync_service.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/product_repository.dart';
+import '../repositories/quote_repository.dart';
 import '../repositories/supplier_repository.dart';
-import 'sync_queue_manager.dart';
+import '../repositories/supplier_voucher_repository.dart';
+import 'financial_cloud_store.dart';
+import 'local_operation_journal.dart';
 
-/// Real-time stream listener that bridges Firestore database changes directly
-/// into local Hive boxes. Enables immediate cross-device live streaming of
-/// products stock, sales invoices, buying invoices, and client/supplier balances.
+/// Imports cloud changes into Hive without reopening every business collection
+/// on every application start.
+///
+/// Financial uploads atomically allocate a monotonically increasing receipt
+/// sequence. This service persists the last imported sequence in Hive and asks
+/// Firestore only for later receipts. An installation without a cursor performs
+/// one compatibility baseline before enabling the incremental feed.
 class RealtimeSyncService {
   RealtimeSyncService._();
-  static final RealtimeSyncService instance = RealtimeSyncService._();
+  static final instance = RealtimeSyncService._();
 
-  final FirebaseFirestore _fs = FirebaseFirestore.instance;
-
+  FirebaseFirestore get _fs => FirebaseFirestore.instance;
   final List<StreamSubscription> _subscriptions = [];
+  Future<void> _receiptWork = Future.value();
+  Future<void>? _startFuture;
+  Timer? _restartTimer;
   bool _isListening = false;
 
   bool get isListening => _isListening;
 
-  /// Starts global real-time stream listeners for key Firestore collections.
-  void startListening() {
-    if (_isListening) return;
-    _isListening = true;
+  Future<void> startListening() {
+    final running = _startFuture;
+    if (running != null) return running;
+    if (_isListening) return Future.value();
 
-    _listenToProducts();
-    _listenToSalesInvoices();
-    _listenToBuyingInvoices();
-    _listenToReturnInvoices();
-    _listenToClients();
-    _listenToSuppliers();
+    final future = _start();
+    _startFuture = future;
+    return future.whenComplete(() {
+      if (identical(_startFuture, future)) _startFuture = null;
+    });
   }
 
-  /// Cancels all active real-time listeners.
+  Future<void> _start() async {
+    try {
+      _restartTimer?.cancel();
+      var cursor = _storedSequence();
+      if (cursor == null) {
+        cursor = await _runCompatibilityBaseline();
+      } else {
+        // These collections are not all part of the financial transaction
+        // feed yet. Their existing startup sync remains until each has its own
+        // durable change event.
+        await DataSyncService.instance
+            .syncOnStartup(includeRealtimeCollections: false);
+      }
+
+      _listenForFinancialReceipts(cursor);
+
+      // Non-financial product writers publish updatedAt. This filtered listener
+      // imports only later product changes; invoice stock changes also arrive
+      // through the sequenced receipt feed.
+      _listenProducts();
+      _isListening = true;
+      await appMetaBox.delete('cloudRefreshError');
+    } catch (error) {
+      _isListening = false;
+      await appMetaBox.put('cloudRefreshError', error.toString());
+    }
+  }
+
+  int? _storedSequence() {
+    final raw = appMetaBox.get(HiveMetaKeys.financialChangeSequence);
+    return raw is num ? raw.toInt() : int.tryParse(raw?.toString() ?? '');
+  }
+
+  /// Establishes a safe point before downloading the legacy baseline. Changes
+  /// committed after that point are replayed by the receipt listener, so a
+  /// concurrent Device A upload cannot fall between the baseline and cursor.
+  Future<int> _runCompatibilityBaseline() async {
+    final headSnapshot =
+        await _fs.doc(FinancialCloudUploader.feedHeadPath).get();
+    final head = (headSnapshot.data()?['lastSequence'] as num?)?.toInt() ?? 0;
+
+    await DataSyncService.instance
+        .syncOnStartup(includeRealtimeCollections: true);
+    final syncError = appMetaBox.get('cloudRefreshError');
+    if (syncError != null) throw StateError(syncError.toString());
+
+    // DataSyncService hydrates balance events but legacy statement rows live in
+    // a separate collection group. Import those once for a new installation.
+    final histories = await _fs.collectionGroup('balanceHistory').get();
+    for (final doc in histories.docs) {
+      final parent = doc.reference.parent.parent;
+      if (parent == null) continue;
+      if (parent.parent.id == 'clients') {
+        await BalanceHistoryRepository.instance
+            .mergeCloudClientHistory(parent.id, doc.id, doc.data());
+      } else if (parent.parent.id == 'suppliers') {
+        await BalanceHistoryRepository.instance
+            .mergeCloudSupplierHistory(parent.id, doc.id, doc.data());
+      }
+    }
+
+    await appMetaBox.put(HiveMetaKeys.financialChangeSequence, head);
+    await appMetaBox.flush();
+    return head;
+  }
+
+  void _listenForFinancialReceipts(int cursor) {
+    final query = _fs
+        .collection('financial_operation_receipts')
+        .where('sequence', isGreaterThan: cursor)
+        .orderBy('sequence');
+    _subscriptions.add(query.snapshots().listen((snapshot) {
+      // Stream callbacks do not await async listeners. Chain snapshots so a
+      // later receipt can never advance the cursor past a failed earlier one.
+      _receiptWork = _receiptWork.then((_) async {
+        final added = snapshot.docChanges
+            .where((change) => change.type == DocumentChangeType.added)
+            .map((change) => change.doc)
+            .toList()
+          ..sort((a, b) => _receiptSequence(a.data() ?? const {})
+              .compareTo(_receiptSequence(b.data() ?? const {})));
+        for (final doc in added) {
+          final data = doc.data();
+          if (data != null) await _importReceipt(doc.id, data);
+        }
+      }).catchError((Object error) async {
+        await appMetaBox.put('cloudRefreshError', error.toString());
+        await stopListening();
+      });
+    }, onError: _handleStreamError));
+  }
+
+  static int _receiptSequence(Map<String, dynamic> data) =>
+      (data['sequence'] as num?)?.toInt() ?? 0;
+
+  Future<void> _importReceipt(
+      String receiptId, Map<String, dynamic> receipt) async {
+    final sequence = _receiptSequence(receipt);
+    final current = _storedSequence() ?? 0;
+    if (sequence <= current) return;
+
+    final versions = Map<String, dynamic>.from(
+        receipt['versions'] as Map? ?? const <String, dynamic>{});
+    final paths = versions.keys.toList()
+      ..sort((a, b) => a.split('/').length.compareTo(b.split('/').length));
+    for (final path in paths) {
+      if (!_isLocallyCachedPath(path)) continue;
+      final data = (await _fs.doc(path).get()).data();
+      await _mergePath(path, data);
+    }
+
+    final operationId = receipt['operationId']?.toString().isNotEmpty == true
+        ? receipt['operationId'].toString()
+        : receiptId;
+    for (final rawId in receipt['customerIds'] as List? ?? const []) {
+      final clientId = rawId.toString();
+      final event = (await _fs
+              .doc('clients/$clientId/financialOperations/$operationId')
+              .get())
+          .data();
+      if (event != null) {
+        await LocalOperationJournal.exclusive(() =>
+            CustomerBalanceStore.importEvent(clientId, operationId, event));
+      }
+    }
+    for (final rawId in receipt['supplierIds'] as List? ?? const []) {
+      final supplierId = rawId.toString();
+      final event = (await _fs
+              .doc('suppliers/$supplierId/financialOperations/$operationId')
+              .get())
+          .data();
+      if (event != null) {
+        await LocalOperationJournal.exclusive(() =>
+            SupplierBalanceStore.importEvent(supplierId, operationId, event));
+      }
+    }
+
+    // Advance only after every affected Hive record is durable. A crash before
+    // this write safely replays the idempotent receipt on the next start.
+    await appMetaBox.put(HiveMetaKeys.financialChangeSequence, sequence);
+    await appMetaBox.flush();
+  }
+
+  static bool _isLocallyCachedPath(String path) {
+    final parts = path.split('/');
+    if (parts.length == 2) {
+      return const {
+        'products',
+        'invoices',
+        'returnInvoices',
+        'clients',
+        'price_quotes',
+        'client_vouchers',
+        'supplier_vouchers',
+        'suppliers',
+        'buying invoices',
+        'box',
+      }.contains(parts.first);
+    }
+    return parts.length == 4 && parts[2] == 'balanceHistory';
+  }
+
+  Future<void> _mergePath(String path, Map<String, dynamic>? data) async {
+    final parts = path.split('/');
+    if (parts.length == 4 && parts[2] == 'balanceHistory') {
+      if (parts[0] == 'clients') {
+        await BalanceHistoryRepository.instance
+            .mergeCloudClientHistory(parts[1], parts[3], data);
+      } else if (parts[0] == 'suppliers') {
+        await BalanceHistoryRepository.instance
+            .mergeCloudSupplierHistory(parts[1], parts[3], data);
+      }
+      return;
+    }
+    if (parts.length != 2) return;
+    switch (parts[0]) {
+      case 'products':
+        await ProductRepository.instance.mergeCloud(parts[1], data);
+        break;
+      case 'invoices':
+      case 'returnInvoices':
+        await InvoiceRepository.instance
+            .mergeCloudInvoice(parts[0], parts[1], data);
+        break;
+      case 'clients':
+        await ClientRepository.instance.mergeCloud(parts[1], data);
+        break;
+      case 'price_quotes':
+        await QuoteRepository.instance.mergeCloud(parts[1], data);
+        break;
+      case 'client_vouchers':
+        await CustomerVoucherRepository.mergeCloud(parts[1], data);
+        break;
+      case 'supplier_vouchers':
+        await SupplierVoucherRepository.mergeCloud(parts[1], data);
+        break;
+      case 'suppliers':
+        await SupplierRepository.instance.mergeCloud(parts[1], data);
+        break;
+      case 'buying invoices':
+        await InvoiceRepository.instance.mergeCloudBuying(parts[1], data);
+        break;
+      case 'box':
+        if (data != null) await BoxRepository.instance.mergeCloud(data);
+        break;
+    }
+  }
+
+  void _listenProducts() {
+    final rawCursor =
+        appMetaBox.get(HiveMetaKeys.lastProductSyncAt)?.toString();
+    final cursor = DateTime.tryParse(rawCursor ?? '');
+    Query<Map<String, dynamic>> query = _fs.collection('products');
+    if (cursor != null) {
+      query = query.where(
+        'updatedAt',
+        isGreaterThan: Timestamp.fromDate(cursor),
+      );
+    }
+    _subscriptions.add(query.snapshots().listen(
+      (snapshot) async {
+        try {
+          DateTime? newest;
+          for (final change in snapshot.docChanges) {
+            final data = change.doc.data();
+            await ProductRepository.instance.mergeCloud(
+              change.doc.id,
+              change.type == DocumentChangeType.removed ? null : data,
+            );
+            final updatedAt = data?['updatedAt'];
+            final changedAt = updatedAt is Timestamp
+                ? updatedAt.toDate()
+                : updatedAt is DateTime
+                    ? updatedAt
+                    : null;
+            if (changedAt != null &&
+                (newest == null || changedAt.isAfter(newest))) {
+              newest = changedAt;
+            }
+          }
+          if (!snapshot.metadata.isFromCache && newest != null) {
+            await appMetaBox.put(
+              HiveMetaKeys.lastProductSyncAt,
+              newest.toIso8601String(),
+            );
+          }
+        } catch (error) {
+          await appMetaBox.put('cloudRefreshError', error.toString());
+        }
+      },
+      onError: _handleStreamError,
+    ));
+  }
+
+  void _handleStreamError(Object error) {
+    appMetaBox.put('cloudRefreshError', error.toString());
+    unawaited(stopListening().whenComplete(() {
+      _restartTimer?.cancel();
+      _restartTimer = Timer(
+        const Duration(minutes: 1),
+        () => unawaited(startListening()),
+      );
+    }));
+  }
+
   Future<void> stopListening() async {
     for (final sub in _subscriptions) {
       await sub.cancel();
     }
     _subscriptions.clear();
     _isListening = false;
-  }
-
-  // ── 1. Products Stream ───────────────────────────────────────────────────
-  void _listenToProducts() {
-    final sub = _fs.collection('products').snapshots().listen(
-      (snapshot) {
-        final Map<String, Map<String, dynamic>> toUpsert = {};
-        for (final change in snapshot.docChanges) {
-          final docId = change.doc.id;
-          final data = change.doc.data();
-          if (change.type == DocumentChangeType.removed) {
-            ProductRepository.instance.deleteLocal(docId);
-          } else if (data != null) {
-            toUpsert[docId] = data;
-          }
-        }
-        if (toUpsert.isNotEmpty) {
-          ProductRepository.instance.upsertAllLocal(toUpsert);
-        }
-      },
-      onError: (e) {
-        debugPrint('RealtimeSyncService products error: $e');
-      },
-    );
-    _subscriptions.add(sub);
-  }
-
-  // ── 2. Sales Invoices Stream ──────────────────────────────────────────────
-  void _listenToSalesInvoices() {
-    final sub = _fs.collection('invoices').snapshots().listen(
-      (snapshot) {
-        final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
-          operationType: 'updateInvoiceSpecial',
-          idKey: 'invoiceId',
-        );
-        for (final change in snapshot.docChanges) {
-          final docId = change.doc.id;
-          final data = change.doc.data();
-          if (pendingSpecialIds.contains(docId)) continue;
-          if (change.type == DocumentChangeType.removed) {
-            InvoiceRepository.instance.deleteSaleLocal(docId);
-          } else if (data != null) {
-            InvoiceRepository.instance.upsertSaleLocal(docId, data);
-          }
-        }
-      },
-      onError: (e) {
-        debugPrint('RealtimeSyncService sales invoices error: $e');
-      },
-    );
-    _subscriptions.add(sub);
-  }
-
-  // ── 3. Buying Invoices Stream ─────────────────────────────────────────────
-  void _listenToBuyingInvoices() {
-    final sub = _fs.collection('buying invoices').snapshots().listen(
-      (snapshot) {
-        final locallyWrittenIds = <String>{
-          ...SyncQueueManager.instance.unfinishedEntityIds(
-            operationType: 'createBuyingInvoice',
-            idKey: 'invoiceId',
-          ),
-          ...SyncQueueManager.instance.unfinishedEntityIds(
-            operationType: 'editBuyingInvoice',
-            idKey: 'invoiceId',
-          ),
-        };
-        final locallyDeletedIds = <String>{
-          ...SyncQueueManager.instance.unfinishedEntityIds(
-            operationType: 'deleteBuyingInvoice',
-            idKey: 'invoiceId',
-          ),
-          ...SyncQueueManager.instance.unfinishedEntityIds(
-            operationType: 'deleteBuyingInvoice',
-            idKey: 'supplierSubDocId',
-          ),
-        };
-        for (final change in snapshot.docChanges) {
-          final docId = change.doc.id;
-          final data = change.doc.data();
-          final canonicalId = data?['invoiceId']?.toString().trim() ?? docId;
-          if (locallyWrittenIds.contains(docId) ||
-              locallyWrittenIds.contains(canonicalId) ||
-              locallyDeletedIds.contains(docId) ||
-              locallyDeletedIds.contains(canonicalId)) {
-            continue;
-          }
-          if (change.type == DocumentChangeType.removed) {
-            InvoiceRepository.instance.deleteBuyingLocal(docId);
-          } else if (data != null) {
-            InvoiceRepository.instance.upsertBuyingLocal(docId, data);
-          }
-        }
-      },
-      onError: (e) {
-        debugPrint('RealtimeSyncService buying invoices error: $e');
-      },
-    );
-    _subscriptions.add(sub);
-  }
-
-  // ── 4. Return Invoices Stream ─────────────────────────────────────────────
-  void _listenToReturnInvoices() {
-    final sub = _fs.collection('returnInvoices').snapshots().listen(
-      (snapshot) {
-        final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
-          operationType: 'updateInvoiceSpecial',
-          idKey: 'invoiceId',
-        );
-        for (final change in snapshot.docChanges) {
-          final docId = change.doc.id;
-          final data = change.doc.data();
-          if (pendingSpecialIds.contains(docId)) continue;
-          if (change.type == DocumentChangeType.removed) {
-            InvoiceRepository.instance.deleteReturnLocal(docId);
-          } else if (data != null) {
-            InvoiceRepository.instance.upsertReturnLocal(docId, data);
-          }
-        }
-      },
-      onError: (e) {
-        debugPrint('RealtimeSyncService return invoices error: $e');
-      },
-    );
-    _subscriptions.add(sub);
-  }
-
-  // ── 5. Clients Stream ─────────────────────────────────────────────────────
-  void _listenToClients() {
-    final sub = _fs.collection('clients').snapshots().listen(
-      (snapshot) {
-        for (final change in snapshot.docChanges) {
-          final docId = change.doc.id;
-          final data = change.doc.data();
-          if (change.type == DocumentChangeType.removed) {
-            ClientRepository.instance.deleteLocal(docId);
-          } else if (data != null) {
-            ClientRepository.instance.upsertLocal(docId, data);
-          }
-        }
-      },
-      onError: (e) {
-        debugPrint('RealtimeSyncService clients error: $e');
-      },
-    );
-    _subscriptions.add(sub);
-  }
-
-  // ── 6. Suppliers Stream ───────────────────────────────────────────────────
-  void _listenToSuppliers() {
-    final sub = _fs.collection('suppliers').snapshots().listen(
-      (snapshot) {
-        for (final change in snapshot.docChanges) {
-          final docId = change.doc.id;
-          final data = change.doc.data();
-          if (change.type == DocumentChangeType.removed) {
-            SupplierRepository.instance.deleteLocal(docId);
-          } else if (data != null) {
-            SupplierRepository.instance.upsertLocal(docId, data);
-          }
-        }
-      },
-      onError: (e) {
-        debugPrint('RealtimeSyncService suppliers error: $e');
-      },
-    );
-    _subscriptions.add(sub);
   }
 }

@@ -1,11 +1,11 @@
 import 'dart:ui' as ui;
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../Widgets/date_range_selector.dart';
-import '../expenses/expense_service.dart';
+import '../repositories/expense_repository.dart';
+import '../repositories/invoice_repository.dart';
 import 'TodayInvoicesPage.dart';
 
 class SalesReportPage extends StatefulWidget {
@@ -71,49 +71,42 @@ class _SalesReportPageState extends State<SalesReportPage> {
       _result = null;
     });
 
-    final start = DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
+    final start =
+        DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
     final end =
         DateTime(_endDate!.year, _endDate!.month, _endDate!.day, 23, 59, 59);
 
     try {
-      final invoicesSnap = await FirebaseFirestore.instance
-          .collection('invoices')
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('date', isLessThanOrEqualTo: Timestamp.fromDate(end))
-          .get();
+      final invoices = InvoiceRepository.instance
+          .getAllSales()
+          .where((invoice) =>
+              !invoice.date.isBefore(start) && !invoice.date.isAfter(end))
+          .toList();
 
       double totalSales = 0;
       double totalProfit = 0;
       double totalPaid = 0;
       double totalBalance = 0;
-      final invoiceCount = invoicesSnap.docs.length;
+      final invoiceCount = invoices.length;
 
-      for (final doc in invoicesSnap.docs) {
-        final data = doc.data();
-        totalSales += (data['totalSum'] ?? 0.0).toDouble();
-        totalProfit += (data['profitMargin'] ?? 0.0).toDouble();
-        totalPaid += (data['paidAmount'] ?? 0.0).toDouble();
-        totalBalance += (data['balance'] ?? 0.0).toDouble();
+      for (final invoice in invoices) {
+        totalSales += invoice.totalSum;
+        totalProfit += invoice.profitMargin;
+        totalPaid += invoice.paidAmount;
+        totalBalance += invoice.balance;
       }
 
-      final buyingSnap = await FirebaseFirestore.instance
-          .collection('buying invoices')
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('date', isLessThanOrEqualTo: Timestamp.fromDate(end))
-          .get();
+      final buyingTotal = InvoiceRepository.instance
+          .getAllBuying()
+          .where((invoice) =>
+              !invoice.date.isBefore(start) && !invoice.date.isAfter(end))
+          .fold<double>(0, (sum, invoice) => sum + invoice.totalSum);
 
-      double buyingTotal = 0;
-      for (final doc in buyingSnap.docs) {
-        buyingTotal += (doc.data()['totalSum'] ?? 0.0).toDouble();
-      }
-
-      final expensesSnap =
-          await FirebaseFirestore.instance.collection('expenses').get();
-      final periodExpenses = ExpenseService.sumExpensesDocs(
-        expensesSnap.docs,
-        start: start,
-        end: end,
-      );
+      final periodExpenses = ExpenseRepository.instance
+          .getAll()
+          .where((expense) =>
+              !expense.date.isBefore(start) && !expense.date.isAfter(end))
+          .fold<double>(0, (sum, expense) => sum + expense.amount);
 
       if (!mounted) return;
       setState(() {
@@ -158,7 +151,8 @@ class _SalesReportPageState extends State<SalesReportPage> {
           iconTheme: const IconThemeData(color: Colors.white),
         ),
         body: _loading && _result == null
-            ? const Center(child: CircularProgressIndicator(color: Colors.orange))
+            ? const Center(
+                child: CircularProgressIndicator(color: Colors.orange))
             : RefreshIndicator(
                 color: Colors.orange,
                 onRefresh: _fetchReport,
@@ -197,7 +191,8 @@ class _SalesReportPageState extends State<SalesReportPage> {
                           Expanded(
                             child: ElevatedButton(
                               style: ElevatedButton.styleFrom(
-                                backgroundColor: Colors.orange.withOpacity(0.85),
+                                backgroundColor:
+                                    Colors.orange.withOpacity(0.85),
                                 foregroundColor: Colors.black.withOpacity(0.8),
                                 shape: RoundedRectangleBorder(
                                     borderRadius: BorderRadius.circular(12.r)),
@@ -241,9 +236,9 @@ class _SalesReportPageState extends State<SalesReportPage> {
                                 unit: 'ج.م'),
                             _SummaryRow(
                                 label: 'هامش الربح (قبل المصروفات)',
-                                value:
-                                    (_result!['grossProfit'] ?? _result!['totalProfit']!)
-                                        .toStringAsFixed(2),
+                                value: (_result!['grossProfit'] ??
+                                        _result!['totalProfit']!)
+                                    .toStringAsFixed(2),
                                 unit: 'ج.م'),
                             _SummaryRow(
                                 label: 'المصروفات',
@@ -252,19 +247,20 @@ class _SalesReportPageState extends State<SalesReportPage> {
                                 isDebt: true),
                             _SummaryRow(
                                 label: 'صافي الربح (بعد المصروفات)',
-                                value:
-                                    (_result!['netProfit'] ?? _result!['totalProfit']!)
-                                        .toStringAsFixed(2),
+                                value: (_result!['netProfit'] ??
+                                        _result!['totalProfit']!)
+                                    .toStringAsFixed(2),
                                 unit: 'ج.م',
                                 highlight: true),
                             _SummaryRow(
                                 label: 'المبالغ المحصلة',
-                                value: _result!['totalPaid']!.toStringAsFixed(2),
+                                value:
+                                    _result!['totalPaid']!.toStringAsFixed(2),
                                 unit: 'ج.م'),
                             _SummaryRow(
                                 label: 'الديون المتبقية',
-                                value:
-                                    _result!['totalBalance']!.toStringAsFixed(2),
+                                value: _result!['totalBalance']!
+                                    .toStringAsFixed(2),
                                 unit: 'ج.م',
                                 isDebt: true),
                           ],
@@ -317,8 +313,7 @@ class _SummaryCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       elevation: 3,
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(14.r)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14.r)),
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(

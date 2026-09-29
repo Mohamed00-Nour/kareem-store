@@ -3,6 +3,8 @@ import '../local_db/hive_init.dart';
 import '../local_db/models/product_local.dart';
 import '../sync/sync_queue_manager.dart';
 import '../utils/entity_name_normalizer.dart';
+import '../sync/cloud_snapshot_guard.dart';
+import '../sync/local_operation_journal.dart';
 
 /// Repository for Product data.
 ///
@@ -52,40 +54,84 @@ class ProductRepository {
 
   ProductLocal? getById(String id) => productsBox.get(id);
 
+  /// Renames a cached product and records the cloud update in the durable
+  /// journal before exposing it as a pending sync operation.
+  Future<void> renameLocalFirst(String productId, String newName) async {
+    final existing = getById(productId);
+    if (existing == null) {
+      throw StateError('Product must be cached before renaming: $productId');
+    }
+    final trimmedName = newName.trim();
+    if (trimmedName.isEmpty) {
+      throw ArgumentError.value(newName, 'newName');
+    }
+
+    final localAfter = {
+      ...existing.toMap(),
+      'name': trimmedName,
+      'updatedAt': DateTime.now(),
+    };
+    await LocalOperationJournal.commit((_) async => {
+          'operationType': 'editProduct',
+          'productId': productId,
+          'data': {'name': trimmedName},
+          'localWrites': [
+            {
+              'box': HiveBoxNames.products,
+              'key': productId,
+              'data': localAfter,
+            }
+          ],
+        });
+  }
+
   // ── Sync ──────────────────────────────────────────────────────────────────
 
   /// Performs a **full** initial sync from Firestore → Hive.
   /// Only call this once (first launch or after clearing app data).
   Future<void> fullSync() async {
+    final startedAt = DateTime.now();
     final snap = await _fs.collection('products').get();
-    final box = productsBox;
-    final pendingIds = SyncQueueManager.instance.unfinishedEntityIds(
-      operationType: 'createProduct',
-      idKey: 'productId',
-    );
-    final Map<String, ProductLocal> entries = {};
     for (final doc in snap.docs) {
-      final data = doc.data();
-      entries[doc.id] = ProductLocal.fromFirestore(doc.id, data);
+      await mergeCloud(doc.id, doc.data());
     }
-    final staleKeys = box.keys
-        .where((key) =>
-            !entries.containsKey(key.toString()) &&
-            !pendingIds.contains(key.toString()))
-        .toList(growable: false);
-    await box.deleteAll(staleKeys);
-    await box.putAll(entries);
-    appMetaBox.put(
-      HiveMetaKeys.lastProductSyncAt,
-      DateTime.now().toIso8601String(),
-    );
+    await appMetaBox.put(
+        HiveMetaKeys.lastProductSyncAt, startedAt.toIso8601String());
   }
 
-  /// Delta sync — fetches products into Hive.
-  /// Performs fullSync to guarantee complete product list caching because product documents
-  /// in Firestore may not contain an updatedAt field.
+  Future<void> mergeCloud(String id, Map<String, dynamic>? data) =>
+      LocalOperationJournal.exclusive(() async {
+        final path = 'products/' + id;
+        if (!CloudSnapshotGuard.accepts(path, data)) return;
+        if (data == null || data['_deleted'] == true)
+          await deleteLocal(id);
+        else
+          await upsertLocal(id, data);
+        if (data != null) await CloudSnapshotGuard.record(path, data);
+      });
+
+  /// Fetches only product documents changed after the initial compatibility
+  /// baseline. All current product writers maintain `updatedAt`; invoice stock
+  /// changes are additionally delivered through the financial receipt feed.
   Future<void> deltaSync() async {
-    await fullSync();
+    final raw = appMetaBox.get(HiveMetaKeys.lastProductSyncAt)?.toString();
+    final cursor = DateTime.tryParse(raw ?? '');
+    if (cursor == null) {
+      await fullSync();
+      return;
+    }
+    final startedAt = DateTime.now();
+    final snap = await _fs
+        .collection('products')
+        .where('updatedAt', isGreaterThan: Timestamp.fromDate(cursor))
+        .get();
+    for (final doc in snap.docs) {
+      await mergeCloud(doc.id, doc.data());
+    }
+    await appMetaBox.put(
+      HiveMetaKeys.lastProductSyncAt,
+      startedAt.toIso8601String(),
+    );
   }
 
   /// Updates a single product in the local cache (call after saving to Firestore).

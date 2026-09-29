@@ -18,6 +18,8 @@ import 'Invoices/SpecialInvoicesPage.dart';
 import '../expenses/ExpensesPage.dart';
 import 'ChangeCredentialsPage.dart';
 import '../sync/ui/sync_status_badge.dart';
+import '../sync/sync_queue_manager.dart';
+import '../sync/ui/sync_exit_dialog.dart';
 import '../Services/printer_settings_service.dart';
 import '../models/printer_settings.dart';
 
@@ -28,57 +30,13 @@ class HomePage extends StatelessWidget {
   const HomePage({super.key, this.handleBackButton = true});
 
   static Future<bool> confirmExit(BuildContext context) async {
-    return await showDialog<bool>(
-          context: context,
-          builder: (context) => AlertDialog(
-            backgroundColor: const Color(0xffead1ac),
-            shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(15.0.r),
-            ),
-            title: Text(
-              'الخروج من التطبيق',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: Colors.black.withOpacity(0.7),
-                fontWeight: FontWeight.bold,
-                fontSize: 20.sp,
-              ),
-            ),
-            content: Text(
-              'هل تريد حقا الخروج من التطبيق ؟',
-              textAlign: TextAlign.right,
-              style: TextStyle(
-                color: Colors.black.withOpacity(0.7),
-                fontSize: 18.sp,
-              ),
-            ),
-            actions: <Widget>[
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(false),
-                child: Text(
-                  'لا',
-                  style: TextStyle(
-                    fontSize: 15.sp,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black.withOpacity(0.7),
-                  ),
-                ),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(true),
-                child: Text(
-                  'نعم',
-                  style: TextStyle(
-                    fontSize: 15.sp,
-                    fontWeight: FontWeight.bold,
-                    color: Colors.black.withOpacity(0.7),
-                  ),
-                ),
-              ),
-            ],
-          ),
-        ) ??
-        false;
+    final uploading = SyncQueueManager.instance.hasSyncingItems;
+    final unfinished = SyncQueueManager.instance.pendingCount;
+    return showSyncAwareExitDialog(
+      context,
+      uploading: uploading,
+      unfinishedCount: unfinished,
+    );
   }
 
   /// Confirms leaving a pushed screen (sales, purchases, etc.).

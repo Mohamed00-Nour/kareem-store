@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/box_local.dart';
+import '../sync/cloud_snapshot_guard.dart';
+import '../sync/local_operation_journal.dart';
 
 /// Repository for the main cash box (`box/mainBox`).
 ///
@@ -43,15 +45,18 @@ class BoxRepository {
     await setValue(current - amount);
   }
 
+  Future<void> mergeCloud(Map<String, dynamic> data) =>
+      LocalOperationJournal.exclusive(() async {
+        if (!CloudSnapshotGuard.accepts('box/mainBox', data)) return;
+        await boxCacheBox.put(
+            _mainBoxId, BoxLocal.fromFirestore(_mainBoxId, data));
+        await CloudSnapshotGuard.record('box/mainBox', data);
+      });
+
   Future<void> fullSync() async {
     try {
       final doc = await _fs.collection('box').doc(_mainBoxId).get();
-      if (doc.exists && doc.data() != null) {
-        await boxCacheBox.put(
-          _mainBoxId,
-          BoxLocal.fromFirestore(_mainBoxId, doc.data()!),
-        );
-      }
+      if (doc.exists && doc.data() != null) await mergeCloud(doc.data()!);
     } catch (_) {}
   }
 }

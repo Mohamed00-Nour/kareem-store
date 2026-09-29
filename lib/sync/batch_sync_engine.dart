@@ -1,3 +1,10 @@
+import '../repositories/invoice_repository.dart';
+import '../repositories/box_repository.dart';
+import '../repositories/quote_repository.dart';
+import '../repositories/customer_voucher_repository.dart';
+import '../repositories/supplier_voucher_repository.dart';
+import '../Services/customer_balance_store.dart';
+import '../Services/supplier_balance_store.dart';
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
@@ -6,9 +13,12 @@ import '../repositories/product_repository.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/supplier_repository.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
-import '../Services/client_invoice_balance_sync_service.dart';
 import 'sync_queue_manager.dart';
+import 'sync_operation_diagnostics.dart';
 import 'invoice_sync_normalizer.dart';
+import 'financial_cloud_store.dart';
+import 'cloud_snapshot_guard.dart';
+import 'local_operation_journal.dart';
 
 /// Processes the [SyncQueueManager] queue and uploads operations to Firestore.
 ///
@@ -21,6 +31,8 @@ import 'invoice_sync_normalizer.dart';
 /// Retry strategy: exponential backoff  1s → 2s → 4s → 8s → 16s (max 5 tries).
 class BatchSyncEngine {
   BatchSyncEngine._();
+  BatchSyncEngine.forTesting(this.cloudStore);
+  FinancialCloudStore? cloudStore;
   static final BatchSyncEngine instance = BatchSyncEngine._();
 
   static const int _maxRetries = 5;
@@ -37,14 +49,28 @@ class BatchSyncEngine {
     if (_isRunning) return;
     _isRunning = true;
     try {
+      await LocalOperationJournal.recover();
       await SyncQueueManager.instance.recoverInterruptedItems();
       final pending = SyncQueueManager.instance.getPending();
+      final blocked = <SyncOperationDiagnostics>[];
       for (final item in pending) {
-        if (item.retryCount >= _maxRetries) {
-          // Exhausted retries — leave as 'failed', don't block others.
+        final diagnostics = SyncOperationDiagnostics.fromItem(item);
+        if (blocked
+            .any((predecessor) => SyncOperationDiagnostics.sharesResources(
+                  predecessor,
+                  diagnostics,
+                ))) {
+          blocked.add(diagnostics);
           continue;
         }
-        await _processItem(item);
+        if (item.retryCount >= _maxRetries ||
+            !SyncQueueManager.instance
+                .isReadyForAutomaticAttempt(item, DateTime.now())) {
+          blocked.add(diagnostics);
+          continue;
+        }
+        final succeeded = await _processItem(item);
+        if (!succeeded) blocked.add(diagnostics);
       }
     } finally {
       _isRunning = false;
@@ -53,21 +79,158 @@ class BatchSyncEngine {
 
   // ── Item Processor ────────────────────────────────────────────────────────
 
-  Future<void> _processItem(SyncQueueItem item) async {
+  Future<bool> _processItem(SyncQueueItem item) async {
     await SyncQueueManager.instance.markSyncing(item.operationId);
     try {
       final payload = SyncQueueManager.decodePayload(item);
-      await _dispatch(item.operationType, payload, item.operationId);
+      if (payload['financialFormat'] == 2) {
+        final receipt = await FinancialCloudUploader.upload(item.operationId,
+                payload, cloudStore ?? FirestoreFinancialCloudStore())
+            .timeout(const Duration(seconds: 35));
+        await LocalOperationJournal.exclusive(() async {
+          await CloudSnapshotGuard.acknowledge(receipt);
+        });
+      } else {
+        if ([
+          'createClient',
+          'createInvoice',
+          'editInvoice',
+          'deleteInvoice',
+          'createReturn',
+          'deleteReturn',
+          'deleteReturnInvoice',
+          'adjustClientBalance',
+          'updateBox',
+          'createSupplier',
+          'createBuyingInvoice',
+          'editBuyingInvoice',
+          'deleteBuyingInvoice',
+          'adjustSupplierBalance'
+        ].contains(item.operationType)) {
+          throw StateError(
+              'Legacy financial operation requires review before upload. '
+              'Keep this queue item and compare its local effects with cloud records; '
+              'see docs/OFFLINE_BALANCE_AUDIT.md. Automatic retry is unsafe.');
+        }
+        await _dispatch(item.operationType, payload, item.operationId);
+      }
       await SyncQueueManager.instance.markSynced(item.operationId);
+      if (payload['financialFormat'] == 2) {
+        // Refresh after acknowledgement: listeners may have delivered a newer
+        // snapshot while this path was protected by the pending operation.
+        try {
+          await _refreshFinancialState(payload, item.operationId);
+        } catch (error) {
+          await appMetaBox.put('cloudRefreshError', error.toString());
+        }
+      }
       _updateLastSyncMeta(item.operationType);
+      return true;
     } catch (e) {
       await SyncQueueManager.instance.markFailed(
         item.operationId,
-        e.toString(),
+        e,
       );
-      // Exponential backoff before next item (1s, 2s, 4s…)
-      final backoff = Duration(seconds: 1 << item.retryCount.clamp(0, 4));
-      await Future.delayed(backoff);
+      return false;
+    }
+  }
+
+  Future<void> _refreshFinancialState(
+      Map<String, dynamic> payload, String operationId) async {
+    final store = cloudStore ?? FirestoreFinancialCloudStore();
+    for (final write in payload['cloudWrites'] as List) {
+      final path = write['path'] as String;
+      final parts = path.split('/');
+      if (parts.length != 2) continue;
+      final data =
+          await store.readDocument(path).timeout(const Duration(seconds: 15));
+      switch (parts[0]) {
+        case 'products':
+          await ProductRepository.instance.mergeCloud(parts[1], data);
+          break;
+        case 'invoices':
+        case 'returnInvoices':
+          await InvoiceRepository.instance
+              .mergeCloudInvoice(parts[0], parts[1], data);
+          break;
+        case 'buying invoices':
+          await InvoiceRepository.instance.mergeCloudBuying(parts[1], data);
+          break;
+        case 'box':
+          if (data != null) await BoxRepository.instance.mergeCloud(data);
+          break;
+        case 'price_quotes':
+          await QuoteRepository.instance.mergeCloud(parts[1], data);
+          break;
+        case 'client_vouchers':
+          await CustomerVoucherRepository.mergeCloud(parts[1], data);
+          break;
+        case 'supplier_vouchers':
+          await SupplierVoucherRepository.mergeCloud(parts[1], data);
+          break;
+      }
+    }
+    for (final clientId in (payload['customerDeltas'] as Map).keys) {
+      final event = await store
+          .readDocument('clients/$clientId/financialOperations/$operationId')
+          .timeout(const Duration(seconds: 15));
+      await LocalOperationJournal.exclusive(() async {
+        if (event != null) {
+          await CustomerBalanceStore.importEvent(
+              clientId.toString(), operationId, event);
+        }
+      });
+      final customer = await store.readDocument('clients/$clientId');
+      await ClientRepository.instance.mergeCloud(clientId.toString(), customer);
+      if (customer != null &&
+          (syncDouble(customer['balance']) -
+                      CustomerBalanceStore.balance(clientId.toString()))
+                  .abs() >
+              0.001) {
+        // Compatibility fallback for a concurrent write from an older app
+        // version that did not publish a sequenced receipt.
+        final events = await store
+            .readCustomerEvents(clientId.toString())
+            .timeout(const Duration(seconds: 15));
+        await LocalOperationJournal.exclusive(() async {
+          for (final entry in events.entries) {
+            await CustomerBalanceStore.importEvent(
+                clientId.toString(), entry.key, entry.value);
+          }
+        });
+      }
+    }
+    for (final supplierId
+        in (payload['supplierDeltas'] as Map? ?? const {}).keys) {
+      final event = await store
+          .readDocument(
+              'suppliers/$supplierId/financialOperations/$operationId')
+          .timeout(const Duration(seconds: 15));
+      await LocalOperationJournal.exclusive(() async {
+        if (event != null) {
+          await SupplierBalanceStore.importEvent(
+              supplierId.toString(), operationId, event);
+        }
+      });
+      final supplier =
+          await store.readDocument('suppliers/${supplierId.toString()}');
+      await SupplierRepository.instance
+          .mergeCloud(supplierId.toString(), supplier);
+      if (supplier != null &&
+          (syncDouble(supplier['totalBalance'] ?? supplier['balance']) -
+                      SupplierBalanceStore.balance(supplierId.toString()))
+                  .abs() >
+              0.001) {
+        final events = await store
+            .readSupplierEvents(supplierId.toString())
+            .timeout(const Duration(seconds: 15));
+        await LocalOperationJournal.exclusive(() async {
+          for (final entry in events.entries) {
+            await SupplierBalanceStore.importEvent(
+                supplierId.toString(), entry.key, entry.value);
+          }
+        });
+      }
     }
   }
 
@@ -201,6 +364,15 @@ class BatchSyncEngine {
       case 'deletePaymentBreakdown':
         await _syncDeletePaymentBreakdown(payload);
         break;
+      case 'createDepartment':
+        await _syncCreateDepartment(payload);
+        break;
+      case 'editDepartment':
+        await _syncEditDepartment(payload);
+        break;
+      case 'deleteDepartment':
+        await _syncDeleteDepartment(payload);
+        break;
       default:
         throw UnsupportedError('Unknown operation type: $operationType');
     }
@@ -257,6 +429,8 @@ class BatchSyncEngine {
     final id = payload['id']?.toString() ?? '';
     if (id.isEmpty) return;
     final data = Map<String, dynamic>.from(payload['data'] as Map? ?? {});
+    data['deleted'] = false;
+    data['updatedAt'] = FieldValue.serverTimestamp();
     await _fs
         .collection('payment_breakdowns')
         .doc(id)
@@ -266,7 +440,42 @@ class BatchSyncEngine {
   Future<void> _syncDeletePaymentBreakdown(Map<String, dynamic> payload) async {
     final id = payload['id']?.toString() ?? '';
     if (id.isEmpty) return;
-    await _fs.collection('payment_breakdowns').doc(id).delete();
+    await _fs.collection('payment_breakdowns').doc(id).set({
+      'deleted': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+  }
+
+  Future<void> _syncCreateDepartment(Map<String, dynamic> payload) async {
+    final id = payload['id']?.toString() ?? '';
+    if (id.isEmpty) throw ArgumentError('createDepartment payload missing id');
+    final data = Map<String, dynamic>.from(payload['data'] as Map? ?? {});
+    data['updatedAt'] = FieldValue.serverTimestamp();
+    await _fs
+        .collection('departments')
+        .doc(id)
+        .set(data, SetOptions(merge: true));
+  }
+
+  Future<void> _syncEditDepartment(Map<String, dynamic> payload) async {
+    final id = payload['id']?.toString() ?? '';
+    if (id.isEmpty) throw ArgumentError('editDepartment payload missing id');
+    final data = Map<String, dynamic>.from(payload['data'] as Map? ?? {});
+    data['_deleted'] = false;
+    data['updatedAt'] = FieldValue.serverTimestamp();
+    await _fs
+        .collection('departments')
+        .doc(id)
+        .set(data, SetOptions(merge: true));
+  }
+
+  Future<void> _syncDeleteDepartment(Map<String, dynamic> payload) async {
+    final id = payload['id']?.toString() ?? '';
+    if (id.isEmpty) throw ArgumentError('deleteDepartment payload missing id');
+    await _fs.collection('departments').doc(id).set({
+      '_deleted': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
   }
 
   /// Syncs an offline-created selling invoice to Firestore as a single batch:
@@ -308,7 +517,7 @@ class BatchSyncEngine {
     final existingRoot = await rootRef.get();
     if (existingRoot.exists) {
       if (clientId.isNotEmpty) {
-        await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+        // Legacy upload completed; historical reconciliation is review-only.
       }
       return;
     }
@@ -411,7 +620,7 @@ class BatchSyncEngine {
     await batch.commit();
 
     if (clientId.isNotEmpty) {
-      await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+      // Legacy upload completed; historical reconciliation is review-only.
     }
   }
 
@@ -448,7 +657,7 @@ class BatchSyncEngine {
       final clientIds = {clientId, oldClientId}
         ..removeWhere((id) => id.isEmpty);
       for (final id in clientIds) {
-        await ClientInvoiceBalanceSyncService.syncForClient(id);
+        // Legacy upload completed; historical reconciliation is review-only.
       }
       return;
     }
@@ -563,7 +772,7 @@ class BatchSyncEngine {
 
     final clientIds = {clientId, oldClientId}..removeWhere((id) => id.isEmpty);
     for (final id in clientIds) {
-      await ClientInvoiceBalanceSyncService.syncForClient(id);
+      // Legacy upload completed; historical reconciliation is review-only.
     }
   }
 
@@ -583,7 +792,7 @@ class BatchSyncEngine {
         .doc('delete_invoice_$queueOperationId');
     if ((await markerRef.get()).exists) {
       if (clientId.isNotEmpty) {
-        await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+        // Legacy upload completed; historical reconciliation is review-only.
       }
       return;
     }
@@ -710,7 +919,7 @@ class BatchSyncEngine {
     await batch.commit();
 
     if (clientId.isNotEmpty) {
-      await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+      // Legacy upload completed; historical reconciliation is review-only.
     }
   }
 
@@ -761,7 +970,7 @@ class BatchSyncEngine {
       });
     });
 
-    await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+    // Legacy upload completed; historical reconciliation is review-only.
   }
 
   Future<void> _syncAdjustSupplierBalance(Map<String, dynamic> payload) async {
@@ -871,20 +1080,28 @@ class BatchSyncEngine {
     final String productId = payload['productId'];
     final Map<String, dynamic> data =
         Map<String, dynamic>.from(payload['data']);
-    data['updatedAt'] = FieldValue.serverTimestamp();
+    final localAfter = {
+      ...?ProductRepository.instance.getById(productId)?.toMap(),
+      ...data,
+    };
+    final cloudData = {
+      ...data,
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
     await _fs
         .collection('products')
         .doc(productId)
-        .set(data, SetOptions(merge: true));
-    await ProductRepository.instance.upsertLocal(productId, data);
-    await ProductRepository.instance.deltaSync();
+        .set(cloudData, SetOptions(merge: true));
+    await ProductRepository.instance.upsertLocal(productId, localAfter);
   }
 
   Future<void> _syncDeleteProduct(Map<String, dynamic> payload) async {
     final String productId = payload['productId'];
-    await _fs.collection('products').doc(productId).delete();
+    await _fs.collection('products').doc(productId).set({
+      '_deleted': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
     await ProductRepository.instance.deleteLocal(productId);
-    await ProductRepository.instance.deltaSync();
   }
 
   /// Syncs an offline-created return invoice to Firestore as a single batch:
@@ -917,7 +1134,7 @@ class BatchSyncEngine {
     final invoiceRef = _fs.collection('returnInvoices').doc(invoiceId);
     if ((await invoiceRef.get()).exists) {
       if (clientId.isNotEmpty) {
-        await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+        // Legacy upload completed; historical reconciliation is review-only.
       }
       return;
     }
@@ -1021,7 +1238,7 @@ class BatchSyncEngine {
         .doc('delete_return_$queueOperationId');
     if ((await markerRef.get()).exists) {
       if (clientId.isNotEmpty) {
-        await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+        // Legacy upload completed; historical reconciliation is review-only.
       }
       return;
     }
@@ -1150,7 +1367,7 @@ class BatchSyncEngine {
     await batch.commit();
 
     if (clientId.isNotEmpty) {
-      await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+      // Legacy upload completed; historical reconciliation is review-only.
     }
   }
 
@@ -1605,7 +1822,7 @@ class BatchSyncEngine {
     await batch.commit();
 
     if (openingBalance != 0) {
-      await ClientInvoiceBalanceSyncService.syncForClient(clientId);
+      // Legacy upload completed; historical reconciliation is review-only.
     }
 
     // Update local cache with confirmed Firestore data.
@@ -1711,7 +1928,10 @@ class BatchSyncEngine {
   Future<void> _syncDeleteExpense(Map<String, dynamic> payload) async {
     final String id = payload['id'];
     if (id.isNotEmpty) {
-      await _fs.collection('expenses').doc(id).delete();
+      await _fs.collection('expenses').doc(id).set({
+        'deleted': true,
+        'time': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
     }
   }
 

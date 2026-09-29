@@ -32,6 +32,7 @@ void main() {
       Hive.registerAdapter(BalanceHistoryLocalAdapter());
     }
 
+    await Hive.openBox(HiveBoxNames.appMeta);
     await Hive.openBox<ProductLocal>(HiveBoxNames.products);
     await Hive.openBox<ClientLocal>(HiveBoxNames.clients);
     await Hive.openBox<SupplierLocal>(HiveBoxNames.suppliers);
@@ -44,6 +45,7 @@ void main() {
 
   setUp(() async {
     await Future.wait([
+      appMetaBox.clear(),
       productsBox.clear(),
       clientsBox.clear(),
       suppliersBox.clear(),

@@ -1,3 +1,4 @@
+import '../Services/invoice_footer_data.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -180,119 +181,16 @@ class InvoiceTotalsFooter extends StatelessWidget {
 
   const InvoiceTotalsFooter({super.key, required this.invoice});
 
-  Future<double> _fetchBalance() async {
-    final isBuying = invoiceIsSupplierPurchase(invoice);
-    if (isBuying) {
-      // Prefer the per-invoice balance set by the sync service.
-      if (invoice.containsKey('currentSupplierBalance') &&
-          invoice['currentSupplierBalance'] != null) {
-        return invoiceNum(invoice['currentSupplierBalance']);
-      }
-      if (invoice.containsKey('balance') && invoice['balance'] != null) {
-        return invoiceNum(invoice['balance']);
-      }
-      final supplierName = invoice['supplierName']?.toString() ?? '';
-      final supplierId = invoice['supplierId']?.toString() ?? '';
-      double? totalBalance;
-      try {
-        if (supplierId.isNotEmpty) {
-          final snap = await FirebaseFirestore.instance
-              .collection('suppliers')
-              .doc(supplierId)
-              .get();
-          if (snap.exists) {
-            totalBalance = (snap.data()?['totalBalance'] as num?)?.toDouble();
-          }
-        }
-        if (totalBalance == null && supplierName.isNotEmpty) {
-          final query = await FirebaseFirestore.instance
-              .collection('suppliers')
-              .where('name', isEqualTo: supplierName)
-              .limit(1)
-              .get();
-          if (query.docs.isNotEmpty) {
-            totalBalance =
-                (query.docs.first.data()['totalBalance'] as num?)?.toDouble();
-          }
-        }
-      } catch (_) {}
-      return totalBalance ?? invoiceNum(invoice['balance']);
-    } else {
-      if (invoice.containsKey('currentClientBalance') &&
-          invoice['currentClientBalance'] != null) {
-        return invoiceNum(invoice['currentClientBalance']);
-      }
-      final clientName = invoice['clientName']?.toString() ?? '';
-      final clientId = invoice['clientId']?.toString() ?? '';
-      double? clientBalance;
-      try {
-        if (clientId.isNotEmpty) {
-          final snap = await FirebaseFirestore.instance
-              .collection('clients')
-              .doc(clientId)
-              .get();
-          if (snap.exists) {
-            clientBalance = (snap.data()?['balance'] as num?)?.toDouble();
-          }
-        }
-        if (clientBalance == null && clientName.isNotEmpty) {
-          final query = await FirebaseFirestore.instance
-              .collection('clients')
-              .where('clientName', isEqualTo: clientName)
-              .limit(1)
-              .get();
-          if (query.docs.isNotEmpty) {
-            clientBalance =
-                (query.docs.first.data()['balance'] as num?)?.toDouble();
-          }
-        }
-      } catch (_) {}
-      return clientBalance ?? invoiceNum(invoice['balance']);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
-    final isBuying = invoiceIsSupplierPurchase(invoice);
-    final total = invoiceNum(invoice['totalSum']);
-    final paid = invoiceNum(invoice['paidAmount']);
-    final remainingLabel = isBuying
-        ? 'المتبقي للمورد'
-        : 'المتبقي عليكم';
-    final discount = invoiceNum(invoice['invoiceDiscount']);
-
-    if (isBuying) {
-      return FutureBuilder<double>(
-        future: _fetchBalance(),
-        initialData: invoiceSupplierRemainingOwed(invoice),
-        builder: (context, snapshot) {
-          final remaining = snapshot.data ?? 0.0;
-          final unpaid = total - paid;
-          final isReturn = invoiceIsReturn(invoice);
-          final dynamicPrevious = isReturn ? remaining + unpaid : remaining - unpaid;
-
-          return _buildTotalsLayout(
-            previous: dynamicPrevious,
-            total: total,
-            paid: paid,
-            remainingLabel: remainingLabel,
-            remaining: remaining,
-            discount: discount,
-          );
-        },
-      );
-    } else {
-      final remaining = invoiceClientRemainingOwed(invoice);
-      final previous = invoiceDynamicPreviousBalance(invoice);
-      return _buildTotalsLayout(
-        previous: previous,
-        total: total,
-        paid: paid,
-        remainingLabel: remainingLabel,
-        remaining: remaining,
-        discount: discount,
-      );
-    }
+    final data = InvoiceFooterData.fromInvoice(invoice);
+    return _buildTotalsLayout(
+        previous: data.previous,
+        total: data.total,
+        paid: data.paid,
+        remainingLabel: data.supplier ? 'المتبقي للمورد' : 'المتبقي عليكم',
+        remaining: data.remaining,
+        discount: data.discount);
   }
 
   Widget _buildTotalsLayout({
@@ -332,7 +230,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
               ),
               if (discount > 0)
                 Text(
-                  'الخصم: ${invoiceAmount(discount)}',
+                  'خصم الفاتورة: ${invoiceAmount(discount)}',
                   style: TextStyle(
                     fontSize: 14.sp,
                     fontWeight: FontWeight.bold,
@@ -452,8 +350,7 @@ class _InvoiceDisplayCardState extends State<InvoiceDisplayCard> {
                     ),
                   ),
                 ),
-                if (widget.actions != null)
-                  Flexible(child: widget.actions!),
+                if (widget.actions != null) Flexible(child: widget.actions!),
               ],
             ),
             if (_isExpanded) ...[

@@ -1,9 +1,16 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:hive_flutter/hive_flutter.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../EditProductPage.dart';
 import '../Services/invoice_number_utils.dart';
+import '../local_db/hive_init.dart';
+import '../repositories/product_repository.dart';
+import '../repositories/department_repository.dart';
+import '../sync/connectivity_service.dart';
+import '../sync/sync_queue_manager.dart';
 
 class DepartmentProductsPage extends StatefulWidget {
   final String departmentName;
@@ -61,7 +68,6 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
     );
   }
 
-
   @override
   void initState() {
     super.initState();
@@ -99,30 +105,36 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
                 if (newName.isNotEmpty && newName != _currentDepartmentName) {
                   try {
                     final oldName = _currentDepartmentName;
-                    final firestore = FirebaseFirestore.instance;
-
-                    final deptQuery = await firestore
-                        .collection('departments')
-                        .where('name', isEqualTo: oldName)
-                        .get();
-
-                    if (deptQuery.docs.isNotEmpty) {
-                      await deptQuery.docs.first.reference
-                          .update({'name': newName});
+                    final departments = DepartmentRepository.instance.getAll();
+                    for (final department in departments) {
+                      if (department.name != oldName) continue;
+                      await DepartmentRepository.instance.upsertLocal(
+                        department.id,
+                        {'name': newName},
+                      );
+                      await SyncQueueManager.instance.enqueue(
+                        operationType: 'editDepartment',
+                        payload: {
+                          'id': department.id,
+                          'data': {'name': newName},
+                        },
+                      );
+                      break;
                     }
-
-                    final productsQuery = await firestore
-                        .collection('products')
-                        .where('department', isEqualTo: oldName)
-                        .get();
-
-                    if (productsQuery.docs.isNotEmpty) {
-                      final batch = firestore.batch();
-                      for (final doc in productsQuery.docs) {
-                        batch.update(doc.reference, {'department': newName});
-                      }
-                      await batch.commit();
+                    final affectedProducts = ProductRepository.instance
+                        .getAll()
+                        .where((product) => product.department == oldName)
+                        .toList();
+                    for (final product in affectedProducts) {
+                      final data = product.toMap()..['department'] = newName;
+                      await ProductRepository.instance
+                          .upsertLocal(product.id, data);
+                      await SyncQueueManager.instance.enqueue(
+                        operationType: 'editProduct',
+                        payload: {'productId': product.id, 'data': data},
+                      );
                     }
+                    unawaited(ConnectivityService.instance.forceSync());
 
                     setState(() {
                       _currentDepartmentName = newName;
@@ -133,7 +145,8 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
                     );
                   } catch (e) {
                     ScaffoldMessenger.of(context).showSnackBar(
-                      SnackBar(content: Text('حدث خطأ أثناء تعديل اسم القسم: $e')),
+                      SnackBar(
+                          content: Text('حدث خطأ أثناء تعديل اسم القسم: $e')),
                     );
                   }
                 }
@@ -164,13 +177,17 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
               TextButton(
                 onPressed: () async {
                   try {
-                    QuerySnapshot query = await FirebaseFirestore.instance
-                        .collection('departments')
-                        .where('name', isEqualTo: _currentDepartmentName)
-                        .get();
-
-                    if (query.docs.isNotEmpty) {
-                      await query.docs.first.reference.delete();
+                    final departments = DepartmentRepository.instance.getAll();
+                    for (final department in departments) {
+                      if (department.name != _currentDepartmentName) continue;
+                      await DepartmentRepository.instance
+                          .deleteLocal(department.id);
+                      await SyncQueueManager.instance.enqueue(
+                        operationType: 'deleteDepartment',
+                        payload: {'id': department.id},
+                      );
+                      unawaited(ConnectivityService.instance.forceSync());
+                      break;
                     }
 
                     ScaffoldMessenger.of(context).showSnackBar(
@@ -230,10 +247,12 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
             TextButton(
               onPressed: () async {
                 try {
-                  await FirebaseFirestore.instance
-                      .collection('products')
-                      .doc(productId)
-                      .delete();
+                  await ProductRepository.instance.deleteLocal(productId);
+                  await SyncQueueManager.instance.enqueue(
+                    operationType: 'deleteProduct',
+                    payload: {'productId': productId},
+                  );
+                  unawaited(ConnectivityService.instance.forceSync());
                   Navigator.of(context).pop();
                   ScaffoldMessenger.of(context).showSnackBar(
                     SnackBar(
@@ -268,11 +287,19 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
         backgroundColor: Colors.black.withOpacity(0.7),
         actions: [
           IconButton(
-            icon: Icon(Icons.edit, color: Colors.white , size: 16,),
+            icon: Icon(
+              Icons.edit,
+              color: Colors.white,
+              size: 16,
+            ),
             onPressed: () => _editDepartmentName(context),
           ),
           IconButton(
-            icon: Icon(Icons.delete, color: Colors.red, size: 16,),
+            icon: Icon(
+              Icons.delete,
+              color: Colors.red,
+              size: 16,
+            ),
             onPressed: () => _confirmDeleteDepartment(context),
           ),
           TextButton(
@@ -327,28 +354,32 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
                 Expanded(
                   child: Text(
                     'الكمية',
-                    style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                    style:
+                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                   ),
                 ),
                 Expanded(
                   child: Text(
                     'السعر',
-                    style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                    style:
+                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                   ),
                 ),
                 Expanded(
                   child: Text(
                     'التكلفة',
-                    style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                    style:
+                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                   ),
                 ),
                 Expanded(
                   child: Text(
                     'الإسم',
-                    style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                    style:
+                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
                     textAlign: TextAlign.center,
                   ),
                 ),
@@ -356,51 +387,42 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
             ),
           ),
           Expanded(
-            child: StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance
-                  .collection('products')
-                  .where('department', isEqualTo: _currentDepartmentName)
-                  .snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Center(
-                    child: CircularProgressIndicator(
-                      color: Colors.orange.withOpacity(0.8),
-                    ),
-                  );
-                }
-                if (snapshot.hasError) {
-                  return Center(child: Text('Error: ${snapshot.error}'));
-                }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
+            child: ValueListenableBuilder(
+              valueListenable: productsBox.listenable(),
+              builder: (context, _, __) {
+                final products = ProductRepository.instance
+                    .getAll()
+                    .where((product) =>
+                        product.department == _currentDepartmentName)
+                    .toList();
+                if (products.isEmpty) {
                   return Center(child: Text('لا توجد منتجات في هذا القسم.'));
                 }
 
-                final products = snapshot.data!.docs;
                 final filteredProducts = _searchQuery.isEmpty
                     ? products
-                    : products.where((doc) {
-                        final product = doc.data() as Map<String, dynamic>;
-                        final productName = (product['name'] ?? '').toLowerCase();
+                    : products.where((product) {
+                        final productName = product.name.toLowerCase();
                         return productName.contains(_searchQuery.toLowerCase());
                       }).toList();
 
                 final displayedProducts = _showLowStock
-                    ? filteredProducts.where((doc) {
-                        final product = doc.data() as Map<String, dynamic>;
-                        return product['quantity'] <= product['alertAmount'];
-                      }).toList()
+                    ? filteredProducts
+                        .where((product) =>
+                            product.quantity <= product.alertAmount)
+                        .toList()
                     : filteredProducts;
 
                 return ListView.builder(
                   itemCount: displayedProducts.length,
                   itemBuilder: (context, index) {
-                    final doc = displayedProducts[index];
-                    final product = doc.data() as Map<String, dynamic>;
-                    final productId = doc.id;
+                    final localProduct = displayedProducts[index];
+                    final product = localProduct.toMap();
+                    final productId = localProduct.id;
 
                     return Card(
-                      margin: EdgeInsets.symmetric(horizontal: 10.w, vertical: 8.h),
+                      margin:
+                          EdgeInsets.symmetric(horizontal: 10.w, vertical: 8.h),
                       elevation: 2,
                       color: Colors.orange.withOpacity(0.8),
                       child: ListTile(
@@ -412,7 +434,8 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
                                 product['quantity']?.toString() ?? '0',
                                 style: TextStyle(
                                   fontSize: 14.sp,
-                                  color: (product['quantity'] <= product['alertAmount'])
+                                  color: (product['quantity'] <=
+                                          product['alertAmount'])
                                       ? Colors.red
                                       : Colors.black.withOpacity(0.7),
                                 ),
@@ -452,7 +475,8 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
                             ),
                           );
                         },
-                        onLongPress: () => _handleDeleteProduct(context, productId),
+                        onLongPress: () =>
+                            _handleDeleteProduct(context, productId),
                       ),
                     );
                   },

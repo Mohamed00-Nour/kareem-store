@@ -1,6 +1,6 @@
 import 'dart:io';
 import 'dart:ui' as ui;
-import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:cloud_firestore/cloud_firestore.dart' show Timestamp;
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:intl/intl.dart';
@@ -9,16 +9,15 @@ import 'package:path_provider/path_provider.dart';
 import 'package:pdf/pdf.dart';
 import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
+import '../Services/quick_entity_creation_service.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/supplier_payment_service.dart';
 import '../repositories/supplier_repository.dart';
+import '../repositories/supplier_voucher_repository.dart';
 import '../repositories/balance_history_repository.dart';
 import '../repositories/invoice_repository.dart';
-import '../local_db/models/balance_history_local.dart';
-import '../local_db/models/invoice_local.dart';
 import '../local_db/models/supplier_local.dart';
 import '../sync/connectivity_service.dart';
-import '../sync/sync_queue_manager.dart';
 import 'SupplierListPage.dart';
 import 'SupplierInvoicesPage.dart';
 
@@ -104,38 +103,12 @@ class SuppliersPage extends StatelessWidget {
                             double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
                         final totalBalance = opening == 0 ? 0.0 : opening.abs();
 
-                        final docRef = FirebaseFirestore.instance
-                            .collection('suppliers')
-                            .doc();
-                        final String supplierId = docRef.id;
-
-                        final data = <String, dynamic>{
-                          'name': name,
-                          'totalBalance': totalBalance,
-                          'balance': totalBalance,
-                          'id': supplierId,
-                        };
-
                         try {
-                          // 1. Save directly to Hive local cache (instant 0ms)
-                          await SupplierRepository.instance
-                              .upsertLocal(supplierId, data);
-
-                          if (opening != 0) {
-                            final historyId = '${supplierId}_opening';
-                            await BalanceHistoryRepository.instance.upsertLocal(
-                              BalanceHistoryLocal(
-                                id: historyId,
-                                parentId: supplierId,
-                                parentType: 'supplier',
-                                enteredBalance: opening.abs(),
-                                balanceBefore: 0.0,
-                                type: 'opening',
-                                notes: 'رصيد افتتاحي',
-                                timestamp: DateTime.now(),
-                              ),
-                            );
-                          }
+                          await QuickEntityCreationService.instance
+                              .createSupplier(
+                            name: name,
+                            openingBalance: totalBalance,
+                          );
 
                           // 2. Dismiss dialog immediately with instant UI feedback
                           if (ctx.mounted) Navigator.pop(ctx);
@@ -146,13 +119,7 @@ class SuppliersPage extends StatelessWidget {
                             );
                           }
 
-                          // 3. Background sync to Firestore
-                          _syncNewSupplierToFirestore(
-                            supplierId: supplierId,
-                            data: data,
-                            opening: opening,
-                            name: name,
-                          );
+                          ConnectivityService.instance.forceSync();
                         } catch (e) {
                           if (ctx.mounted) {
                             setDialogState(() => isSaving = false);
@@ -199,32 +166,6 @@ class SuppliersPage extends StatelessWidget {
         builder: (_) => const _SupplierDeferredPage(),
       ),
     );
-  }
-
-  static void _syncNewSupplierToFirestore({
-    required String supplierId,
-    required Map<String, dynamic> data,
-    required double opening,
-    required String name,
-  }) async {
-    try {
-      final createdAt = DateTime.now();
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'createSupplier',
-        payload: {
-          'supplierId': supplierId,
-          'data': data,
-          'openingBalance': opening.abs(),
-          'openingHistoryId': '${supplierId}_opening',
-          'openingVoucherId': '${supplierId}_opening',
-          'createdAt': createdAt,
-          'supplierName': name,
-        },
-      );
-      ConnectivityService.instance.forceSync();
-    } catch (e) {
-      debugPrint('Background supplier creation failed: $e');
-    }
   }
 
   void _showRemainingReport(BuildContext context) {
@@ -529,15 +470,9 @@ class _SupplierOpeningBalancesPageState
       final dateStr = DateFormat('dd/MM/yyyy').format(now);
       final timeStr = DateFormat('hh:mm:ss a').format(now);
 
-      // Fetch the specific voucher
-      final snap = await FirebaseFirestore.instance
-          .collection('supplier_vouchers')
-          .where('direction', isEqualTo: direction)
-          .where('voucherNumber', isEqualTo: voucherNumber)
-          .limit(1)
-          .get();
-
-      if (snap.docs.isEmpty) {
+      final data =
+          SupplierVoucherRepository.findByNumber(voucherNumber, direction);
+      if (data == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -547,11 +482,12 @@ class _SupplierOpeningBalancesPageState
         return;
       }
 
-      final data = snap.docs.first.data();
       final voucherDate = (data['date'] is Timestamp)
           ? DateFormat('yyyy/MM/dd')
               .format((data['date'] as Timestamp).toDate())
-          : data['date']?.toString() ?? '';
+          : data['date'] is DateTime
+              ? DateFormat('yyyy/MM/dd').format(data['date'] as DateTime)
+              : data['date']?.toString() ?? '';
       final supplierName = (data['supplierName'] ?? '').toString();
       final amount = (data['amount'] ?? 0.0).toDouble();
       final description = (data['description'] ?? '').toString();
@@ -1597,15 +1533,9 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
       final dateStr = DateFormat('dd/MM/yyyy').format(now);
       final timeStr = DateFormat('hh:mm:ss a').format(now);
 
-      // Fetch the specific voucher
-      final snap = await FirebaseFirestore.instance
-          .collection('supplier_vouchers')
-          .where('direction', isEqualTo: direction)
-          .where('voucherNumber', isEqualTo: voucherNumber)
-          .limit(1)
-          .get();
-
-      if (snap.docs.isEmpty) {
+      final data =
+          SupplierVoucherRepository.findByNumber(voucherNumber, direction);
+      if (data == null) {
         if (mounted) {
           ScaffoldMessenger.of(context).showSnackBar(
             SnackBar(
@@ -1615,11 +1545,12 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
         return;
       }
 
-      final data = snap.docs.first.data();
       final voucherDate = (data['date'] is Timestamp)
           ? DateFormat('yyyy/MM/dd')
               .format((data['date'] as Timestamp).toDate())
-          : data['date']?.toString() ?? '';
+          : data['date'] is DateTime
+              ? DateFormat('yyyy/MM/dd').format(data['date'] as DateTime)
+              : data['date']?.toString() ?? '';
       final supplierName = (data['supplierName'] ?? '').toString();
       final amount = (data['amount'] ?? 0.0).toDouble();
       final description = (data['description'] ?? '').toString();
@@ -1813,18 +1744,13 @@ class _SupplierDeferredPageState extends State<_SupplierDeferredPage> {
 
   Future<void> _navigateToSupplierInvoices(
       BuildContext context, String supplierName) async {
-    final snap = await FirebaseFirestore.instance
-        .collection('suppliers')
-        .where('name', isEqualTo: supplierName)
-        .limit(1)
-        .get();
-    if (snap.docs.isEmpty) return;
-    final supplierId = snap.docs.first.id;
+    final supplier = SupplierRepository.instance.findByName(supplierName);
+    if (supplier == null) return;
     if (context.mounted) {
       Navigator.push(
         context,
         MaterialPageRoute(
-          builder: (_) => SupplierInvoicesPage(supplierId: supplierId),
+          builder: (_) => SupplierInvoicesPage(supplierId: supplier.id),
         ),
       );
     }

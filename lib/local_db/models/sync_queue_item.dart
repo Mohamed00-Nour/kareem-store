@@ -27,7 +27,6 @@ enum SyncOperationType {
   updateStock,
 }
 
-
 @HiveType(typeId: 3)
 class SyncQueueItem extends HiveObject {
   /// Unique ID for this sync operation (UUID).
@@ -58,6 +57,32 @@ class SyncQueueItem extends HiveObject {
   @HiveField(6)
   String? lastError;
 
+  /// Stable, non-sensitive labels used by the sync dashboard. Keeping this
+  /// snapshot with the operation means an invoice can still be identified
+  /// after its local record is edited or deleted.
+  @HiveField(7)
+  String? diagnosticsJson;
+
+  /// Append-only (and size-capped) history of upload attempts.
+  @HiveField(8, defaultValue: '[]')
+  String attemptHistoryJson;
+
+  /// Machine-readable classification of [lastError].
+  @HiveField(9)
+  String? errorCategory;
+
+  /// Firebase or local validation error code, when one is available.
+  @HiveField(10)
+  String? errorCode;
+
+  /// Start time of the most recent upload attempt.
+  @HiveField(11)
+  DateTime? lastAttemptAt;
+
+  /// Earliest time at which an automatic retry should run.
+  @HiveField(12)
+  DateTime? nextRetryAt;
+
   SyncQueueItem({
     required this.operationId,
     required this.operationType,
@@ -66,5 +91,11 @@ class SyncQueueItem extends HiveObject {
     this.retryCount = 0,
     this.status = 'pending',
     this.lastError,
+    this.diagnosticsJson,
+    this.attemptHistoryJson = '[]',
+    this.errorCategory,
+    this.errorCode,
+    this.lastAttemptAt,
+    this.nextRetryAt,
   });
 }

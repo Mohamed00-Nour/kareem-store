@@ -30,6 +30,14 @@ class _ProductListPageState extends State<ProductListPage> {
   String _userRole = 'user';
   bool _productActionInProgress = false;
   bool _exportingPdf = false;
+  static const int _damagedPageSize = 50;
+  final List<QueryDocumentSnapshot<Map<String, dynamic>>> _damagedDocuments =
+      [];
+  QueryDocumentSnapshot<Map<String, dynamic>>? _lastDamagedDocument;
+  bool _loadingDamaged = false;
+  bool _loadingMoreDamaged = false;
+  bool _hasMoreDamaged = true;
+  Object? _damagedLoadError;
 
   bool _isMarkedOnDemand(Map<String, dynamic> product) {
     return product['onDemand'] == true;
@@ -123,7 +131,7 @@ class _ProductListPageState extends State<ProductListPage> {
             ),
             Text(
               'التصفية الحالية: $_filterLabel'
-                  '${_searchQuery.isNotEmpty ? ' • بحث: $_searchQuery' : ''}',
+              '${_searchQuery.isNotEmpty ? ' • بحث: $_searchQuery' : ''}',
               textAlign: TextAlign.center,
               style: TextStyle(fontSize: 12.sp, color: Colors.black54),
             ),
@@ -134,8 +142,8 @@ class _ProductListPageState extends State<ProductListPage> {
               children: [
                 if (_isAdmin)
                   ListTile(
-                    leading: Icon(Icons.picture_as_pdf,
-                        color: Colors.blue.shade700),
+                    leading:
+                        Icon(Icons.picture_as_pdf, color: Colors.blue.shade700),
                     title: const Text('PDF كامل'),
                     subtitle: const Text('تكلفة + أسعار البيع + الكمية'),
                     onTap: () => exportAndClose(
@@ -145,8 +153,8 @@ class _ProductListPageState extends State<ProductListPage> {
                     ),
                   ),
                 ListTile(
-                  leading: Icon(Icons.sell_outlined,
-                      color: Colors.green.shade700),
+                  leading:
+                      Icon(Icons.sell_outlined, color: Colors.green.shade700),
                   title: const Text('PDF مع الأسعار'),
                   subtitle: const Text('أسعار البيع والكمية — بدون التكلفة'),
                   onTap: () => exportAndClose(
@@ -160,8 +168,7 @@ class _ProductListPageState extends State<ProductListPage> {
                     leading: Icon(Icons.inventory_2_outlined,
                         color: Colors.teal.shade700),
                     title: const Text('PDF مع التكلفة فقط'),
-                    subtitle:
-                        const Text('التكلفة والكمية — بدون أسعار البيع'),
+                    subtitle: const Text('التكلفة والكمية — بدون أسعار البيع'),
                     onTap: () => exportAndClose(
                       ctx,
                       includeCost: true,
@@ -223,20 +230,18 @@ class _ProductListPageState extends State<ProductListPage> {
       return rows;
     }
 
-    final snap =
-        await FirebaseFirestore.instance.collection('products').get();
-    final docs = snap.docs.where((doc) {
-      final product = doc.data();
+    final docs = ProductRepository.instance.getAll().where((local) {
+      final product = local.toMap();
       return _matchesSearch(product) && _matchesFilter(product);
     }).toList();
     docs.sort((a, b) {
-      final aName = (a.data()['name'] ?? '').toString();
-      final bName = (b.data()['name'] ?? '').toString();
+      final aName = a.name;
+      final bName = b.name;
       return aName.compareTo(bName);
     });
     var serial = 1;
-    for (final doc in docs) {
-      final product = doc.data();
+    for (final local in docs) {
+      final product = local.toMap();
       rows.add(ProductListPdfRow(
         serial: serial++,
         name: product['name']?.toString() ?? '',
@@ -269,8 +274,7 @@ class _ProductListPageState extends State<ProductListPage> {
         return;
       }
 
-      final listTitle =
-          _showingDamaged ? 'منتجات تالفة' : 'قائمة المخزن';
+      final listTitle = _showingDamaged ? 'منتجات تالفة' : 'قائمة المخزن';
       final modeLabel = ProductsListPdfService.exportModeLabel(
         includeCost: includeCost,
         includePrice: includePrice,
@@ -458,6 +462,50 @@ class _ProductListPageState extends State<ProductListPage> {
     _loadUserRole();
   }
 
+  Future<void> _loadDamagedPage({required bool reset}) async {
+    if (reset) {
+      setState(() {
+        _damagedDocuments.clear();
+        _lastDamagedDocument = null;
+        _hasMoreDamaged = true;
+        _loadingDamaged = true;
+        _damagedLoadError = null;
+      });
+    } else {
+      if (_loadingMoreDamaged || !_hasMoreDamaged) return;
+      setState(() {
+        _loadingMoreDamaged = true;
+        _damagedLoadError = null;
+      });
+    }
+    try {
+      Query<Map<String, dynamic>> query = FirebaseFirestore.instance
+          .collection(_damagedProductsCollection)
+          .orderBy('movedAt', descending: true)
+          .limit(_damagedPageSize);
+      if (_lastDamagedDocument != null) {
+        query = query.startAfterDocument(_lastDamagedDocument!);
+      }
+      final page = await query.get();
+      if (!mounted) return;
+      setState(() {
+        _damagedDocuments.addAll(page.docs);
+        _lastDamagedDocument =
+            page.docs.isEmpty ? _lastDamagedDocument : page.docs.last;
+        _hasMoreDamaged = page.docs.length == _damagedPageSize;
+      });
+    } catch (error) {
+      if (mounted) setState(() => _damagedLoadError = error);
+    } finally {
+      if (mounted) {
+        setState(() {
+          _loadingDamaged = false;
+          _loadingMoreDamaged = false;
+        });
+      }
+    }
+  }
+
   @override
   void dispose() {
     _searchController.dispose();
@@ -523,8 +571,13 @@ class _ProductListPageState extends State<ProductListPage> {
     final productRef =
         FirebaseFirestore.instance.collection('products').doc(productId);
     final productSnap = await productRef.get();
-    if (!productSnap.exists) {
-      await productRef.set(_productPayloadForStorage(productId, product));
+    if (!productSnap.exists || productSnap.data()?['_deleted'] == true) {
+      await productRef.set({
+        ..._productPayloadForStorage(productId, product),
+        '_deleted': false,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
+      await ProductRepository.instance.upsertLocal(productId, product);
     }
     final changesCol = productRef.collection('changes');
     for (final doc in changes) {
@@ -544,7 +597,11 @@ class _ProductListPageState extends State<ProductListPage> {
       throw StateError('المنتج غير موجود في المخزن');
     }
     await _deleteProductChanges(productId);
-    await docRef.delete();
+    await docRef.set({
+      '_deleted': true,
+      'updatedAt': FieldValue.serverTimestamp(),
+    }, SetOptions(merge: true));
+    await ProductRepository.instance.deleteLocal(productId);
   }
 
   void _confirmDeleteProduct(
@@ -797,12 +854,14 @@ class _ProductListPageState extends State<ProductListPage> {
       crossAxisAlignment: CrossAxisAlignment.center,
       children: [
         _borderedCell(
-          Text('تعداد', textAlign: TextAlign.center, style: _tableHeaderTextStyle),
+          Text('تعداد',
+              textAlign: TextAlign.center, style: _tableHeaderTextStyle),
           flex: 1,
           fill: _tableHeaderFill,
         ),
         _borderedCell(
-          Text('الإسم', textAlign: TextAlign.center, style: _tableHeaderTextStyle),
+          Text('الإسم',
+              textAlign: TextAlign.center, style: _tableHeaderTextStyle),
           flex: 4,
           fill: _tableHeaderFill,
         ),
@@ -814,12 +873,14 @@ class _ProductListPageState extends State<ProductListPage> {
             fill: _tableHeaderFill,
           ),
         _borderedCell(
-          Text('السعر', textAlign: TextAlign.center, style: _tableHeaderTextStyle),
+          Text('السعر',
+              textAlign: TextAlign.center, style: _tableHeaderTextStyle),
           flex: 2,
           fill: _tableHeaderFill,
         ),
         _borderedCell(
-          Text('الكمية', textAlign: TextAlign.center, style: _tableHeaderTextStyle),
+          Text('الكمية',
+              textAlign: TextAlign.center, style: _tableHeaderTextStyle),
           flex: 2,
           fill: _tableHeaderFill,
         ),
@@ -943,11 +1004,16 @@ class _ProductListPageState extends State<ProductListPage> {
         final ref =
             FirebaseFirestore.instance.collection('products').doc(sourceId);
         final existing = await ref.get();
-        if (existing.exists) {
+        if (existing.exists && existing.data()?['_deleted'] != true) {
           throw StateError('المنتج موجود بالفعل في المخزن');
         }
         payload['id'] = sourceId;
-        await ref.set(payload);
+        await ref.set({
+          ...payload,
+          '_deleted': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        }, SetOptions(merge: true));
+        await ProductRepository.instance.upsertLocal(sourceId, payload);
       } else {
         final name = payload['name']?.toString() ?? '';
         if (name.isNotEmpty) {
@@ -960,7 +1026,13 @@ class _ProductListPageState extends State<ProductListPage> {
             throw StateError('يوجد منتج بنفس الاسم في المخزن');
           }
         }
-        await FirebaseFirestore.instance.collection('products').add(payload);
+        final restored =
+            await FirebaseFirestore.instance.collection('products').add({
+          ...payload,
+          '_deleted': false,
+          'updatedAt': FieldValue.serverTimestamp(),
+        });
+        await ProductRepository.instance.upsertLocal(restored.id, payload);
       }
 
       await FirebaseFirestore.instance
@@ -1076,7 +1148,8 @@ class _ProductListPageState extends State<ProductListPage> {
               Text(
                 '$serial',
                 textAlign: TextAlign.center,
-                style: _tableCellTextStyle.copyWith(fontWeight: FontWeight.w600),
+                style:
+                    _tableCellTextStyle.copyWith(fontWeight: FontWeight.w600),
               ),
               flex: 1,
               fill: rowFill,
@@ -1143,7 +1216,9 @@ class _ProductListPageState extends State<ProductListPage> {
     );
   }
 
-  Widget _buildDamagedProductsTable(List<QueryDocumentSnapshot> docs) {
+  Widget _buildDamagedProductsTable(
+    List<QueryDocumentSnapshot<Map<String, dynamic>>> docs,
+  ) {
     return Padding(
       padding: EdgeInsets.symmetric(horizontal: 6.w, vertical: 4.h),
       child: Container(
@@ -1153,10 +1228,27 @@ class _ProductListPageState extends State<ProductListPage> {
             _tableHeaderRow(),
             Expanded(
               child: ListView.builder(
-                itemCount: docs.length,
+                itemCount: docs.length +
+                    ((_hasMoreDamaged || _damagedLoadError != null) ? 1 : 0),
                 itemBuilder: (context, index) {
+                  if (index == docs.length) {
+                    return Padding(
+                      padding: EdgeInsets.all(12.w),
+                      child: Center(
+                        child: _loadingMoreDamaged
+                            ? const CircularProgressIndicator()
+                            : OutlinedButton.icon(
+                                onPressed: () => _loadDamagedPage(reset: false),
+                                icon: const Icon(Icons.expand_more),
+                                label: Text(_damagedLoadError == null
+                                    ? 'تحميل المزيد'
+                                    : 'إعادة المحاولة'),
+                              ),
+                      ),
+                    );
+                  }
                   final doc = docs[index];
-                  final product = doc.data() as Map<String, dynamic>;
+                  final product = doc.data();
                   return _damagedTableDataRow(
                     serial: index + 1,
                     product: product,
@@ -1202,7 +1294,8 @@ class _ProductListPageState extends State<ProductListPage> {
               Text(
                 '$serial',
                 textAlign: TextAlign.center,
-                style: _tableCellTextStyle.copyWith(fontWeight: FontWeight.w600),
+                style:
+                    _tableCellTextStyle.copyWith(fontWeight: FontWeight.w600),
               ),
               flex: 1,
               fill: rowFill,
@@ -1287,7 +1380,14 @@ class _ProductListPageState extends State<ProductListPage> {
     return FilterChip(
       label: Text(label, style: TextStyle(fontSize: 13.sp)),
       selected: selected,
-      onSelected: (_) => setState(() => _filter = mode),
+      onSelected: (_) {
+        setState(() => _filter = mode);
+        if (mode == _ProductListFilter.damaged &&
+            _damagedDocuments.isEmpty &&
+            !_loadingDamaged) {
+          _loadDamagedPage(reset: true);
+        }
+      },
       selectedColor: Colors.orange.withOpacity(0.35),
       checkmarkColor: Colors.black87,
       backgroundColor: Colors.grey.withOpacity(0.15),
@@ -1361,32 +1461,7 @@ class _ProductListPageState extends State<ProductListPage> {
 
         final localProds = ProductRepository.instance.getAll();
         if (localProds.isEmpty) {
-          return StreamBuilder<QuerySnapshot>(
-            stream: FirebaseFirestore.instance.collection('products').snapshots(),
-            builder: (context, snapshot) {
-              if (snapshot.connectionState == ConnectionState.waiting) {
-                return Center(
-                  child: CircularProgressIndicator(
-                    color: Colors.orange.withOpacity(0.8),
-                  ),
-                );
-              }
-              if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                return const Center(child: Text('لا توجد منتجات'));
-              }
-              final displayedProducts = snapshot.data!.docs.map((doc) {
-                final product = Map<String, dynamic>.from(doc.data() as Map);
-                product['id'] = doc.id;
-                ProductRepository.instance.upsertLocal(doc.id, product);
-                return product;
-              }).where((product) => _matchesSearch(product) && _matchesFilter(product)).toList();
-
-              if (displayedProducts.isEmpty) {
-                return const Center(child: Text('لا توجد منتجات مطابقة'));
-              }
-              return _buildBorderedProductsTable(displayedProducts);
-            },
-          );
+          return const Center(child: Text('لا توجد منتجات'));
         }
 
         final displayedProducts = localProds
@@ -1403,58 +1478,32 @@ class _ProductListPageState extends State<ProductListPage> {
     );
   }
 
-
   Widget _buildDamagedList() {
-    return StreamBuilder<QuerySnapshot>(
-      stream: FirebaseFirestore.instance
-          .collection(_damagedProductsCollection)
-          .snapshots(),
-      builder: (context, snapshot) {
-                if (_productActionInProgress || _exportingPdf) {
-                  return Center(
-                    child: CircularProgressIndicator(
-                      color: Colors.orange.withOpacity(0.8),
-                    ),
-                  );
-                }
-                if (snapshot.connectionState == ConnectionState.waiting) {
-          return Center(
-            child: CircularProgressIndicator(
-              color: Colors.orange.withOpacity(0.8),
-            ),
-          );
-        }
-        if (snapshot.hasError) {
-          return Center(child: Text('Error: ${snapshot.error}'));
-        }
-
-        if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-          return const Center(child: Text('لا توجد منتجات تالفة'));
-        }
-
-        final docs = snapshot.data!.docs.where((doc) {
-          final product = doc.data() as Map<String, dynamic>;
-          return _matchesSearch(product);
-        }).toList();
-
-        docs.sort((a, b) {
-          final aData = a.data() as Map<String, dynamic>;
-          final bData = b.data() as Map<String, dynamic>;
-          final aTs = aData['movedAt'];
-          final bTs = bData['movedAt'];
-          if (aTs is Timestamp && bTs is Timestamp) {
-            return bTs.compareTo(aTs);
-          }
-          return 0;
-        });
-
-        if (docs.isEmpty) {
-          return const Center(child: Text('لا توجد منتجات تالفة مطابقة'));
-        }
-
-        return _buildDamagedProductsTable(docs);
-      },
-    );
+    if (_productActionInProgress || _exportingPdf || _loadingDamaged) {
+      return Center(
+        child: CircularProgressIndicator(
+          color: Colors.orange.withOpacity(0.8),
+        ),
+      );
+    }
+    if (_damagedDocuments.isEmpty && _damagedLoadError != null) {
+      return Center(
+        child: TextButton(
+          onPressed: () => _loadDamagedPage(reset: true),
+          child: Text('تعذر التحميل - إعادة المحاولة: $_damagedLoadError'),
+        ),
+      );
+    }
+    if (_damagedDocuments.isEmpty) {
+      return const Center(child: Text('لا توجد منتجات تالفة'));
+    }
+    final docs = _damagedDocuments.where((doc) {
+      return _matchesSearch(doc.data());
+    }).toList();
+    if (docs.isEmpty) {
+      return const Center(child: Text('لا توجد منتجات تالفة مطابقة'));
+    }
+    return _buildDamagedProductsTable(docs);
   }
 
   @override

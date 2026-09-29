@@ -12,6 +12,7 @@ import '../models/printer_settings.dart';
 import 'header_helper.dart';
 import 'invoice_number_utils.dart';
 import 'printer_settings_service.dart';
+import 'supplier_ledger_presentation.dart';
 
 enum SupplierStatementType { financial, invoices, returns }
 
@@ -211,6 +212,7 @@ class SupplierStatementPdfService {
       final before = (data['balanceBefore'] as num?)?.toDouble() ?? 0.0;
 
       final type = data['type']?.toString() ?? 'voucher';
+      final direction = data['direction']?.toString();
       final voucherNumber = data['voucherNumber']?.toString() ?? '';
       final notes =
           (data['notes'] ?? data['description'] ?? '').toString().trim();
@@ -220,9 +222,14 @@ class SupplierStatementPdfService {
         description = 'فاتورة شراء';
       } else if (type == 'buying_payment') {
         description = 'سداد فاتورة شراء';
-      } else if (type == 'voucher' || type == 'deduction') {
+      } else if (type == 'voucher') {
+        description = SupplierLedgerPresentation.voucherLabel(
+          direction,
+          voucherNumber: voucherNumber,
+        );
+      } else if (type == 'deduction') {
         description = voucherNumber.isNotEmpty
-            ? 'سداد نقدي (إيصال #$voucherNumber)'
+            ? 'سداد نقدي للمورد (إيصال #$voucherNumber)'
             : 'سداد نقدي للمورد';
       } else if (type == 'addition') {
         description = 'إضافة رصيد للمورد';
@@ -235,8 +242,11 @@ class SupplierStatementPdfService {
         description += ' ($notes)';
       }
 
-      final isIncrease =
-          type == 'buying' || type == 'addition' || type == 'opening';
+      final isIncrease = type == 'buying' ||
+          type == 'addition' ||
+          type == 'opening' ||
+          (type == 'voucher' &&
+              SupplierLedgerPresentation.voucherIncreasesBalance(direction));
       final after = isIncrease ? before + entered : before - entered;
       final sign = isIncrease ? '+' : '-';
 

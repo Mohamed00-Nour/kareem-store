@@ -184,7 +184,12 @@ class InvoiceLocal extends HiveObject {
       previousBalance: _doubleValue(data['previousBalance']),
       profitMargin: _doubleValue(data['profitMargin']),
       paymentMethod: (data['paymentMethod'] ?? 'نقداً')?.toString() ?? 'نقداً',
-      notes: (data['notes'] ?? '')?.toString() ?? '',
+      notes: (data['notes'] ??
+                  data['description'] ??
+                  data['invoiceDescription'] ??
+                  '')
+              ?.toString() ??
+          '',
       invoiceDiscount: _doubleValue(data['invoiceDiscount']),
       invoiceType:
           (data['invoiceType'] ?? defaultType)?.toString() ?? defaultType,

@@ -1,11 +1,10 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import 'package:kareem_store/sync/connectivity_service.dart';
-import 'package:kareem_store/sync/sync_queue_manager.dart';
 import 'package:kareem_store/repositories/box_repository.dart';
 import 'BoxChangesScreen.dart';
+import '../Services/customer_operation_service.dart';
 
 class MainBoxScreen extends StatefulWidget {
   const MainBoxScreen({Key? key}) : super(key: key);
@@ -41,49 +40,12 @@ class _MainBoxScreenState extends State<MainBoxScreen> {
   Future<void> _updateBoxValue(double value, String type,
       {String? name}) async {
     try {
-      final changeAmount = type == 'addition' ? value : -value;
-
-      // 1. Immediately update Hive (Primary DB)
-      if (type == 'addition') {
-        await BoxRepository.instance.increment(value);
-      } else {
-        await BoxRepository.instance.decrement(value);
-      }
-
-      setState(() {
-        _boxValue = BoxRepository.instance.getValue();
-      });
-
-      // 2. Enqueue for background sync
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'updateBox',
-        payload: {
-          'changeAmount': changeAmount,
-          'value': value,
-          'type': type,
-          'name': name ?? '',
-          'date': _selectedDate.toIso8601String(),
-        },
-      );
-
-      // 3. Direct write if online
-      if (ConnectivityService.instance.isOnline) {
-        DocumentReference boxDocRef =
-            FirebaseFirestore.instance.collection('box').doc('mainBox');
-
-        await boxDocRef.set(
-          {'value': FieldValue.increment(changeAmount)},
-          SetOptions(merge: true),
-        );
-
-        await boxDocRef.collection('changes').add({
-          'date': _selectedDate,
-          'value': value,
-          'type': type,
-          if (name != null) 'name': name,
-        });
-      }
-
+      await CustomerOperationService.changeCash(
+          type == 'addition' ? value : -value,
+          name: name ?? '',
+          date: _selectedDate);
+      setState(() => _boxValue = BoxRepository.instance.getValue());
+      ConnectivityService.instance.forceSync();
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('تم تحديث الصندوق بنجاح')),
@@ -95,7 +57,6 @@ class _MainBoxScreenState extends State<MainBoxScreen> {
       );
     }
   }
-
 
   void _showAddDialog() {
     final TextEditingController valueController = TextEditingController();
@@ -235,7 +196,10 @@ class _MainBoxScreenState extends State<MainBoxScreen> {
                         borderRadius: BorderRadius.circular(8.0),
                       ),
                       backgroundColor: Colors.green.withOpacity(0.7)),
-                  child: Text('إضافة', style: TextStyle(color: Colors.white, fontSize: 18.sp),),
+                  child: Text(
+                    'إضافة',
+                    style: TextStyle(color: Colors.white, fontSize: 18.sp),
+                  ),
                 ),
                 ElevatedButton(
                   onPressed: _showDecreaseDialog,

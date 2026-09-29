@@ -2,6 +2,7 @@ import 'dart:async';
 import 'package:connectivity_plus/connectivity_plus.dart';
 import 'batch_sync_engine.dart';
 import 'sync_queue_manager.dart';
+import 'realtime_sync_service.dart';
 
 /// Listens to network connectivity changes and triggers [BatchSyncEngine]
 /// when internet connection is detected.
@@ -96,6 +97,9 @@ class ConnectivityService {
 
         if (hasNetwork) {
           _setOnline(true);
+          if (!RealtimeSyncService.instance.isListening) {
+            unawaited(RealtimeSyncService.instance.startListening());
+          }
           if (SyncQueueManager.instance.hasUnfinished) {
             await BatchSyncEngine.instance.processQueue();
           }
@@ -121,14 +125,26 @@ class ConnectivityService {
   /// Manually trigger a sync attempt (e.g. after adding an invoice or "Sync Now" button).
   /// If a check is already running, the sync is guaranteed to execute once the
   /// current check finishes (no silent drop).
-  Future<void> forceSync() async {
-    await SyncQueueManager.instance.resetFailedItems();
+  Future<void> forceSync({bool resetRetryableFailures = true}) async {
+    if (resetRetryableFailures) {
+      await SyncQueueManager.instance.resetFailedItems();
+    }
     if (_isChecking) {
       // Signal that a full re-run is needed after the current check finishes.
       _pendingForce = true;
       return;
     }
     await _checkAndSync();
+  }
+
+  /// Retries one operation without resetting unrelated failures. Review-only
+  /// errors (legacy data, conflicts, validation and permissions) remain
+  /// blocked until their cause is resolved explicitly.
+  Future<bool> retryOperation(String operationId) async {
+    final reset = await SyncQueueManager.instance.resetToPending(operationId);
+    if (!reset) return false;
+    await forceSync(resetRetryableFailures: false);
+    return true;
   }
 
   @Deprecated('Use forceSync instead')

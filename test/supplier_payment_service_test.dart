@@ -3,6 +3,7 @@ import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive/hive.dart';
 import 'package:kareem_store/Services/supplier_payment_service.dart';
+import 'package:kareem_store/Services/supplier_ledger_presentation.dart';
 import 'package:kareem_store/local_db/hive_init.dart';
 import 'package:kareem_store/local_db/models/balance_history_local.dart';
 import 'package:kareem_store/local_db/models/box_local.dart';
@@ -130,6 +131,25 @@ void main() {
     );
     expect(BoxRepository.instance.getValue(), 1000);
     expect(SyncQueueManager.instance.pendingCount, 1);
+    final history = BalanceHistoryRepository.instance
+        .getForSupplier('supplier-1')
+        .where((entry) => entry.type == 'voucher')
+        .single;
+    expect(history.direction, 'له');
+    expect(
+      SupplierLedgerPresentation.voucherLabel(history.direction),
+      'إضافة رصيد للمورد',
+    );
+    expect(SupplierLedgerPresentation.voucherSign(history.direction), '+');
+  });
+
+  test('عليه voucher is presented as a negative supplier payment', () {
+    expect(
+      SupplierLedgerPresentation.voucherLabel('عليه'),
+      'سداد نقدي للمورد',
+    );
+    expect(SupplierLedgerPresentation.voucherSign('عليه'), '-');
+    expect(SupplierLedgerPresentation.voucherSign(null), '-');
   });
 
   test('purchase returns and their refunds use the supplier ledger', () async {

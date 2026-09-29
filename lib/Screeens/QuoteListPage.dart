@@ -1,3 +1,4 @@
+import '../Services/customer_operation_service.dart';
 import 'dart:ui' show ImageFilter;
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -15,7 +16,6 @@ import '../repositories/quote_repository.dart';
 import '../repositories/client_repository.dart';
 import '../local_db/hive_init.dart';
 import '../sync/connectivity_service.dart';
-import '../sync/sync_queue_manager.dart';
 import 'DecreaseProductPage.dart';
 
 class QuoteListPage extends StatelessWidget {
@@ -62,51 +62,9 @@ class QuoteListPage extends StatelessWidget {
         builder: (context, box, _) {
           final localQuotes = QuoteRepository.instance.getAll();
 
-          if (localQuotes.isEmpty) {
-            return StreamBuilder<QuerySnapshot<Map<String, dynamic>>>(
-              stream: FirebaseFirestore.instance
-                  .collection('price_quotes')
-                  .orderBy('createdAt', descending: true)
-                  .snapshots(),
-              builder: (context, snap) {
-                if (snap.connectionState == ConnectionState.waiting) {
-                  return const Center(child: CircularProgressIndicator());
-                }
-                final docs = snap.data?.docs ?? [];
-                if (docs.isEmpty) {
-                  return Center(
-                    child: Column(
-                      mainAxisSize: MainAxisSize.min,
-                      children: [
-                        Icon(Icons.description_outlined,
-                            size: 64.sp, color: Colors.black26),
-                        SizedBox(height: 16.h),
-                        Text(
-                          'لا توجد عروض أسعار',
-                          style: TextStyle(
-                              fontSize: 16.sp,
-                              color: Colors.black45,
-                              fontWeight: FontWeight.w600),
-                        ),
-                      ],
-                    ),
-                  );
-                }
-                return ListView.builder(
-                  padding: EdgeInsets.fromLTRB(12.w, 12.h, 12.w, 90.h),
-                  itemCount: docs.length,
-                  itemBuilder: (context, i) {
-                    final doc = docs[i];
-                    QuoteRepository.instance.upsertLocal(doc.id, doc.data());
-                    return _QuoteCard(
-                      quoteId: doc.id,
-                      data: doc.data(),
-                    );
-                  },
-                );
-              },
-            );
-          }
+          if (localQuotes.isEmpty)
+            return const Center(
+                child: Text('لا توجد عروض أسعار محفوظة محلياً'));
 
           return ListView.builder(
             padding: EdgeInsets.fromLTRB(12.w, 12.h, 12.w, 90.h),
@@ -124,7 +82,6 @@ class QuoteListPage extends StatelessWidget {
     );
   }
 }
-
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Quote Card (Collapsible, Editable, Sharable)
@@ -256,14 +213,7 @@ class _QuoteCardState extends State<_QuoteCard> {
 
     setState(() => _deleting = true);
     try {
-      // 1. Delete from local Hive storage immediately (0ms)
-      await QuoteRepository.instance.deleteLocal(widget.quoteId);
-
-      // 2. Enqueue background deletion to Firebase
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'deleteQuote',
-        payload: {'quoteId': widget.quoteId},
-      );
+      await CustomerOperationService.deleteQuote(widget.quoteId);
 
       // Trigger background sync
       ConnectivityService.instance.forceSync();
@@ -276,7 +226,6 @@ class _QuoteCardState extends State<_QuoteCard> {
       if (mounted) setState(() => _deleting = false);
     }
   }
-
 
   void _showSuccessDialog(Map<String, dynamic> invoice) {
     showDialog(
@@ -296,10 +245,10 @@ class _QuoteCardState extends State<_QuoteCard> {
               children: [
                 _infoLine('رقم الفاتورة', '#${invoice['invoiceNumber']}'),
                 _infoLine('العميل', invoice['clientName']?.toString() ?? ''),
-                _infoLine('الإجمالي',
-                    '${invoiceAmount(invoice['totalSum'])} ج.م'),
-                _infoLine('المدفوع',
-                    '${invoiceAmount(invoice['paidAmount'])} ج.م'),
+                _infoLine(
+                    'الإجمالي', '${invoiceAmount(invoice['totalSum'])} ج.م'),
+                _infoLine(
+                    'المدفوع', '${invoiceAmount(invoice['paidAmount'])} ج.م'),
                 SizedBox(height: 16.h),
                 ElevatedButton.icon(
                   onPressed: () {
@@ -360,8 +309,7 @@ class _QuoteCardState extends State<_QuoteCard> {
             flex: 3,
             child: Text(value,
                 textAlign: TextAlign.left,
-                style:
-                    TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600)),
+                style: TextStyle(fontSize: 14.sp, fontWeight: FontWeight.w600)),
           ),
         ],
       ),
@@ -434,8 +382,7 @@ class _QuoteCardState extends State<_QuoteCard> {
           ),
           for (final p in rows)
             TableRow(
-              decoration:
-                  BoxDecoration(color: Colors.orange.withOpacity(0.12)),
+              decoration: BoxDecoration(color: Colors.orange.withOpacity(0.12)),
               children: [
                 cell(invoiceProductName(p), align: TextAlign.right),
                 cell(invoiceQty(p['amount'])),
@@ -755,5 +702,3 @@ class _QuoteCardState extends State<_QuoteCard> {
     );
   }
 }
-
-

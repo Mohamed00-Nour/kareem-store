@@ -1,6 +1,7 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+
+import '../repositories/invoice_repository.dart';
 
 class MonthlyComparisonReportPage extends StatefulWidget {
   const MonthlyComparisonReportPage({super.key});
@@ -24,26 +25,17 @@ class _MonthlyComparisonReportPageState
   Future<void> _fetchReport() async {
     setState(() => _loading = true);
     try {
-      final invoicesSnap =
-          await FirebaseFirestore.instance.collection('invoices').get();
-      final buyingSnap = await FirebaseFirestore.instance
-          .collection('buying invoices')
-          .get();
+      final invoices = InvoiceRepository.instance.getAllSales();
+      final buyingInvoices = InvoiceRepository.instance.getAllBuying();
 
       final Map<String, _MonthStat> statsMap = {};
 
-      for (final doc in invoicesSnap.docs) {
-        final data = doc.data();
-        Timestamp? ts;
-        if (data['date'] is Timestamp) {
-          ts = data['date'] as Timestamp;
-        }
-        if (ts == null) continue;
-        final date = ts.toDate();
+      for (final invoice in invoices) {
+        final date = invoice.date;
         final key = '${date.year}-${date.month.toString().padLeft(2, '0')}';
 
-        final totalSum = (data['totalSum'] ?? 0.0).toDouble();
-        final profit = (data['profitMargin'] ?? 0.0).toDouble();
+        final totalSum = invoice.totalSum;
+        final profit = invoice.profitMargin;
 
         if (statsMap.containsKey(key)) {
           statsMap[key] = _MonthStat(
@@ -66,16 +58,10 @@ class _MonthlyComparisonReportPageState
         }
       }
 
-      for (final doc in buyingSnap.docs) {
-        final data = doc.data();
-        Timestamp? ts;
-        if (data['date'] is Timestamp) {
-          ts = data['date'] as Timestamp;
-        }
-        if (ts == null) continue;
-        final date = ts.toDate();
+      for (final invoice in buyingInvoices) {
+        final date = invoice.date;
         final key = '${date.year}-${date.month.toString().padLeft(2, '0')}';
-        final totalSum = (data['totalSum'] ?? 0.0).toDouble();
+        final totalSum = invoice.totalSum;
 
         if (statsMap.containsKey(key)) {
           statsMap[key] = _MonthStat(
@@ -188,10 +174,8 @@ class _MonthlyComparisonReportPageState
                                     padding: EdgeInsets.symmetric(
                                         horizontal: 10.w, vertical: 4.h),
                                     decoration: BoxDecoration(
-                                      color:
-                                          Colors.orange.withOpacity(0.2),
-                                      borderRadius:
-                                          BorderRadius.circular(8.r),
+                                      color: Colors.orange.withOpacity(0.2),
+                                      borderRadius: BorderRadius.circular(8.r),
                                     ),
                                     child: Text(
                                       '$monthName ${m.year}',
@@ -206,8 +190,7 @@ class _MonthlyComparisonReportPageState
                                     '${m.invoiceCount} فاتورة',
                                     style: TextStyle(
                                         fontSize: 12.sp,
-                                        color:
-                                            Colors.black.withOpacity(0.5)),
+                                        color: Colors.black.withOpacity(0.5)),
                                   ),
                                 ],
                               ),
@@ -216,8 +199,7 @@ class _MonthlyComparisonReportPageState
                                   color: Colors.grey.withOpacity(0.3)),
                               _MonthRow(
                                 label: 'إجمالي المبيعات',
-                                value:
-                                    '${m.totalSales.toStringAsFixed(2)} ج.م',
+                                value: '${m.totalSales.toStringAsFixed(2)} ج.م',
                                 color: Colors.blue,
                               ),
                               _MonthRow(
@@ -292,8 +274,7 @@ class _MonthRow extends StatelessWidget {
         children: [
           Text(label,
               style: TextStyle(
-                  fontSize: 13.sp,
-                  color: Colors.black.withOpacity(0.6))),
+                  fontSize: 13.sp, color: Colors.black.withOpacity(0.6))),
           Text(value,
               style: TextStyle(
                   fontSize: 13.sp,

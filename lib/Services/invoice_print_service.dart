@@ -1,14 +1,13 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
-
-import '../local_db/hive_init.dart';
 import '../models/printer_settings.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/product_repository.dart';
+import '../repositories/supplier_repository.dart';
 import 'bluetooth_permission_service.dart';
 import 'bluetooth_printer_service.dart';
 import 'invoice_print_formatter.dart';
 import 'printer_settings_service.dart';
+import 'sales_invoice_actions_service.dart';
 
 class InvoicePrintResult {
   final bool success;
@@ -26,7 +25,7 @@ class InvoicePrintService {
     String? clientId,
   }) async {
     try {
-      final settings = await PrinterSettingsService.load();
+      final settings = PrinterSettingsService.current;
       if (settings.connectionType != PrinterConnectionType.bluetooth) {
         return const InvoicePrintResult(
           success: false,
@@ -92,7 +91,8 @@ class InvoicePrintService {
       if (!ok) {
         return const InvoicePrintResult(
           success: false,
-          messageAr: 'تعذر إرسال البيانات للطابعة — جرّب اختبار الطباعة من الإعدادات',
+          messageAr:
+              'تعذر إرسال البيانات للطابعة — جرّب اختبار الطباعة من الإعدادات',
         );
       }
 
@@ -109,19 +109,20 @@ class InvoicePrintService {
     Map<String, dynamic> invoice, {
     String? clientId,
   }) async {
-    final settings = await PrinterSettingsService.load();
+    final settings = PrinterSettingsService.current;
     if (!settings.printImmediatelyAfterSave) return false;
     final result = await printSalesInvoice(invoice, clientId: clientId);
     return result.success;
   }
 
-  /// Normalizes invoice fields. Uses local Hive data as the primary source,
-  /// falling back to Firestore only when local data is missing.
+  /// Builds the printable invoice from the latest Hive record. The supplied
+  /// map is only a fallback for unsaved previews or records absent from Hive.
+  /// Printing never waits for an upload or a Firestore read.
   static Future<Map<String, dynamic>> prepareForPrint(
     Map<String, dynamic> source, {
     String? clientId,
   }) async {
-    var invoice = normalizeInvoice(source, clientName: clientId);
+    var invoice = normalizeInvoice(source);
 
     final mainId =
         invoice['invoiceId']?.toString() ?? invoice['id']?.toString();
@@ -139,87 +140,53 @@ class InvoicePrintService {
       if (localInvoice != null) {
         final localMap = localInvoice.toMap();
         localMap['id'] = mainId;
-        final subProducts = invoice['products'];
         invoice = normalizeInvoice(
-          {...localMap, ...invoice},
-          clientName: clientId ?? localMap['clientName']?.toString(),
+          {...invoice, ...localMap},
         );
-        if (subProducts is List && subProducts.isNotEmpty) {
-          invoice['products'] = _normalizeProducts(subProducts);
-        }
-      } else {
-        // 2. Fallback: try Firestore if not in local Hive
-        try {
-          final mainDoc = await FirebaseFirestore.instance
-              .collection('invoices')
-              .doc(mainId)
-              .get();
-          final mainData = mainDoc.data();
-          if (mainDoc.exists && mainData != null) {
-            final main = Map<String, dynamic>.from(mainData);
-            main['id'] = mainDoc.id;
-            final subProducts = invoice['products'];
-            invoice = normalizeInvoice(
-              {...main, ...invoice},
-              clientName: clientId ?? main['clientName']?.toString(),
-            );
-            if (subProducts is List && subProducts.isNotEmpty) {
-              invoice['products'] = _normalizeProducts(subProducts);
-            }
-          }
-        } catch (_) {
-          // Offline — use local data as-is
-        }
       }
     }
 
-    // Fetch and inject current balance of client or supplier
-    final clientName = invoice['clientName']?.toString() ?? '';
-    final supplierName = invoice['supplierName']?.toString() ?? '';
+    return _enrichFromHive(invoice, clientId: clientId);
+  }
+
+  static Map<String, dynamic> _enrichFromHive(
+    Map<String, dynamic> invoice, {
+    String? clientId,
+  }) {
+    final clientName = invoice['clientName']?.toString().trim() ?? '';
+    final supplierName = invoice['supplierName']?.toString().trim() ?? '';
     final isSupplier = supplierName.isNotEmpty && clientName.isEmpty;
 
     if (isSupplier) {
-      final supplierId = invoice['supplierId']?.toString() ?? '';
-      double? totalBalance;
-      // Try local Hive supplier first
-      try {
-        final localSupplier = supplierId.isNotEmpty
-            ? suppliersBox.get(supplierId)
-            : null;
-        if (localSupplier != null) {
-          totalBalance = localSupplier.balance;
-        }
-      } catch (_) {}
-      // Fallback to Firestore
-      if (totalBalance == null && supplierId.isNotEmpty) {
-        try {
-          final snap = await FirebaseFirestore.instance
-              .collection('suppliers')
-              .doc(supplierId)
-              .get();
-          if (snap.exists) {
-            totalBalance = (snap.data()?['totalBalance'] as num?)?.toDouble();
-          }
-        } catch (_) {}
+      final supplierId = invoice['supplierId']?.toString().trim() ?? '';
+      final supplier = (supplierId.isNotEmpty
+              ? SupplierRepository.instance.getById(supplierId)
+              : null) ??
+          SupplierRepository.instance.findByName(supplierName);
+      if (supplier != null) {
+        invoice['supplierId'] = supplier.id;
+        invoice['supplierName'] = supplier.name;
+        invoice['currentSupplierBalance'] = supplier.balance;
       }
-      if (totalBalance == null && supplierName.isNotEmpty) {
-        try {
-          final query = await FirebaseFirestore.instance
-              .collection('suppliers')
-              .where('name', isEqualTo: supplierName)
-              .limit(1)
-              .get();
-          if (query.docs.isNotEmpty) {
-            totalBalance = (query.docs.first.data()['totalBalance'] as num?)?.toDouble();
-          }
-        } catch (_) {}
-      }
-      if (totalBalance != null) {
-        invoice['currentSupplierBalance'] = totalBalance;
-      }
+      return invoice;
     }
 
-    return invoice;
+    final storedClientId = invoice['clientId']?.toString().trim() ?? '';
+    final client = (storedClientId.isNotEmpty
+            ? ClientRepository.instance.getById(storedClientId)
+            : null) ??
+        (clientId != null
+            ? ClientRepository.instance.getById(clientId) ??
+                ClientRepository.instance.findByName(clientId)
+            : null) ??
+        (clientName.isNotEmpty
+            ? ClientRepository.instance.findByName(clientName)
+            : null);
+    if (client != null) {
+      invoice['clientId'] = client.id;
+      invoice['clientName'] = client.name;
+    }
+    return SalesInvoiceActionsService.buildClientPagePayload(invoice);
   }
 
   static Map<String, dynamic> normalizeInvoice(
@@ -285,25 +252,7 @@ class InvoicePrintService {
       final localClient = ClientRepository.instance.findByName(clientName);
       if (localClient != null) {
         phone = localClient.phone.isNotEmpty ? localClient.phone : null;
-        // address field is not stored in ClientLocal; skip or leave null
-      }
-
-      // 2. Fallback to Firestore for address or phone
-      try {
-        final query = await FirebaseFirestore.instance
-            .collection('clients')
-            .where('clientName', isEqualTo: clientName)
-            .limit(1)
-            .get();
-        if (query.docs.isNotEmpty) {
-          final data = query.docs.first.data();
-          address = data['address']?.toString() ??
-              data['clientAddress']?.toString();
-          phone ??=
-              data['phone']?.toString() ?? data['clientPhone']?.toString();
-        }
-      } catch (_) {
-        // Offline — use whatever we have from local Hive
+        address = localClient.address.isNotEmpty ? localClient.address : null;
       }
     }
 
@@ -331,18 +280,6 @@ class InvoicePrintService {
           };
           continue;
         }
-
-        // 2. Fallback to Firestore
-        try {
-          final query = await FirebaseFirestore.instance
-              .collection('products')
-              .where('name', isEqualTo: name)
-              .limit(1)
-              .get();
-          if (query.docs.isNotEmpty) {
-            productDetails[name] = query.docs.first.data();
-          }
-        } catch (_) {}
       }
     }
 
@@ -358,4 +295,3 @@ class InvoicePrintService {
     return double.tryParse(value?.toString() ?? '') ?? 0.0;
   }
 }
-

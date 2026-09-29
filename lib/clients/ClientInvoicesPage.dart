@@ -26,9 +26,10 @@ import '../sync/connectivity_service.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/balance_history_repository.dart';
-import '../repositories/box_repository.dart';
-import '../local_db/models/balance_history_local.dart';
-import '../sync/sync_queue_manager.dart';
+import '../Services/customer_operation_service.dart';
+import '../Services/customer_balance_store.dart';
+import '../Widgets/invoice_display_widgets.dart';
+import '../local_db/hive_init.dart';
 
 part 'invoice_edit_sheet.dart';
 
@@ -66,6 +67,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   final TextEditingController _addBalanceController = TextEditingController();
   final TextEditingController _notesController = TextEditingController();
   final ScrollController _invoiceScrollController = ScrollController();
+  final List<StreamSubscription> _localSubscriptions = [];
   bool _isSaving = false; // Add loading state
   bool _generatingStatement = false;
   bool _autoEditTriggered = false;
@@ -103,22 +105,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         }
         return;
       }
-      // Cache empty (first-ever launch): fall back to Firestore.
-      final qs = await FirebaseFirestore.instance.collection('products').get();
-      if (mounted) {
-        setState(() {
-          _allProds = qs.docs.map((doc) {
-            final docData = doc.data() as Map<String, dynamic>?;
-            return _ProdInfo(
-              name: (docData?['name'] ?? '').toString(),
-              sellingPrice1: (docData?['sellingPrice1'] ?? 0.0).toDouble(),
-              sellingPrice2: (docData?['sellingPrice2'] ?? 0.0).toDouble(),
-              sellingPrice3: (docData?['sellingPrice3'] ?? 0.0).toDouble(),
-              quantity: (docData?['quantity'] as num?)?.toDouble() ?? 0.0,
-            );
-          }).toList();
-        });
-      }
     } catch (_) {}
   }
 
@@ -130,61 +116,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   Future<double> _productCostTotal(List<Map<String, dynamic>> products) async {
     return InvoiceStockService.computeCostTotalAsync(products);
-  }
-
-  Future<void> _syncRootSalesInvoice(
-    String clientInvoiceDocId,
-    Map<String, dynamic> fields,
-  ) async {
-    final clientRef = FirebaseFirestore.instance
-        .collection('clients')
-        .doc(widget.clientId)
-        .collection('invoices')
-        .doc(clientInvoiceDocId);
-    final snap = await clientRef.get();
-    if (!snap.exists) return;
-
-    final data = snap.data();
-    if (data == null) return;
-    final rootId = data['invoiceId']?.toString();
-    if (rootId == null || rootId.isEmpty) return;
-
-    final rootRef =
-        FirebaseFirestore.instance.collection('invoices').doc(rootId);
-    final rootSnap = await rootRef.get();
-    if (!rootSnap.exists) return;
-
-    final rootUpdate = <String, dynamic>{};
-    if (fields.containsKey('products')) {
-      final products =
-          List<Map<String, dynamic>>.from(fields['products'] as List);
-      rootUpdate['products'] = products;
-      final totalSum = fields.containsKey('totalSum')
-          ? _numField(fields['totalSum'])
-          : _numField(data['totalSum']);
-      rootUpdate['totalSum'] = totalSum;
-      rootUpdate['profitMargin'] = totalSum - await _productCostTotal(products);
-    } else if (fields.containsKey('totalSum')) {
-      final totalSum = _numField(fields['totalSum']);
-      rootUpdate['totalSum'] = totalSum;
-      final products = List<Map<String, dynamic>>.from(
-        (data['products'] as List?) ?? [],
-      );
-      if (products.isNotEmpty) {
-        rootUpdate['profitMargin'] =
-            totalSum - await _productCostTotal(products);
-      }
-    }
-    if (fields.containsKey('paidAmount')) {
-      rootUpdate['paidAmount'] = _numField(fields['paidAmount']);
-    }
-    if (fields.containsKey('balance')) {
-      rootUpdate['balance'] = _numField(fields['balance']);
-    }
-
-    if (rootUpdate.isNotEmpty) {
-      await rootRef.update(rootUpdate);
-    }
   }
 
   Future<void> _fetchInvoices({bool reset = false}) async {
@@ -237,7 +168,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       }
 
       // 2. Background sync from Firestore if online (fire-and-forget)
-      if (ConnectivityService.instance.isOnline) {
+      if (reset && ConnectivityService.instance.isOnline) {
         _backgroundSyncInvoices();
       }
     } catch (e) {
@@ -251,8 +182,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
 
   Future<void> _backgroundSyncInvoices() async {
     try {
-      // Rebuild the balance from one logical entry per invoice before reading
-      // any of the three screens' data sources.
+      // Hydrate guarded caches without assigning or repairing financial balances.
       await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
       await ClientRepository.instance.deltaSync();
       await BalanceHistoryRepository.instance
@@ -354,67 +284,19 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
 
     try {
-      // 1. Get current balance from local Hive immediately
-      final clientLocal = ClientRepository.instance.getById(widget.clientId);
-      final double currentBalance =
-          BalanceHistoryRepository.instance.calculateClientBalance(
-        widget.clientId,
-        fallback: clientLocal?.balance ?? _currentClientBalance ?? 0.0,
-      );
-
-      final double newBalance = isAddition
-          ? currentBalance + enteredBalance
-          : currentBalance - enteredBalance;
-
-      final historyId = DateTime.now().millisecondsSinceEpoch.toString();
-
-      // 2. Save to local Hive database immediately (0ms wait)
-      await ClientRepository.instance
-          .updateLocalBalance(widget.clientId, newBalance);
-
-      await BalanceHistoryRepository.instance.upsertLocal(
-        BalanceHistoryLocal(
-          id: historyId,
-          parentId: widget.clientId,
-          parentType: 'client',
-          enteredBalance: enteredBalance,
-          balanceBefore: currentBalance,
-          type: isAddition ? 'addition' : 'deduction',
-          notes: notesText,
-          timestamp: DateTime.now(),
-        ),
-      );
-
-      if (isAddition) {
-        await BoxRepository.instance.decrement(enteredBalance);
-      } else {
-        await BoxRepository.instance.increment(enteredBalance);
-      }
-
+      await CustomerOperationService.savePayment(
+          clientId: widget.clientId,
+          amount: enteredBalance,
+          isAddition: isAddition,
+          notes: notesText);
+      ConnectivityService.instance.forceSync();
       _balanceController.clear();
       _addBalanceController.clear();
       _notesController.clear();
-
-      if (mounted) {
-        setState(() {
-          _currentClientBalance = newBalance;
-        });
-        _refreshInvoices();
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
-        );
-      }
-
-      // 3. Sync to Firestore asynchronously in background (non-blocking)
-      _syncClientBalanceToFirestoreInBackground(
-        clientId: widget.clientId,
-        newBalance: newBalance,
-        currentBalance: currentBalance,
-        enteredBalance: enteredBalance,
-        isAddition: isAddition,
-        notesText: notesText,
-        historyId: historyId,
-      );
+      await _refreshInvoices();
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('تم الحفظ محلياً')));
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -422,526 +304,6 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
         );
       }
     }
-  }
-
-  void _syncClientBalanceToFirestoreInBackground({
-    required String clientId,
-    required double newBalance,
-    required double currentBalance,
-    required double enteredBalance,
-    required bool isAddition,
-    required String notesText,
-    required String historyId,
-  }) async {
-    final logEntry = <String, dynamic>{
-      'enteredBalance': enteredBalance,
-      'balanceBefore': currentBalance,
-      'type': isAddition ? 'addition' : 'deduction',
-      'notes': notesText,
-      'timestamp': DateTime.now().toIso8601String(),
-    };
-
-    try {
-      // Always use the queue, even while online, so this operation follows one
-      // idempotent path and cannot be partly written then applied again.
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'adjustClientBalance',
-        payload: {
-          'clientId': clientId,
-          'amount': enteredBalance,
-          'isAddition': isAddition,
-          'logEntry': logEntry,
-          'newBalance': newBalance,
-          'historyId': historyId,
-        },
-      );
-      ConnectivityService.instance.forceSync();
-    } catch (_) {}
-  }
-
-  Future<void> _editProduct(
-      String invoiceId, int productIndex, Map<String, dynamic> product) async {
-    // Resolve product info from loaded list, fall back to stored prices
-    final double storedPrice = invoiceLineUnitPrice(product);
-    _ProdInfo? prodInfo = _allProds.cast<_ProdInfo?>().firstWhere(
-          (p) => p!.name == product['product'].toString(),
-          orElse: () => null,
-        );
-    prodInfo ??= _ProdInfo(
-      name: product['product'].toString(),
-      sellingPrice1: storedPrice,
-      sellingPrice2: storedPrice,
-      sellingPrice3: storedPrice,
-      quantity: 0.0,
-    );
-
-    double amount = double.tryParse(product['amount'].toString()) ?? 1.0;
-    double customPrice = storedPrice;
-
-    // Detect price tier
-    int priceTier = 0;
-    if (storedPrice == prodInfo.sellingPrice1)
-      priceTier = 1;
-    else if (storedPrice == prodInfo.sellingPrice2)
-      priceTier = 2;
-    else if (storedPrice == prodInfo.sellingPrice3) priceTier = 3;
-
-    bool isSaving = false;
-    final TextEditingController qtyCtrl =
-        TextEditingController(text: amount.toStringAsFixed(1));
-    final TextEditingController customPriceCtrl =
-        TextEditingController(text: customPrice.toStringAsFixed(2));
-
-    await showModalBottomSheet(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-          borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
-      builder: (ctx) {
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          _selectAllField(qtyCtrl);
-        });
-        return StatefulBuilder(builder: (ctx, setSheet) {
-          double price = prodInfo!.priceForTier(priceTier, customPrice);
-          double total = amount * price;
-
-          return Directionality(
-            textDirection: TextDirection.rtl,
-            child: Padding(
-              padding: EdgeInsets.only(
-                bottom: MediaQuery.of(ctx).viewInsets.bottom,
-                left: 16,
-                right: 16,
-                top: 20,
-              ),
-              child: SingleChildScrollView(
-                child: Column(
-                  mainAxisSize: MainAxisSize.min,
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    // ── Title ──
-                    Center(
-                      child: Container(
-                        width: 40,
-                        height: 4,
-                        margin: const EdgeInsets.only(bottom: 16),
-                        decoration: BoxDecoration(
-                          color: Colors.grey.shade300,
-                          borderRadius: BorderRadius.circular(2),
-                        ),
-                      ),
-                    ),
-                    Text('تعديل منتج',
-                        textAlign: TextAlign.center,
-                        style: const TextStyle(
-                            fontSize: 17, fontWeight: FontWeight.bold)),
-                    const SizedBox(height: 16),
-
-                    // ── Product search / autocomplete ──
-                    Autocomplete<_ProdInfo>(
-                      initialValue: TextEditingValue(text: prodInfo!.name),
-                      optionsBuilder: (val) {
-                        if (val.text.isEmpty) {
-                          return const Iterable<_ProdInfo>.empty();
-                        }
-                        return _allProds.where((p) => p.name
-                            .toLowerCase()
-                            .contains(val.text.toLowerCase()));
-                      },
-                      displayStringForOption: (p) => p.name,
-                      optionsViewBuilder: (ctx2, onSelected, options) {
-                        return Align(
-                          alignment: Alignment.topLeft,
-                          child: Material(
-                            elevation: 4,
-                            borderRadius: BorderRadius.circular(8),
-                            child: ConstrainedBox(
-                              constraints: const BoxConstraints(maxHeight: 200),
-                              child: ListView.builder(
-                                padding: EdgeInsets.zero,
-                                shrinkWrap: true,
-                                itemCount: options.length,
-                                itemBuilder: (_, i) {
-                                  final p = options.elementAt(i);
-                                  return ListTile(
-                                    dense: true,
-                                    title: Text(p.name,
-                                        textAlign: TextAlign.right),
-                                    subtitle: Text(
-                                        'س1: ${p.sellingPrice1.toStringAsFixed(2)}',
-                                        textAlign: TextAlign.right,
-                                        style: const TextStyle(
-                                            fontSize: 11, color: Colors.grey)),
-                                    onTap: () => onSelected(p),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        );
-                      },
-                      fieldViewBuilder: (ctx2, ctrl2, focus, _) {
-                        return TextField(
-                          controller: ctrl2,
-                          focusNode: focus,
-                          textAlign: TextAlign.right,
-                          decoration: InputDecoration(
-                            labelText: 'ابحث عن منتج',
-                            prefixIcon:
-                                const Icon(Icons.search, color: Colors.orange),
-                            border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8)),
-                            focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: const BorderSide(
-                                    color: Colors.orange, width: 2)),
-                          ),
-                          onTap: () => _selectAllField(ctrl2),
-                        );
-                      },
-                      onSelected: (p) {
-                        setSheet(() {
-                          prodInfo = p;
-                          // Keep tier, update custom price reference
-                          customPrice = p.priceForTier(priceTier, customPrice);
-                          customPriceCtrl.text = customPrice.toStringAsFixed(2);
-                        });
-                      },
-                    ),
-                    const SizedBox(height: 14),
-
-                    // ── Price tier + price display ──
-                    Row(children: [
-                      Expanded(
-                        flex: 3,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 10, horizontal: 12),
-                          decoration: BoxDecoration(
-                            color: Colors.grey.shade100,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.grey.shade300),
-                          ),
-                          child: Text(
-                            price.toStringAsFixed(2),
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                                fontSize: 16, fontWeight: FontWeight.bold),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      _PriceTierBtn(
-                          label: '3',
-                          selected: priceTier == 3,
-                          onTap: () => setSheet(() => priceTier = 3)),
-                      const SizedBox(width: 4),
-                      _PriceTierBtn(
-                          label: '2',
-                          selected: priceTier == 2,
-                          onTap: () => setSheet(() => priceTier = 2)),
-                      const SizedBox(width: 4),
-                      _PriceTierBtn(
-                          label: '1',
-                          selected: priceTier == 1,
-                          onTap: () => setSheet(() => priceTier = 1)),
-                      const SizedBox(width: 4),
-                      _PriceTierBtn(
-                          label: 'خ',
-                          selected: priceTier == 0,
-                          onTap: () => setSheet(() => priceTier = 0)),
-                      const SizedBox(width: 8),
-                      const Text('سعر البيع', style: TextStyle(fontSize: 13)),
-                    ]),
-
-                    // ── Custom price input ──
-                    if (priceTier == 0) ...[
-                      const SizedBox(height: 8),
-                      TextField(
-                        controller: customPriceCtrl,
-                        textAlign: TextAlign.center,
-                        keyboardType: const TextInputType.numberWithOptions(
-                            decimal: true),
-                        autofocus: true,
-                        decoration: InputDecoration(
-                          labelText: 'سعر خاص',
-                          prefixIcon:
-                              const Icon(Icons.edit, color: Colors.orange),
-                          border: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8)),
-                          focusedBorder: OutlineInputBorder(
-                              borderRadius: BorderRadius.circular(8),
-                              borderSide: const BorderSide(
-                                  color: Colors.orange, width: 2)),
-                        ),
-                        onTap: () => _selectAllField(customPriceCtrl),
-                        onChanged: (v) => setSheet(
-                            () => customPrice = double.tryParse(v) ?? 0.0),
-                      ),
-                    ],
-                    const SizedBox(height: 12),
-
-                    // ── Total + Qty controls ──
-                    Row(children: [
-                      Expanded(
-                        flex: 3,
-                        child: Container(
-                          padding: const EdgeInsets.symmetric(
-                              vertical: 10, horizontal: 12),
-                          decoration: BoxDecoration(
-                            color: Colors.orange.shade50,
-                            borderRadius: BorderRadius.circular(8),
-                            border: Border.all(color: Colors.orange.shade200),
-                          ),
-                          child: Text(
-                            total.toStringAsFixed(2),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 16,
-                                fontWeight: FontWeight.bold,
-                                color: Colors.orange.shade800),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      _CircleBtn(
-                          icon: Icons.remove,
-                          onTap: () {
-                            if (amount > 1) {
-                              setSheet(() {
-                                amount -= 1;
-                                qtyCtrl.text = amount.toStringAsFixed(1);
-                              });
-                            }
-                          }),
-                      const SizedBox(width: 6),
-                      SizedBox(
-                        width: 64,
-                        child: TextField(
-                          controller: qtyCtrl,
-                          textAlign: TextAlign.center,
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.teal.shade700),
-                          decoration: InputDecoration(
-                            border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide:
-                                    const BorderSide(color: Colors.orange)),
-                            focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8),
-                                borderSide: const BorderSide(
-                                    color: Colors.orange, width: 2)),
-                            contentPadding:
-                                const EdgeInsets.symmetric(vertical: 8),
-                          ),
-                          onTap: () => _selectAllField(qtyCtrl),
-                          onChanged: (v) => setSheet(
-                              () => amount = double.tryParse(v) ?? amount),
-                        ),
-                      ),
-                      const SizedBox(width: 6),
-                      _CircleBtn(
-                          icon: Icons.add,
-                          onTap: () => setSheet(() {
-                                amount += 1;
-                                qtyCtrl.text = amount.toStringAsFixed(1);
-                              })),
-                      const SizedBox(width: 8),
-                      const Text('الكمية', style: TextStyle(fontSize: 13)),
-                    ]),
-                    const SizedBox(height: 12),
-
-                    // ── Available quantity ──
-                    Row(
-                      mainAxisAlignment: MainAxisAlignment.spaceBetween,
-                      children: [
-                        const Text('الكمية المتوفرة',
-                            style: TextStyle(fontSize: 13)),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                              horizontal: 24, vertical: 8),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: Colors.grey.shade300),
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(prodInfo!.quantity.toStringAsFixed(1),
-                              style: const TextStyle(
-                                  fontSize: 15, fontWeight: FontWeight.bold)),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 16),
-
-                    // ── Action buttons ──
-                    Row(children: [
-                      Expanded(
-                        child: TextButton(
-                          onPressed: () => Navigator.pop(ctx),
-                          child: const Text('تراجع',
-                              style: TextStyle(
-                                  color: Colors.orange,
-                                  fontSize: 15,
-                                  fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: Colors.orange.withOpacity(0.85),
-                            shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(8)),
-                            padding: const EdgeInsets.symmetric(vertical: 12),
-                          ),
-                          onPressed: isSaving
-                              ? null
-                              : () async {
-                                  setSheet(() => isSaving = true);
-                                  try {
-                                    final String newName = prodInfo!.name;
-                                    final String oldName =
-                                        product['product'].toString();
-                                    final double oldAmount = double.tryParse(
-                                            product['amount'].toString()) ??
-                                        0.0;
-                                    final double newAmount = amount;
-                                    final double newPrice = prodInfo!
-                                        .priceForTier(priceTier, customPrice);
-                                    final double newTotal =
-                                        newAmount * newPrice;
-
-                                    // Restore old product quantity
-                                    final oldQ = await FirebaseFirestore
-                                        .instance
-                                        .collection('products')
-                                        .where('name', isEqualTo: oldName)
-                                        .get();
-                                    for (var doc in oldQ.docs) {
-                                      final docData =
-                                          doc.data() as Map<String, dynamic>?;
-                                      final qty =
-                                          ((docData?['quantity'] ?? 0.0) as num)
-                                              .toDouble();
-                                      await FirebaseFirestore.instance
-                                          .collection('products')
-                                          .doc(doc.id)
-                                          .update(
-                                              {'quantity': qty + oldAmount});
-                                      await FirebaseFirestore.instance
-                                          .collection('products')
-                                          .doc(doc.id)
-                                          .collection('changes')
-                                          .add({
-                                        'date': DateTime.now(),
-                                        'amount': oldAmount,
-                                        'type': 'increase',
-                                      });
-                                    }
-
-                                    // Decrease new product quantity
-                                    final newQ = await FirebaseFirestore
-                                        .instance
-                                        .collection('products')
-                                        .where('name', isEqualTo: newName)
-                                        .get();
-                                    for (var doc in newQ.docs) {
-                                      final docData =
-                                          doc.data() as Map<String, dynamic>?;
-                                      final qty =
-                                          ((docData?['quantity'] ?? 0.0) as num)
-                                              .toDouble();
-                                      await FirebaseFirestore.instance
-                                          .collection('products')
-                                          .doc(doc.id)
-                                          .update(
-                                              {'quantity': qty - newAmount});
-                                      await FirebaseFirestore.instance
-                                          .collection('products')
-                                          .doc(doc.id)
-                                          .collection('changes')
-                                          .add({
-                                        'date': DateTime.now(),
-                                        'amount': newAmount,
-                                        'type': 'decrease',
-                                      });
-                                    }
-
-                                    // Update invoice products list
-                                    final invoiceRef = FirebaseFirestore
-                                        .instance
-                                        .collection('clients')
-                                        .doc(widget.clientId)
-                                        .collection('invoices')
-                                        .doc(invoiceId);
-                                    final snap = await invoiceRef.get();
-                                    final snapData =
-                                        snap.data() as Map<String, dynamic>?;
-                                    final List<Map<String, dynamic>> prods =
-                                        List<Map<String, dynamic>>.from(
-                                            snapData?['products'] ?? []);
-                                    prods[productIndex] = {
-                                      'product': newName,
-                                      'amount': newAmount.toString(),
-                                      'selectedPrice': newPrice.toString(),
-                                      'total': newTotal.toString(),
-                                    };
-                                    double newTotalSum = prods.fold(
-                                        0.0,
-                                        (s, p) =>
-                                            s +
-                                            (double.tryParse(
-                                                    p['total'].toString()) ??
-                                                0.0));
-                                    await invoiceRef.update({
-                                      'products': prods,
-                                      'totalSum': newTotalSum,
-                                    });
-
-                                    await ClientInvoiceBalanceSyncService
-                                        .syncForClient(widget.clientId);
-
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                        const SnackBar(
-                                            content:
-                                                Text('تم تعديل المنتج بنجاح')));
-                                    setState(() {});
-                                    Navigator.pop(ctx);
-                                  } catch (e) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                        SnackBar(content: Text('حدث خطأ: $e')));
-                                    if (ctx.mounted) {
-                                      setSheet(() => isSaving = false);
-                                    }
-                                  }
-                                },
-                          child: isSaving
-                              ? const SizedBox(
-                                  width: 16,
-                                  height: 16,
-                                  child: CircularProgressIndicator(
-                                      strokeWidth: 2, color: Colors.white))
-                              : const Text('متابعة',
-                                  style: TextStyle(
-                                      color: Colors.white,
-                                      fontSize: 15,
-                                      fontWeight: FontWeight.bold)),
-                        ),
-                      ),
-                    ]),
-                    const SizedBox(height: 24),
-                  ],
-                ),
-              ),
-            ),
-          );
-        });
-      },
-    );
   }
 
   Future<Map<String, dynamic>> _invoicePayloadForEdit(
@@ -1010,104 +372,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     }
 
     try {
-      // 1. Get the invoice data (from parameter, local Hive, or Firestore)
-      Map<String, dynamic>? data = invoiceData;
-      if (data == null || (data['products'] as List?) == null) {
-        final localInv = InvoiceRepository.instance.getSaleById(invoiceId);
-        if (localInv != null) {
-          data = localInv.toMap();
-        }
-      }
-
-      if (data == null) {
-        final snap = await FirebaseFirestore.instance
-            .collection('clients')
-            .doc(widget.clientId)
-            .collection('invoices')
-            .doc(invoiceId)
-            .get();
-        if (snap.exists) {
-          data = snap.data();
-        } else {
-          final rootSnap = await FirebaseFirestore.instance
-              .collection('invoices')
-              .doc(invoiceId)
-              .get();
-          if (rootSnap.exists) {
-            data = rootSnap.data();
-          }
-        }
-      }
-
-      final products = List<Map<String, dynamic>>.from(
-        (data?['products'] as List?) ?? [],
-      );
-      final paidAmount = invoiceNum(data?['paidAmount']);
-      final totalSum = invoiceNum(data?['totalSum']);
-      final rootInvoiceId = data?['invoiceId']?.toString() ?? invoiceId;
-
-      // 2. Return products back to stock (Hive local cache)
-      if (products.isNotEmpty) {
-        await InvoiceStockService.applyStockChanges(
-          lines: products,
-          restore: true,
-          changeDate: DateTime.now(),
-        );
-      }
-
-      // 3. Delete invoice locally from Hive
-      await InvoiceRepository.instance.deleteSaleLocal(invoiceId);
-      if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
-        await InvoiceRepository.instance.deleteSaleLocal(rootInvoiceId);
-      }
-
-      // 4. Delete balance history entries for this invoice locally from Hive
-      final invNumberStr = data?['invoiceNumber']?.toString();
-      await BalanceHistoryRepository.instance.deleteByInvoiceId(
-        'client',
-        widget.clientId,
-        invoiceId,
-        invoiceNumber: invNumberStr,
-      );
-      if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
-        await BalanceHistoryRepository.instance.deleteByInvoiceId(
-          'client',
-          widget.clientId,
-          rootInvoiceId,
-          invoiceNumber: invNumberStr,
-        );
-      }
-
-      // 5. Adjust Cash Box locally if there was a payment
-      if (paidAmount > 0) {
-        await BoxRepository.instance.decrement(paidAmount);
-      }
-
-      // 6. Update client balance locally in Hive
-      final unpaid = totalSum - paidAmount;
-      final localClient = ClientRepository.instance.getById(widget.clientId) ??
-          ClientRepository.instance.findByName(_clientName ?? widget.clientId);
-      if (localClient != null) {
-        await ClientRepository.instance
-            .updateLocalBalance(localClient.id, localClient.balance - unpaid);
-      }
-
-      // 7. Enqueue sync operation to Firestore
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'deleteInvoice',
-        payload: {
-          'clientId': widget.clientId,
-          'invoiceId': rootInvoiceId,
-          'clientSubDocId': invoiceId,
-          'products': products,
-          'totalSum': totalSum,
-          'paidAmount': paidAmount,
-        },
-      );
-
-      // 8. Trigger background sync immediately
+      final rootId = invoiceData == null
+          ? invoiceId
+          : SalesInvoiceActionsService.rootInvoiceIdFrom(invoiceData);
+      await CustomerOperationService.deleteInvoice(
+          rootId.isEmpty ? invoiceId : rootId,
+          clientSubDocId: invoiceId);
       ConnectivityService.instance.forceSync();
-
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(
@@ -1207,77 +478,13 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     if (confirmed != true || !mounted) return;
 
     try {
-      final products =
-          List<Map<String, dynamic>>.from(data['products'] as List? ?? []);
-      final rootInvoiceId = data['invoiceId']?.toString() ?? docId;
-      final totalSum = invoiceNum(data['totalSum']);
-      final paidAmount = invoiceNum(data['paidAmount']);
-
-      // 1. Reverse the stock restore (return invoice added stock, so deleting it decreases stock)
-      if (products.isNotEmpty) {
-        await InvoiceStockService.applyStockChanges(
-          lines: products,
-          restore: false,
-          changeDate: DateTime.now(),
-          changeTypeWhenDecrease: 'decrease',
-        );
-      }
-
-      // 2. Delete return invoice locally from Hive
-      await InvoiceRepository.instance.deleteReturnLocal(docId);
-      if (rootInvoiceId.isNotEmpty && rootInvoiceId != docId) {
-        await InvoiceRepository.instance.deleteReturnLocal(rootInvoiceId);
-      }
-
-      // 3. Delete balance history from Hive
-      final retNumberStr = data['invoiceNumber']?.toString();
-      await BalanceHistoryRepository.instance.deleteByInvoiceId(
-        'client',
-        widget.clientId,
-        docId,
-        invoiceNumber: retNumberStr,
-      );
-      if (rootInvoiceId.isNotEmpty && rootInvoiceId != docId) {
-        await BalanceHistoryRepository.instance.deleteByInvoiceId(
-          'client',
-          widget.clientId,
-          rootInvoiceId,
-          invoiceNumber: retNumberStr,
-        );
-      }
-
-      // 4. Update client balance locally in Hive (return reduced debt, so deleting it restores debt)
-      final balanceDiff = totalSum - paidAmount;
-      final localClient = ClientRepository.instance.getById(widget.clientId) ??
-          ClientRepository.instance.findByName(_clientName ?? widget.clientId);
-      if (localClient != null) {
-        await ClientRepository.instance.updateLocalBalance(
-            localClient.id, localClient.balance + balanceDiff);
-      }
-
-      // 5. Enqueue return deletion to SyncQueue
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'deleteReturn',
-        payload: {
-          'clientId': widget.clientId,
-          'invoiceId': rootInvoiceId,
-          'clientSubDocId': docId,
-          'products': products,
-          'totalSum': totalSum,
-          'paidAmount': paidAmount,
-        },
-      );
-
-      // 6. Trigger sync immediately
+      final rootId = SalesInvoiceActionsService.rootInvoiceIdFrom(data);
+      await CustomerOperationService.deleteInvoice(
+          rootId.isEmpty ? docId : rootId,
+          isReturn: true,
+          clientSubDocId: docId);
       ConnectivityService.instance.forceSync();
-
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('تم حذف فاتورة المرتجع بنجاح')),
-        );
-        _fetchClientName();
-        await _refreshInvoices();
-      }
+      await _refreshInvoices();
     } catch (e) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -2004,6 +1211,15 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
   @override
   void initState() {
     super.initState();
+    for (final box in [
+      clientsBox,
+      invoicesBox,
+      returnInvoicesBox,
+      balanceHistoryBox
+    ]) {
+      _localSubscriptions.add(box.watch().listen((_) => _fetchInvoices()));
+    }
+
     _searchController.addListener(() {
       if (mounted) {
         setState(() {
@@ -2021,60 +1237,21 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     // 1. Read directly from local Hive (0ms)
     final local = ClientRepository.instance.getById(widget.clientId) ??
         ClientRepository.instance.findByName(widget.clientId);
-    double? localLedgerBalance;
     if (local != null && mounted) {
       final ledgerBalance = BalanceHistoryRepository.instance
           .calculateClientBalance(local.id, fallback: local.balance);
-      localLedgerBalance = ledgerBalance;
       setState(() {
         _clientName = local.name;
         _currentClientBalance = ledgerBalance;
       });
     }
-
-    // 2. Background refresh of client metadata from Firestore if online.
-    //    We ONLY update the name and upsert metadata — never overwrite balance
-    //    from Firestore because Hive is the primary balance store.
-    try {
-      final bool isOnline = ConnectivityService.instance.isOnline;
-      if (isOnline) {
-        final snap = await FirebaseFirestore.instance
-            .collection('clients')
-            .doc(widget.clientId)
-            .get();
-
-        if (snap.exists && mounted) {
-          final data = snap.data();
-          if (data != null) {
-            final rawName =
-                (data['clientName'] ?? data['name'])?.toString().trim() ?? '';
-            final resolvedName = rawName.isNotEmpty ? rawName : widget.clientId;
-
-            setState(() {
-              _clientName = resolvedName;
-              // Never overwrite balance from Firestore — Hive is authoritative.
-            });
-
-            // Upsert metadata but preserve local balance
-            final Map<String, dynamic> localData =
-                Map<String, dynamic>.from(data);
-            localData['clientName'] = resolvedName;
-            // Always keep the local Hive ledger balance, not the Firestore one
-            final localBalance = localLedgerBalance ??
-                _currentClientBalance ??
-                local?.balance ??
-                0.0;
-            localData['balance'] = localBalance;
-            await ClientRepository.instance
-                .upsertLocal(widget.clientId, localData);
-          }
-        }
-      }
-    } catch (_) {}
   }
 
   @override
   void dispose() {
+    for (final sub in _localSubscriptions) {
+      sub.cancel();
+    }
     _searchController.dispose();
     _invoiceScrollController.dispose();
     _balanceController.dispose();
@@ -2114,6 +1291,14 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
       salesInvoices: sales,
       returnInvoices: returns,
       payments: payments,
+      initialBalance: CustomerBalanceStore.hasBase(widget.clientId)
+          ? ClientInvoiceRunningBalanceService.carryForward(
+              currentBalance: ClientRepository.instance
+                  .computeLiveBalanceFromHive(widget.clientId),
+              salesInvoices: sales,
+              returnInvoices: returns,
+              payments: payments)
+          : 0,
     );
 
     final List<_InvoiceEntry> merged = [
@@ -2195,15 +1380,12 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
     final formattedDate = invoiceDate.toString().split(' ')[0];
     final formattedTime = intl.DateFormat('hh:mm a').format(invoiceDate);
 
-    final previousBalance = invoiceDynamicPreviousBalance(invoiceData);
-    final remainingOwed = invoiceClientRemainingOwed(invoiceData);
-    final totalSum = invoiceNum(invoiceData['totalSum']);
-    final discount = invoiceResolveDiscount(invoiceData);
     final String notes =
         (invoiceData['notes'] ?? invoiceData['description'] ?? '')
             .toString()
             .trim();
 
+    final totalSum = invoiceNum(invoiceData['totalSum']);
     final invoiceId = entry.id;
     final isExpanded = _expandedInvoiceIds.contains(invoiceId);
 
@@ -2384,71 +1566,7 @@ class _ClientInvoicesPageState extends State<ClientInvoicesPage> {
               _buildInvoiceProductsTable(
                 List<dynamic>.from(invoiceData['products'] ?? []),
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              'الرصيد السابق: ${invoiceAmount(previousBalance)}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(width: 20.w),
-                            Text(
-                              'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (discount > 0)
-                          Text(
-                            'خصم الفاتورة: ${invoiceAmount(discount)}',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red,
-                            ),
-                          ),
-                        Text(
-                          'المدفوع: ${invoiceAmount(invoiceData['paidAmount'])}',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green,
-                          ),
-                        ),
-                        Text(
-                          'المتبقي من الفاتورة: ${invoiceAmount(totalSum - invoiceNum(invoiceData['paidAmount']))}',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.orange,
-                          ),
-                        ),
-                        Text(
-                          'المتبقي عليكم: ${invoiceAmount(remainingOwed)}',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.redAccent,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
-              ),
+              InvoiceTotalsFooter(invoice: invoiceData),
             ],
           ],
         ),
@@ -2695,18 +1813,26 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
   bool _isBusy = false;
   List<_ItemDoc> _historyDocs = [];
   bool _isLoading = true;
-  StreamSubscription<QuerySnapshot>? _historySubscription;
+  StreamSubscription? _historySubscription;
+  final List<StreamSubscription> _financialSubscriptions = [];
 
   @override
   void initState() {
     super.initState();
     _loadFromLocalCache();
     _listenToHistory();
+    for (final box in [clientsBox, invoicesBox, returnInvoicesBox]) {
+      _financialSubscriptions
+          .add(box.watch().listen((_) => _loadFromLocalCache()));
+    }
   }
 
   @override
   void dispose() {
     _historySubscription?.cancel();
+    for (final sub in _financialSubscriptions) {
+      sub.cancel();
+    }
     super.dispose();
   }
 
@@ -2720,7 +1846,17 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
     final sortedAscending = _sortDocsAscending(docs);
 
     // 2. Compute dynamic chronological running balances
-    double running = 0.0;
+    final cachedNet = sortedAscending.fold<double>(
+        0,
+        (sum, item) =>
+            sum +
+            (_isIncreaseType(item.data['type']?.toString() ?? '') ? 1 : -1) *
+                invoiceNum(item.data['enteredBalance']));
+    double running = CustomerBalanceStore.hasBase(widget.clientId)
+        ? ClientRepository.instance
+                .computeLiveBalanceFromHive(widget.clientId) -
+            cachedNet
+        : 0;
     for (final item in sortedAscending) {
       final data = item.data;
       final type = data['type']?.toString() ?? 'deduction';
@@ -2754,29 +1890,15 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
 
   void _listenToHistory() {
     _historySubscription?.cancel();
-    _historySubscription = FirebaseFirestore.instance
-        .collection('clients')
-        .doc(widget.clientId)
-        .collection('balanceHistory')
-        .orderBy('timestamp', descending: true)
-        .snapshots()
-        .listen((snapshot) async {
-      for (final doc in snapshot.docs) {
-        final data = doc.data() as Map<String, dynamic>? ?? {};
-        final entry = BalanceHistoryLocal.fromFirestore(
-          doc.id,
-          widget.clientId,
-          'client',
-          data,
-        );
-        await BalanceHistoryRepository.instance.upsertLocal(entry);
-      }
-      _loadFromLocalCache();
-    }, onError: (_) {
-      if (mounted) {
-        setState(() => _isLoading = false);
-      }
-    });
+    _historySubscription =
+        balanceHistoryBox.watch().listen((_) => _loadFromLocalCache());
+    if (ConnectivityService.instance.isOnline) {
+      BalanceHistoryRepository.instance
+          .fullSyncForClient(widget.clientId)
+          .catchError((Object e) {
+        appMetaBox.put('cloudRefreshError', e.toString());
+      });
+    }
   }
 
   static int _typePriorityAscending(String type) {
@@ -3031,117 +2153,27 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
 
     setState(() => _isBusy = true);
     try {
-      final diff = newAmount - currentAmount;
-      final historyRef = FirebaseFirestore.instance
-          .collection('clients')
-          .doc(widget.clientId)
-          .collection('balanceHistory')
-          .doc(entry.id);
-
-      final batch = FirebaseFirestore.instance.batch();
-
-      // Update history doc
-      batch.update(historyRef, {
-        'enteredBalance': newAmount,
-        'notes': newNotes,
-      });
-
-      double boxDelta = 0.0;
-      String boxChangeName = '';
-      String boxChangeNotes = '';
-
-      if (type == 'addition') {
-        boxDelta = -diff;
-        boxChangeName = 'تعديل إضافة رصيد للعميل';
-        boxChangeNotes = 'تعديل من $currentAmount إلى $newAmount ($newNotes)';
-      } else if (type == 'deduction') {
-        boxDelta = diff;
-        boxChangeName = 'تعديل خصم رصيد للعميل';
-        boxChangeNotes = 'تعديل من $currentAmount إلى $newAmount ($newNotes)';
-      } else if (type == 'sale_payment') {
-        boxDelta = diff;
-        boxChangeName = 'تعديل سداد فاتورة رقم ${data['invoiceNumber']}';
-        boxChangeNotes = 'تعديل سداد من $currentAmount إلى $newAmount';
-
-        if (invoiceId.isNotEmpty) {
-          final clientInvRef = FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('invoices')
-              .doc(invoiceId);
-          batch.update(clientInvRef, {'paidAmount': newAmount});
-
-          final rootInvRef =
-              FirebaseFirestore.instance.collection('invoices').doc(invoiceId);
-          batch.update(rootInvRef, {'paidAmount': newAmount});
-        }
-      } else if (type == 'return_payment') {
-        boxDelta = -diff;
-        boxChangeName = 'تعديل سداد مرتجع رقم ${data['invoiceNumber']}';
-        boxChangeNotes = 'تعديل سداد من $currentAmount إلى $newAmount';
-
-        if (invoiceId.isNotEmpty) {
-          final clientRetRef = FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('returnInvoices')
-              .doc(invoiceId);
-          batch.update(clientRetRef, {'paidAmount': newAmount});
-
-          final rootRetRef = FirebaseFirestore.instance
-              .collection('returnInvoices')
-              .doc(invoiceId);
-          batch.update(rootRetRef, {'paidAmount': newAmount});
-        }
-      } else if (type == 'sale') {
-        if (invoiceId.isNotEmpty) {
-          final clientInvRef = FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('invoices')
-              .doc(invoiceId);
-          batch.update(clientInvRef, {'totalSum': newAmount});
-
-          final rootInvRef =
-              FirebaseFirestore.instance.collection('invoices').doc(invoiceId);
-          batch.update(rootInvRef, {'totalSum': newAmount});
-        }
-      } else if (type == 'return') {
-        if (invoiceId.isNotEmpty) {
-          final clientRetRef = FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('returnInvoices')
-              .doc(invoiceId);
-          batch.update(clientRetRef, {'totalSum': newAmount});
-
-          final rootRetRef = FirebaseFirestore.instance
-              .collection('returnInvoices')
-              .doc(invoiceId);
-          batch.update(rootRetRef, {'totalSum': newAmount});
-        }
+      if (['sale', 'return', 'sale_payment', 'return_payment'].contains(type)) {
+        final isReturn = type.startsWith('return');
+        final invoice = isReturn
+            ? InvoiceRepository.instance.getReturnById(invoiceId)
+            : InvoiceRepository.instance.getSaleById(invoiceId);
+        if (invoice == null)
+          throw StateError('Invoice must be cached before editing its history');
+        final data = invoice.toMap();
+        data[type.endsWith('payment') ? 'paidAmount' : 'totalSum'] = newAmount;
+        await CustomerOperationService.saveInvoice(data,
+            editing: true, isReturn: isReturn);
+      } else {
+        await CustomerOperationService.savePayment(
+            clientId: widget.clientId,
+            amount: newAmount,
+            isAddition: type != 'deduction',
+            notes: newNotes,
+            historyId: entry.id);
       }
-
-      await batch.commit();
-
-      if (boxDelta.abs() > 0.001) {
-        final boxDocRef =
-            FirebaseFirestore.instance.collection('box').doc('mainBox');
-        await boxDocRef.set(
-          {'value': FieldValue.increment(boxDelta)},
-          SetOptions(merge: true),
-        );
-
-        await boxDocRef.collection('changes').add({
-          'date': FieldValue.serverTimestamp(),
-          'value': diff.abs(),
-          'type': boxDelta >= 0 ? 'addition' : 'subtraction',
-          'name': boxChangeName,
-          'notes': boxChangeNotes,
-        });
-      }
-
-      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+      ConnectivityService.instance.forceSync();
+      _loadFromLocalCache();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم تعديل السجل وإعادة حساب الرصيد')),
@@ -3191,186 +2223,31 @@ class _BalanceHistoryPageState extends State<BalanceHistoryPage> {
 
     setState(() => _isBusy = true);
     try {
-      final historyRef = FirebaseFirestore.instance
-          .collection('clients')
-          .doc(widget.clientId)
-          .collection('balanceHistory')
-          .doc(entry.id);
-
-      final batch = FirebaseFirestore.instance.batch();
-
-      // Delete history doc
-      batch.delete(historyRef);
-
-      double boxDelta = 0.0;
-      String boxChangeName = '';
-      String boxChangeNotes = '';
-
-      if (type == 'addition') {
-        boxDelta = enteredBalance;
-        boxChangeName = 'حذف إضافة رصيد للعميل';
-        boxChangeNotes = 'حذف سجل بقيمة $enteredBalance';
-      } else if (type == 'deduction') {
-        boxDelta = -enteredBalance;
-        boxChangeName = 'حذف خصم رصيد للعميل';
-        boxChangeNotes = 'حذف سجل بقيمة $enteredBalance';
-      } else if (type == 'sale_payment') {
-        boxDelta = -enteredBalance;
-        boxChangeName = 'حذف سداد فاتورة رقم ${data['invoiceNumber']}';
-        boxChangeNotes = 'حذف سداد بقيمة $enteredBalance';
-
-        if (invoiceId.isNotEmpty) {
-          final clientInvRef = FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('invoices')
-              .doc(invoiceId);
-          batch.update(clientInvRef, {'paidAmount': 0.0});
-
-          final rootInvRef =
-              FirebaseFirestore.instance.collection('invoices').doc(invoiceId);
-          batch.update(rootInvRef, {'paidAmount': 0.0});
-        }
-      } else if (type == 'return_payment') {
-        boxDelta = enteredBalance;
-        boxChangeName = 'حذف سداد مرتجع رقم ${data['invoiceNumber']}';
-        boxChangeNotes = 'حذف سداد بقيمة $enteredBalance';
-
-        if (invoiceId.isNotEmpty) {
-          final clientRetRef = FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('returnInvoices')
-              .doc(invoiceId);
-          batch.update(clientRetRef, {'paidAmount': 0.0});
-
-          final rootRetRef = FirebaseFirestore.instance
-              .collection('returnInvoices')
-              .doc(invoiceId);
-          batch.update(rootRetRef, {'paidAmount': 0.0});
-        }
-      } else if (type == 'sale') {
-        if (invoiceId.isNotEmpty) {
-          final clientInvRef = FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('invoices')
-              .doc(invoiceId);
-          final clientInvSnap = await clientInvRef.get();
-          if (clientInvSnap.exists) {
-            final products = List<Map<String, dynamic>>.from(
-                clientInvSnap.data()?['products'] ?? []);
-            if (products.isNotEmpty) {
-              await InvoiceStockService.applyStockChanges(
-                lines: products,
-                restore: true,
-                changeDate: DateTime.now(),
-              );
-            }
-            for (var product in products) {
-              final name = product['product']?.toString() ?? '';
-              if (name.isEmpty) continue;
-              final amount =
-                  double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
-              if (amount <= 0) continue;
-
-              final q = await FirebaseFirestore.instance
-                  .collection('products')
-                  .where('name', isEqualTo: name)
-                  .get();
-              for (var pDoc in q.docs) {
-                batch.update(pDoc.reference, {
-                  'quantity': FieldValue.increment(amount),
-                  'updatedAt': FieldValue.serverTimestamp(),
-                });
-                batch.set(pDoc.reference.collection('changes').doc(), {
-                  'date': FieldValue.serverTimestamp(),
-                  'amount': amount,
-                  'type': 'increase',
-                });
-              }
-            }
-            batch.delete(clientInvRef);
-          }
-
-          final rootInvRef =
-              FirebaseFirestore.instance.collection('invoices').doc(invoiceId);
-          batch.delete(rootInvRef);
-          await InvoiceRepository.instance.deleteSaleLocal(invoiceId);
-        }
-      } else if (type == 'return') {
-        if (invoiceId.isNotEmpty) {
-          final clientRetRef = FirebaseFirestore.instance
-              .collection('clients')
-              .doc(widget.clientId)
-              .collection('returnInvoices')
-              .doc(invoiceId);
-          final clientRetSnap = await clientRetRef.get();
-          if (clientRetSnap.exists) {
-            final products = List<Map<String, dynamic>>.from(
-                clientRetSnap.data()?['products'] ?? []);
-            if (products.isNotEmpty) {
-              await InvoiceStockService.applyStockChanges(
-                lines: products,
-                restore: false,
-                changeDate: DateTime.now(),
-                changeTypeWhenDecrease: 'decrease',
-              );
-            }
-            for (var product in products) {
-              final name = product['product']?.toString() ?? '';
-              if (name.isEmpty) continue;
-              final amount =
-                  double.tryParse(product['amount']?.toString() ?? '0') ?? 0.0;
-              if (amount <= 0) continue;
-
-              final q = await FirebaseFirestore.instance
-                  .collection('products')
-                  .where('name', isEqualTo: name)
-                  .get();
-              for (var pDoc in q.docs) {
-                batch.update(pDoc.reference, {
-                  'quantity': FieldValue.increment(-amount),
-                  'updatedAt': FieldValue.serverTimestamp(),
-                });
-                batch.set(pDoc.reference.collection('changes').doc(), {
-                  'date': FieldValue.serverTimestamp(),
-                  'amount': amount,
-                  'type': 'decrease',
-                });
-              }
-            }
-            batch.delete(clientRetRef);
-          }
-
-          final rootRetRef = FirebaseFirestore.instance
-              .collection('returnInvoices')
-              .doc(invoiceId);
-          batch.delete(rootRetRef);
-          await InvoiceRepository.instance.deleteReturnLocal(invoiceId);
-        }
+      if (type == 'sale' || type == 'return') {
+        await CustomerOperationService.deleteInvoice(invoiceId,
+            isReturn: type == 'return');
+      } else if (type == 'sale_payment' || type == 'return_payment') {
+        final isReturn = type == 'return_payment';
+        final invoice = isReturn
+            ? InvoiceRepository.instance.getReturnById(invoiceId)
+            : InvoiceRepository.instance.getSaleById(invoiceId);
+        if (invoice == null)
+          throw StateError(
+              'Invoice must be cached before deleting its payment');
+        await CustomerOperationService.saveInvoice(
+            {...invoice.toMap(), 'paidAmount': 0.0},
+            editing: true, isReturn: isReturn);
+      } else {
+        await CustomerOperationService.savePayment(
+            clientId: widget.clientId,
+            amount: enteredBalance,
+            isAddition: type != 'deduction',
+            notes: '',
+            historyId: entry.id,
+            deleting: true);
       }
-
-      await batch.commit();
-
-      if (boxDelta.abs() > 0.001) {
-        final boxDocRef =
-            FirebaseFirestore.instance.collection('box').doc('mainBox');
-        await boxDocRef.set(
-          {'value': FieldValue.increment(boxDelta)},
-          SetOptions(merge: true),
-        );
-
-        await boxDocRef.collection('changes').add({
-          'date': FieldValue.serverTimestamp(),
-          'value': enteredBalance,
-          'type': boxDelta >= 0 ? 'addition' : 'subtraction',
-          'name': boxChangeName,
-          'notes': boxChangeNotes,
-        });
-      }
-
-      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
+      ConnectivityService.instance.forceSync();
+      _loadFromLocalCache();
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم حذف السجل وإعادة حساب الرصيد')),

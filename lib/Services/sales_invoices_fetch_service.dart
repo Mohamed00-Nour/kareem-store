@@ -11,38 +11,14 @@ class SalesInvoicesFetchService {
 
     final localInvoices = InvoiceRepository.instance.getAllSales();
 
-    if (localInvoices.isNotEmpty) {
-      final filtered = localInvoices.where((inv) {
-        return inv.date.isAfter(startDay.subtract(const Duration(milliseconds: 1))) &&
-               inv.date.isBefore(endDay.add(const Duration(milliseconds: 1)));
-      }).map((inv) => inv.toMap()).toList();
-
-      filtered.sort(_compareByClientThenDate);
-      return filtered;
-    }
-
-    // Fallback to Firestore if local cache is empty
-    try {
-      final snap = await FirebaseFirestore.instance
-          .collection('invoices')
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(startDay))
-          .where('date', isLessThanOrEqualTo: Timestamp.fromDate(endDay))
-          .get();
-
-      final invoices = snap.docs.map((doc) {
-        final data = Map<String, dynamic>.from(doc.data());
-        data['id'] = doc.id;
-        InvoiceRepository.instance.upsertSaleLocal(doc.id, data);
-        return data;
-      }).toList();
-
-      invoices.sort(_compareByClientThenDate);
-      return invoices;
-    } catch (_) {
-      return [];
-    }
+    final filtered = localInvoices
+        .where(
+            (inv) => !inv.date.isBefore(startDay) && !inv.date.isAfter(endDay))
+        .map((inv) => inv.toMap())
+        .toList();
+    filtered.sort(_compareByClientThenDate);
+    return filtered;
   }
-
 
   /// Newest invoice first (by date, then invoice number).
   static void sortNewestFirst(List<Map<String, dynamic>> invoices) {

@@ -14,7 +14,7 @@ class InvoicePrintUi {
   }) async {
     if (!context.mounted) return;
 
-    final settings = await PrinterSettingsService.load();
+    final settings = PrinterSettingsService.current;
     if (settings.connectionType != PrinterConnectionType.bluetooth) {
       _snack(
         context,

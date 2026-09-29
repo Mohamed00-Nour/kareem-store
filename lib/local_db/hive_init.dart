@@ -1,4 +1,5 @@
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:flutter/foundation.dart';
 import 'models/product_local.dart';
 import 'models/client_local.dart';
 import 'models/supplier_local.dart';
@@ -41,6 +42,14 @@ class HiveMetaKeys {
   static const String lastExpenseSyncAt = 'lastExpenseSyncAt';
   static const String lastQuoteSyncAt = 'lastQuoteSyncAt';
   static const String lastDepartmentSyncAt = 'lastDepartmentSyncAt';
+  static const String lastPaymentBreakdownSyncAt = 'lastPaymentBreakdownSyncAt';
+
+  /// Last atomically committed financial change imported from Firestore.
+  ///
+  /// A missing value means this installation still needs one compatibility
+  /// baseline. Once present, startup listens only for later receipt sequences
+  /// instead of downloading every invoice and ledger document again.
+  static const String financialChangeSequence = 'financialChangeSequence';
 
   // Local sequential invoice counters
   static const String nextSalesInvoiceNumber = 'nextSalesInvoiceNumber';
@@ -51,8 +60,27 @@ class HiveMetaKeys {
 
 /// Initializes and registers all Hive adapters.
 /// Call this once from [main()] before [runApp()].
-Future<void> initHive() async {
-  await Hive.initFlutter();
+Future<void> initHive({String? directory}) async {
+  final total = Stopwatch()..start();
+  // Tests can reopen a disposable Hive directory without a platform plugin.
+  if (directory == null) {
+    await Hive.initFlutter();
+  } else {
+    Hive.init(directory);
+  }
+  debugPrint('Hive directory initialized in ${total.elapsedMilliseconds} ms');
+
+  Future<void> open<T>(String name) async {
+    final timer = Stopwatch()..start();
+    debugPrint('Opening Hive box $name');
+    try {
+      await _openBoxSafely<T>(name);
+    } finally {
+      if (timer.elapsedMilliseconds >= 250) {
+        debugPrint('Hive box $name: ${timer.elapsedMilliseconds} ms');
+      }
+    }
+  }
 
   // Register TypeAdapters
   if (!Hive.isAdapterRegistered(0)) Hive.registerAdapter(ProductLocalAdapter());
@@ -73,58 +101,51 @@ Future<void> initHive() async {
     Hive.registerAdapter(PaymentBreakdownLocalAdapter());
 
   // Open all boxes on startup safely (handles corrupted cache or schema upgrades)
-  await _openBoxSafely<ProductLocal>(HiveBoxNames.products);
-  await _openBoxSafely<ClientLocal>(HiveBoxNames.clients);
-  await _openBoxSafely<SupplierLocal>(HiveBoxNames.suppliers);
-  await _openBoxSafely<SyncQueueItem>(HiveBoxNames.syncQueue);
-  await _openBoxSafely(HiveBoxNames.appMeta);
-  await _openBoxSafely<InvoiceLocal>(HiveBoxNames.invoices);
-  await _openBoxSafely<InvoiceLocal>(HiveBoxNames.returnInvoices);
-  await _openBoxSafely<InvoiceLocal>(HiveBoxNames.buyingInvoices);
-  await _openBoxSafely<InvoiceLocal>(HiveBoxNames.buyingReturnInvoices);
-  await _openBoxSafely<QuoteLocal>(HiveBoxNames.quotes);
-  await _openBoxSafely<ExpenseLocal>(HiveBoxNames.expenses);
-  await _openBoxSafely<BoxLocal>(HiveBoxNames.box);
-  await _openBoxSafely<BalanceHistoryLocal>(HiveBoxNames.balanceHistory);
-  await _openBoxSafely<DepartmentLocal>(HiveBoxNames.departments);
-  await _openBoxSafely<PaymentBreakdownLocal>('paymentBreakdownsBox');
+  await open<ProductLocal>(HiveBoxNames.products);
+  await open<ClientLocal>(HiveBoxNames.clients);
+  await open<SupplierLocal>(HiveBoxNames.suppliers);
+  await open<SyncQueueItem>(HiveBoxNames.syncQueue);
+  await open(HiveBoxNames.appMeta);
+  await open<InvoiceLocal>(HiveBoxNames.invoices);
+  await open<InvoiceLocal>(HiveBoxNames.returnInvoices);
+  await open<InvoiceLocal>(HiveBoxNames.buyingInvoices);
+  await open<InvoiceLocal>(HiveBoxNames.buyingReturnInvoices);
+  await open<QuoteLocal>(HiveBoxNames.quotes);
+  await open<ExpenseLocal>(HiveBoxNames.expenses);
+  await open<BoxLocal>(HiveBoxNames.box);
+  await open<BalanceHistoryLocal>(HiveBoxNames.balanceHistory);
+  await open<DepartmentLocal>(HiveBoxNames.departments);
+  await open<PaymentBreakdownLocal>('paymentBreakdownsBox');
+  debugPrint('All Hive boxes opened in ${total.elapsedMilliseconds} ms');
 }
 
-/// Opens a Hive box safely. If corrupted or schema changed, clears disk cache and re-opens cleanly.
+/// Never delete business data on an opening failure. Preserve the files for
+/// recovery instead of silently losing unsynced operations or receipts.
 Future<Box<T>> _openBoxSafely<T>(String name) async {
   if (Hive.isBoxOpen(name)) {
     try {
       return Hive.box<T>(name);
-    } catch (_) {
-      try {
-        await Hive.box(name).close();
-      } catch (_) {}
+    } on HiveError {
+      // A previous initialization may have opened this box without its typed
+      // adapter. Closing the handle preserves the file; reopening fixes the
+      // in-process type mismatch without touching the records on disk.
+      await Hive.box(name).close();
     }
   }
-
   try {
     return await Hive.openBox<T>(name);
-  } catch (e) {
-    try {
-      if (Hive.isBoxOpen(name)) {
-        await Hive.box(name).close();
-      }
-    } catch (_) {}
-    try {
-      await Hive.deleteBoxFromDisk(name);
-    } catch (_) {}
-    try {
-      return await Hive.openBox<T>(name);
-    } catch (_) {
-      try {
-        await Hive.close();
-      } catch (_) {}
-      try {
-        await Hive.deleteBoxFromDisk(name);
-      } catch (_) {}
-      return await Hive.openBox<T>(name);
-    }
+  } catch (error, stackTrace) {
+    Error.throwWithStackTrace(HiveBoxOpenException(name, error), stackTrace);
   }
+}
+
+class HiveBoxOpenException implements Exception {
+  final String boxName;
+  final Object cause;
+  const HiveBoxOpenException(this.boxName, this.cause);
+
+  @override
+  String toString() => 'Could not open Hive box "$boxName": $cause';
 }
 
 /// Convenience accessors — use these to get open boxes from anywhere.

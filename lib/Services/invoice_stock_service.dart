@@ -23,9 +23,6 @@ class ResolvedInvoiceProduct {
 
 /// Fast stock adjustments and cost totals for invoice save (batch writes, few reads).
 class InvoiceStockService {
-  static const int _whereInChunk = 10;
-  static const int _batchOpLimit = 450;
-
   static String lineCatalogName(Map<String, dynamic> line) =>
       invoiceCatalogProductName(line);
 
@@ -63,7 +60,6 @@ class InvoiceStockService {
     Map<String, ResolvedInvoiceProduct> seed = const {},
   }) async {
     final catalog = Map<String, ResolvedInvoiceProduct>.from(seed);
-    final missing = <String>{};
 
     // 1. Resolve from local Hive productsBox first (instant, zero network)
     for (final line in lines) {
@@ -77,50 +73,11 @@ class InvoiceStockService {
           costPrice: localProd.costPrice,
           quantity: localProd.quantity,
         );
-      } else {
-        missing.add(name);
       }
     }
 
-    if (missing.isEmpty) return catalog;
-
-    // 2. Only query Firestore if missing from local cache
-    try {
-      final names = missing.toList();
-      final chunkFutures = <Future<QuerySnapshot<Map<String, dynamic>>>>[];
-      for (var i = 0; i < names.length; i += _whereInChunk) {
-        final end = (i + _whereInChunk > names.length)
-            ? names.length
-            : i + _whereInChunk;
-        final chunk = names.sublist(i, end);
-        chunkFutures.add(
-          FirebaseFirestore.instance
-              .collection('products')
-              .where('name', whereIn: chunk)
-              .get(),
-        );
-      }
-
-      final snapshots = await Future.wait(chunkFutures);
-      for (final snap in snapshots) {
-        for (final doc in snap.docs) {
-          final data = doc.data();
-          final name = data['name']?.toString() ?? '';
-          if (name.isEmpty || catalog.containsKey(name)) continue;
-          catalog[name] = ResolvedInvoiceProduct(
-            id: doc.id,
-            name: name,
-            costPrice: invoiceNum(data['costPrice']),
-            quantity: invoiceNum(data['quantity']),
-          );
-        }
-      }
-    } catch (_) {
-      // Offline fallback
-    }
-    return catalog;
+    return catalog; // Missing products are validated by the local save planner.
   }
-
 
   static Future<Map<String, ResolvedInvoiceProduct>> resolveCatalogIfNeeded({
     required Iterable<Map<String, dynamic>> lines,
@@ -210,10 +167,11 @@ class InvoiceStockService {
     if (lines.isEmpty) return;
 
     // Use local Hive-only catalog resolution — never blocks on Firestore reads
-    final resolved = catalog ?? await resolveCatalogIfNeeded(
-      lines: lines,
-      seed: seed,
-    );
+    final resolved = catalog ??
+        await resolveCatalogIfNeeded(
+          lines: lines,
+          seed: seed,
+        );
 
     final deltaByDocId = <String, double>{};
     final changeDateByDocId = <String, dynamic>{};
@@ -246,4 +204,3 @@ class InvoiceStockService {
     // Note: Firestore update is executed atomically via BatchSyncEngine via SyncQueueManager
   }
 }
-

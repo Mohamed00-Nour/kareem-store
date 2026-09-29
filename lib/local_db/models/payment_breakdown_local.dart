@@ -73,6 +73,13 @@ class PaymentBreakdownLocal extends HiveObject {
       String docId, Map<String, dynamic> data) {
     DateTime parseDate(dynamic val) {
       if (val is String) return DateTime.tryParse(val) ?? DateTime.now();
+      if (val is DateTime) return val;
+      // Avoid importing cloud_firestore into the Hive model while still
+      // accepting Timestamp-like values returned by Firestore.
+      try {
+        final converted = (val as dynamic).toDate();
+        if (converted is DateTime) return converted;
+      } catch (_) {}
       return DateTime.now();
     }
 

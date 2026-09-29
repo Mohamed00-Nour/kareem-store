@@ -1,5 +1,7 @@
 import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import 'package:intl/intl.dart' as intl;
@@ -9,6 +11,8 @@ import '../../repositories/data_sync_service.dart';
 import '../../sync/batch_sync_engine.dart';
 import '../../sync/connectivity_service.dart';
 import '../../sync/sync_queue_manager.dart';
+import '../../sync/sync_operation_diagnostics.dart';
+import '../../sync/sync_operation_inspector.dart';
 
 /// Sync Dashboard Screen — visible to all users.
 ///
@@ -45,7 +49,8 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
 
   Future<void> _refresh() async {
     if (ConnectivityService.instance.isOnline) {
-      await DataSyncService.instance.syncOnStartup();
+      await DataSyncService.instance
+          .syncOnStartup(includeRealtimeCollections: false);
     }
     if (mounted) {
       setState(() {});
@@ -56,13 +61,197 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
     setState(() => _isSyncing = true);
     try {
       await ConnectivityService.instance.forceSync();
-      await DataSyncService.instance.syncOnStartup();
+      await DataSyncService.instance
+          .syncOnStartup(includeRealtimeCollections: false);
     } finally {
       if (mounted) {
         setState(() => _isSyncing = false);
-        _refresh();
       }
     }
+  }
+
+  String _cloudRefreshMessage(Object? error) {
+    final lower = error?.toString().toLowerCase() ?? '';
+    if (lower.contains('resource-exhausted') ||
+        lower.contains('resource exhausted')) {
+      return 'توقّف التحديث السحابي لأن حصة Firebase المتاحة قد نفدت. '
+          'البيانات المحلية محفوظة؛ انتظر تجدد الحصة أو راجع خطة Firebase.';
+    }
+    return 'تعذر تحديث البيانات السحابية مؤقتاً. يمكنك متابعة العمل من البيانات المحلية.';
+  }
+
+  Future<void> _retryItem(SyncQueueItem item) async {
+    final started =
+        await ConnectivityService.instance.retryOperation(item.operationId);
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+      content: Text(started
+          ? 'تم بدء إعادة محاولة هذه العملية'
+          : 'هذه العملية تحتاج مراجعة سبب الخطأ قبل إعادة المحاولة'),
+    ));
+    setState(() {});
+  }
+
+  String _diagnosticText(SyncQueueItem item) {
+    final info = SyncOperationDiagnostics.fromItem(item);
+    return [
+      'Operation ID: ${item.operationId}',
+      'Type: ${item.operationType}',
+      if (info.invoiceNumber != null) 'Invoice number: ${info.invoiceNumber}',
+      if (info.invoiceId != null) 'Invoice ID: ${info.invoiceId}',
+      if (info.partyName != null) 'Party: ${info.partyName}',
+      if (info.partyId != null) 'Party ID: ${info.partyId}',
+      if (info.amount != null) 'Amount: ${info.amount}',
+      'Created: ${item.createdAt.toIso8601String()}',
+      'Attempts: ${item.retryCount}',
+      if (item.lastAttemptAt != null)
+        'Last attempt: ${item.lastAttemptAt!.toIso8601String()}',
+      if (item.errorCategory != null) 'Category: ${item.errorCategory}',
+      if (item.errorCode != null) 'Code: ${item.errorCode}',
+      if (item.lastError != null) 'Error: ${item.lastError}',
+    ].join('\n');
+  }
+
+  bool _hasSafeFinancialPayload(SyncQueueItem item) {
+    try {
+      return SyncQueueManager.decodePayload(item)['financialFormat'] == 2;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  Future<void> _showDetails(SyncQueueItem item) async {
+    final info = SyncOperationDiagnostics.fromItem(item);
+    List<dynamic> attempts = const [];
+    try {
+      attempts = jsonDecode(item.attemptHistoryJson) as List<dynamic>;
+    } catch (_) {}
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xff16213e),
+        title: const Text('تفاصيل عملية المزامنة',
+            style: TextStyle(color: Colors.white)),
+        content: SingleChildScrollView(
+          child: SelectableText(
+            [
+              _operationLabel(item.operationType),
+              if (info.invoiceNumber != null)
+                'رقم الفاتورة: ${info.invoiceNumber}',
+              if (info.invoiceId != null) 'معرف الفاتورة: ${info.invoiceId}',
+              if (info.partyName != null)
+                '${info.partyType == 'supplier' ? 'المورد' : 'العميل'}: ${info.partyName}',
+              if (info.partyId != null) 'معرف الطرف: ${info.partyId}',
+              if (info.amount != null)
+                'القيمة: ${intl.NumberFormat.decimalPattern().format(info.amount)}',
+              'معرف العملية: ${item.operationId}',
+              'تاريخ الحفظ: ${item.createdAt.toLocal()}',
+              'عدد المحاولات: ${item.retryCount}',
+              if (item.lastAttemptAt != null)
+                'آخر محاولة: ${item.lastAttemptAt!.toLocal()}',
+              if (item.nextRetryAt != null)
+                'المحاولة التالية: ${item.nextRetryAt!.toLocal()}',
+              if (item.errorCategory != null)
+                'تصنيف الخطأ: ${item.errorCategory}',
+              if (item.errorCode != null) 'رمز الخطأ: ${item.errorCode}',
+              if (item.lastError != null) 'الخطأ التقني: ${item.lastError}',
+              'سجل المحاولات المحفوظ: ${attempts.length}',
+            ].join('\n\n'),
+            style: const TextStyle(color: Colors.white70),
+          ),
+        ),
+        actions: [
+          TextButton.icon(
+            onPressed: () async {
+              await Clipboard.setData(
+                  ClipboardData(text: _diagnosticText(item)));
+              if (dialogContext.mounted) {
+                ScaffoldMessenger.of(dialogContext).showSnackBar(
+                    const SnackBar(content: Text('تم نسخ بيانات التشخيص')));
+              }
+            },
+            icon: const Icon(Icons.copy),
+            label: const Text('نسخ التشخيص'),
+          ),
+          if (_hasSafeFinancialPayload(item))
+            TextButton.icon(
+              onPressed: () {
+                Navigator.pop(dialogContext);
+                _showCloudComparison(item);
+              },
+              icon: const Icon(Icons.compare_arrows),
+              label: const Text('مقارنة Firebase'),
+            ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إغلاق'),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _showCloudComparison(SyncQueueItem item) async {
+    final future = SyncOperationInspector().inspect(item);
+    if (!mounted) return;
+    await showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        backgroundColor: const Color(0xff16213e),
+        title: const Text('مقارنة آمنة للقراءة فقط',
+            style: TextStyle(color: Colors.white)),
+        content: SizedBox(
+          width: double.maxFinite,
+          child: FutureBuilder<SyncOperationInspection>(
+            future: future,
+            builder: (context, snapshot) {
+              if (snapshot.connectionState != ConnectionState.done) {
+                return const Center(child: CircularProgressIndicator());
+              }
+              if (snapshot.hasError) {
+                return Text('تعذر قراءة Firebase: ${snapshot.error}',
+                    style: const TextStyle(color: Colors.redAccent));
+              }
+              final result = snapshot.data!;
+              return SingleChildScrollView(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      result.receiptExists
+                          ? 'يوجد إيصال سحابي: العملية طُبقت بنجاح.'
+                          : 'لا يوجد إيصال سحابي لهذه العملية.',
+                      style: TextStyle(
+                        color: result.receiptExists
+                            ? Colors.greenAccent
+                            : Colors.orangeAccent,
+                        fontWeight: FontWeight.bold,
+                      ),
+                    ),
+                    const SizedBox(height: 12),
+                    ...result.checks.map((check) => Padding(
+                          padding: const EdgeInsets.only(bottom: 8),
+                          child: Text(
+                            '${check.action == 'delete' ? 'حذف' : 'كتابة'}: ${check.path}\n'
+                            '${check.appliedBy(item.operationId) ? 'يحمل معرف هذه العملية' : check.exists ? 'موجود بمعرف آخر' : 'غير موجود'}',
+                            style: const TextStyle(color: Colors.white70),
+                          ),
+                        )),
+                  ],
+                ),
+              );
+            },
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext),
+            child: const Text('إغلاق'),
+          ),
+        ],
+      ),
+    );
   }
 
   String _lastSyncTime(String key) {
@@ -87,6 +276,15 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
       'createProduct': 'إضافة منتج',
       'editProduct': 'تعديل منتج',
       'deleteProduct': 'حذف منتج',
+      'createReturn': 'إنشاء مرتجع مبيعات',
+      'deleteReturn': 'حذف مرتجع مبيعات',
+      'deleteReturnInvoice': 'حذف مرتجع مبيعات',
+      'createBuyingInvoice': 'إنشاء فاتورة مشتريات',
+      'editBuyingInvoice': 'تعديل فاتورة مشتريات',
+      'deleteBuyingInvoice': 'حذف فاتورة مشتريات',
+      'createClient': 'إنشاء عميل',
+      'createSupplier': 'إنشاء مورد',
+      'updateBox': 'تعديل الصندوق',
     };
     return labels[type] ?? type;
   }
@@ -104,14 +302,20 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
     }
   }
 
-  String _statusLabel(String status) {
-    switch (status) {
+  String _statusLabel(SyncQueueItem item) {
+    switch (item.status) {
       case 'synced':
         return 'تمت المزامنة';
       case 'syncing':
         return 'جارٍ الرفع...';
       case 'failed':
-        return 'فشلت المزامنة';
+        if (item.errorCategory == SyncErrorCategories.quota ||
+            item.errorCode == 'resource-exhausted') {
+          return 'بانتظار تجدد حصة Firebase';
+        }
+        return SyncQueueManager.instance.canRetry(item)
+            ? 'فشل مؤقت'
+            : 'تحتاج مراجعة';
       default:
         return 'في انتظار الرفع';
     }
@@ -165,6 +369,18 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
             child: ListView(
               padding: EdgeInsets.all(16.w),
               children: [
+                ValueListenableBuilder(
+                    valueListenable: appMetaBox.listenable(),
+                    builder: (context, box, _) =>
+                        box.get('cloudRefreshError') == null
+                            ? const SizedBox.shrink()
+                            : Padding(
+                                padding: const EdgeInsets.all(8),
+                                child: Text(
+                                    _cloudRefreshMessage(
+                                        box.get('cloudRefreshError')),
+                                    style: const TextStyle(
+                                        color: Colors.redAccent)))),
                 // ── Status Card ────────────────────────────────────────────
                 _StatusCard(
                   isOnline: isOnline,
@@ -196,8 +412,11 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
                         )
                       : const Icon(Icons.cloud_upload_outlined),
                   label: Text(
-                    (_isSyncing || isBatchRunning) ? 'جارٍ المزامنة...' : 'مزامنة الآن',
-                    style: TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
+                    (_isSyncing || isBatchRunning)
+                        ? 'جارٍ المزامنة...'
+                        : 'مزامنة الآن',
+                    style:
+                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
                   ),
                 ),
                 SizedBox(height: 20.h),
@@ -246,8 +465,10 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
                         item: item,
                         operationLabel: _operationLabel(item.operationType),
                         statusColor: _statusColor(item.status),
-                        statusLabel: _statusLabel(item.status),
+                        statusLabel: _statusLabel(item),
                         statusIcon: _statusIcon(item.status),
+                        onRetry: () => _retryItem(item),
+                        onDetails: () => _showDetails(item),
                       )),
               ],
             ),
@@ -291,7 +512,8 @@ class _StatusCard extends StatelessWidget {
       bg = Colors.orange.shade800;
       icon = Icons.cloud_off;
       title = 'غير متصل بالإنترنت';
-      subtitle = '$totalCount عملية محفوظة محلياً — ستُرفع تلقائياً عند الاتصال';
+      subtitle =
+          '$totalCount عملية محفوظة محلياً — ستُرفع تلقائياً عند الاتصال';
     } else if (!isOnline) {
       bg = Colors.grey.shade800;
       icon = Icons.cloud_off_outlined;
@@ -315,7 +537,10 @@ class _StatusCard extends StatelessWidget {
         color: bg,
         borderRadius: BorderRadius.circular(16.r),
         boxShadow: [
-          BoxShadow(color: bg.withValues(alpha: 0.4), blurRadius: 12, offset: const Offset(0, 4))
+          BoxShadow(
+              color: bg.withValues(alpha: 0.4),
+              blurRadius: 12,
+              offset: const Offset(0, 4))
         ],
       ),
       child: Row(
@@ -366,7 +591,8 @@ class _InfoRow extends StatelessWidget {
   final IconData icon;
   final String label;
   final String value;
-  const _InfoRow({required this.icon, required this.label, required this.value});
+  const _InfoRow(
+      {required this.icon, required this.label, required this.value});
 
   @override
   Widget build(BuildContext context) {
@@ -381,8 +607,7 @@ class _InfoRow extends StatelessWidget {
         children: [
           Icon(icon, color: Colors.orange, size: 18.sp),
           SizedBox(width: 10.w),
-          Text(label,
-              style: TextStyle(color: Colors.white70, fontSize: 13.sp)),
+          Text(label, style: TextStyle(color: Colors.white70, fontSize: 13.sp)),
           const Spacer(),
           Text(value,
               style: TextStyle(
@@ -411,7 +636,9 @@ class _EmptyQueueCard extends StatelessWidget {
           Text(
             'لا توجد عمليات معلقة',
             style: TextStyle(
-                color: Colors.white, fontSize: 15.sp, fontWeight: FontWeight.bold),
+                color: Colors.white,
+                fontSize: 15.sp,
+                fontWeight: FontWeight.bold),
           ),
           SizedBox(height: 6.h),
           Text(
@@ -430,6 +657,8 @@ class _QueueItemCard extends StatelessWidget {
   final Color statusColor;
   final String statusLabel;
   final IconData statusIcon;
+  final Future<void> Function() onRetry;
+  final Future<void> Function() onDetails;
 
   const _QueueItemCard({
     required this.item,
@@ -437,11 +666,20 @@ class _QueueItemCard extends StatelessWidget {
     required this.statusColor,
     required this.statusLabel,
     required this.statusIcon,
+    required this.onRetry,
+    required this.onDetails,
   });
 
   @override
   Widget build(BuildContext context) {
-    final date = intl.DateFormat('MM/dd hh:mm a').format(item.createdAt.toLocal());
+    final date =
+        intl.DateFormat('MM/dd hh:mm a').format(item.createdAt.toLocal());
+    final diagnostics = SyncOperationDiagnostics.fromItem(item);
+    final canRetry =
+        item.status == 'failed' && SyncQueueManager.instance.canRetry(item);
+    final failure = item.lastError == null
+        ? null
+        : SyncFailureClassifier.classify(item.lastError!);
 
     return Container(
       margin: EdgeInsets.only(bottom: 10.h),
@@ -486,18 +724,42 @@ class _QueueItemCard extends StatelessWidget {
               Icon(Icons.access_time, color: Colors.white38, size: 13.sp),
               SizedBox(width: 4.w),
               Text(date,
-                  style:
-                      TextStyle(color: Colors.white38, fontSize: 11.sp)),
+                  style: TextStyle(color: Colors.white38, fontSize: 11.sp)),
               if (item.retryCount > 0) ...[
                 SizedBox(width: 12.w),
                 Icon(Icons.replay, color: Colors.orange, size: 13.sp),
                 SizedBox(width: 4.w),
                 Text('محاولة ${item.retryCount}',
-                    style:
-                        TextStyle(color: Colors.orange, fontSize: 11.sp)),
+                    style: TextStyle(color: Colors.orange, fontSize: 11.sp)),
               ],
             ],
           ),
+          if (diagnostics.invoiceNumber != null ||
+              diagnostics.partyName != null ||
+              diagnostics.amount != null) ...[
+            SizedBox(height: 8.h),
+            Wrap(
+              spacing: 12.w,
+              runSpacing: 4.h,
+              children: [
+                if (diagnostics.invoiceNumber != null)
+                  _DiagnosticChip(
+                      icon: Icons.receipt_long,
+                      text: 'فاتورة ${diagnostics.invoiceNumber}'),
+                if (diagnostics.partyName != null)
+                  _DiagnosticChip(
+                      icon: diagnostics.partyType == 'supplier'
+                          ? Icons.local_shipping_outlined
+                          : Icons.person_outline,
+                      text: diagnostics.partyName!),
+                if (diagnostics.amount != null)
+                  _DiagnosticChip(
+                      icon: Icons.payments_outlined,
+                      text: intl.NumberFormat.decimalPattern()
+                          .format(diagnostics.amount)),
+              ],
+            ),
+          ],
           if (item.lastError != null && item.lastError!.isNotEmpty) ...[
             SizedBox(height: 8.h),
             Container(
@@ -506,16 +768,62 @@ class _QueueItemCard extends StatelessWidget {
                 color: Colors.red.withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8.r),
               ),
-              child: Text(
-                item.lastError!,
-                style: TextStyle(color: Colors.red.shade300, fontSize: 11.sp),
-                maxLines: 2,
-                overflow: TextOverflow.ellipsis,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  if (failure != null)
+                    Text(failure.userMessageAr,
+                        style: TextStyle(
+                            color: Colors.red.shade200, fontSize: 11.sp)),
+                  if (item.nextRetryAt != null) ...[
+                    SizedBox(height: 4.h),
+                    Text(
+                      'المحاولة التلقائية التالية: ${intl.DateFormat('hh:mm:ss a').format(item.nextRetryAt!.toLocal())}',
+                      style: TextStyle(
+                          color: Colors.orange.shade200, fontSize: 10.sp),
+                    ),
+                  ],
+                ],
               ),
             ),
           ],
+          SizedBox(height: 8.h),
+          Row(
+            mainAxisAlignment: MainAxisAlignment.end,
+            children: [
+              TextButton.icon(
+                onPressed: onDetails,
+                icon: const Icon(Icons.info_outline),
+                label: const Text('التفاصيل'),
+              ),
+              if (canRetry)
+                TextButton.icon(
+                  onPressed: onRetry,
+                  icon: const Icon(Icons.replay),
+                  label: const Text('إعادة المحاولة'),
+                ),
+            ],
+          ),
         ],
       ),
     );
   }
+}
+
+class _DiagnosticChip extends StatelessWidget {
+  final IconData icon;
+  final String text;
+
+  const _DiagnosticChip({required this.icon, required this.text});
+
+  @override
+  Widget build(BuildContext context) => Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          Icon(icon, size: 13, color: Colors.white54),
+          const SizedBox(width: 4),
+          Text(text,
+              style: const TextStyle(color: Colors.white70, fontSize: 11)),
+        ],
+      );
 }

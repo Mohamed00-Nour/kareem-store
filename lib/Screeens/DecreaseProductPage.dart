@@ -3,14 +3,8 @@ import 'dart:ui' show ImageFilter;
 
 import 'package:flutter/material.dart';
 import 'DecreaseProductComponents/product_model.dart';
-import 'DecreaseProductComponents/decrease_product_widgets.dart';
-import 'DecreaseProductComponents/invoice_product_sheet.dart';
 import 'DecreaseProductComponents/invoice_checkout_sheet.dart';
-import 'DecreaseProductComponents/client_selection_dialog.dart';
 import 'DecreaseProductComponents/calculator_dialog.dart';
-import 'DecreaseProductComponents/bloc/invoice_cubit.dart';
-import 'DecreaseProductComponents/bloc/invoice_state.dart';
-import 'package:flutter_bloc/flutter_bloc.dart';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -18,11 +12,11 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'Invoices/All_invoices.dart';
 import 'Invoices/InvoiceDetailPage.dart';
 import 'Data/quick_add_product_sheet.dart';
-import '../Services/client_invoice_balance_sync_service.dart';
 import '../Services/quick_entity_creation_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/return_invoice_save_service.dart';
+import '../Services/customer_operation_service.dart';
 import '../Services/invoice_stock_service.dart';
 import '../Services/sales_invoice_actions_service.dart';
 import '../Services/sales_invoice_update_service.dart';
@@ -34,13 +28,8 @@ import 'g_Nav.dart';
 import '../Widgets/app_bar_navigation.dart';
 import 'home_page.dart';
 import '../sync/connectivity_service.dart';
-import '../sync/sync_queue_manager.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/product_repository.dart';
-import '../repositories/invoice_repository.dart';
-import '../repositories/box_repository.dart';
-import '../repositories/balance_history_repository.dart';
-import '../local_db/models/balance_history_local.dart';
 import '../local_db/hive_init.dart';
 import '../utils/entity_name_normalizer.dart';
 
@@ -1075,18 +1064,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
         : invoiceDiscount;
     final totalAfterPaymentValidation =
         totalBeforePaymentValidation - discountForPaymentValidation;
-    final bool isDeferredSale =
-        !widget.isReturnInvoice && paymentMethod == 'آجل';
-    if (effectivePaid < -0.001) {
+    final paymentValidationMessage = validateInvoiceCheckoutPayment(
+      paidAmount: effectivePaid,
+      invoiceTotal: totalAfterPaymentValidation,
+      paymentMethod: paymentMethod,
+      isReturnInvoice: widget.isReturnInvoice,
+    );
+    if (paymentValidationMessage != null) {
       ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('المبلغ المدفوع لا يمكن أن يكون سالب')),
-      );
-      return;
-    }
-    if (!isDeferredSale &&
-        effectivePaid - totalAfterPaymentValidation > 0.001) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('المبلغ المدفوع أكبر من الإجمالي')),
+        SnackBar(content: Text(paymentValidationMessage)),
       );
       return;
     }
@@ -1155,30 +1141,16 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'products': List<Map<String, dynamic>>.from(_addedProducts),
         };
 
-        // Always enqueue for reliable sync (works both online and offline)
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'createQuote',
-          payload: {
-            'quoteId': docId,
-            'quoteData': {
-              ...quoteData,
-              'date': _selectedDate?.toIso8601String(),
-              'createdAt': _originalInvoice?['createdAt']?.toString() ??
-                  DateTime.now().toIso8601String(),
-            },
-          },
-        );
-        // Background sync to Firestore without blocking the UI
+        _lastInvoice = await CustomerOperationService.saveQuote(quoteData,
+            editing: _isEditing);
         ConnectivityService.instance.forceSync();
-
-        _lastInvoice = Map<String, dynamic>.from(quoteData);
       } else if (_isEditing &&
           _originalInvoice != null &&
           _editingRootInvoiceId != null) {
         final totalSumBeforeDiscount = _calculateTotalSum();
         // Run in background — updateSalesInvoice writes Hive first then enqueues.
         // UI is unblocked immediately regardless of connectivity.
-        await SalesInvoiceUpdateService.updateSalesInvoice(
+        _lastInvoice = await SalesInvoiceUpdateService.updateSalesInvoice(
           rootInvoiceId: _editingRootInvoiceId!,
           clientSubInvoiceDocId: _editingClientSubDocId,
           originalInvoice: _originalInvoice!,
@@ -1193,31 +1165,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           totalSumBeforeDiscount: totalSumBeforeDiscount,
           sourceCollection: _editingSourceCollection,
         );
-
-        final effectiveDiscountAmt = discountIsPercent
-            ? totalSumBeforeDiscount * invoiceDiscount / 100
-            : invoiceDiscount;
-        final totalSumFinal = totalSumBeforeDiscount - effectiveDiscountAmt;
-        final totalCost = InvoiceStockService.computeCostTotal(
-          List<Map<String, dynamic>>.from(_addedProducts),
-          _productCatalog,
-        );
-        final balance = totalSumFinal - effectivePaid;
-
-        _lastInvoice = {
-          ..._originalInvoice!,
-          'id': _editingRootInvoiceId,
-          'clientName': effectiveClient,
-          'date': _selectedDate,
-          'totalSum': totalSumFinal,
-          'profitMargin': totalSumFinal - totalCost,
-          'paidAmount': effectivePaid,
-          'balance': balance,
-          'paymentMethod': paymentMethod,
-          'notes': notes,
-          'invoiceDiscount': effectiveDiscountAmt,
-          'products': List<Map<String, dynamic>>.from(_addedProducts),
-        };
       } else if (widget.isReturnInvoice) {
         _lastInvoice = await ReturnInvoiceSaveService.save(
           clientName: effectiveClient,
@@ -1277,80 +1224,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           'products': lines,
         };
 
-        _lastInvoice = Map<String, dynamic>.from(invoiceData);
-
-        // 1. Write to local Hive primary database immediately (<10ms)
-        await InvoiceRepository.instance
-            .upsertSaleLocal(docRef.id, invoiceData);
-
-        // 2. Update stock locally
-        await InvoiceStockService.applyStockChanges(
-          lines: lines,
-          restore: false,
-          changeDate: _selectedDate,
-          catalog: catalog,
-        );
-
-        // 2. Save sales invoice locally in Hive so it appears instantly offline
-        // (already saved above)
-
-        // 3. Update client balance & balance history locally in Hive
-        if (resolvedClientId != null && resolvedClientId.isNotEmpty) {
-          await ClientRepository.instance
-              .updateLocalBalance(resolvedClientId, updatedBalance);
-
-          // Entry 1: Sales invoice total (debt increase)
-          await BalanceHistoryRepository.instance.upsertLocal(
-            BalanceHistoryLocal(
-              id: '${docRef.id}_sale',
-              parentId: resolvedClientId,
-              parentType: 'client',
-              enteredBalance: totalSumFinal,
-              balanceBefore: existingBalance,
-              type: 'sale',
-              invoiceId: docRef.id,
-              invoiceNumber: newInvoiceNumber.toString(),
-              timestamp: _selectedDate ?? DateTime.now(),
-            ),
-          );
-
-          // Entry 2: Payment received (debt decrease) if > 0
-          if (effectivePaid > 0) {
-            await BalanceHistoryRepository.instance.upsertLocal(
-              BalanceHistoryLocal(
-                id: '${docRef.id}_pay',
-                parentId: resolvedClientId,
-                parentType: 'client',
-                enteredBalance: effectivePaid,
-                balanceBefore: existingBalance + totalSumFinal,
-                type: 'sale_payment',
-                invoiceId: docRef.id,
-                invoiceNumber: newInvoiceNumber.toString(),
-                timestamp: _selectedDate ?? DateTime.now(),
-              ),
-            );
-          }
-        }
-
-        // 4. Update cash box locally
-        if (effectivePaid > 0) {
-          await BoxRepository.instance.increment(effectivePaid);
-        }
-
-        // 5. Enqueue background sync to Firebase
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'createInvoice',
-          payload: {
-            'clientId': resolvedClientId ?? docRef.id,
-            'invoiceId': docRef.id,
-            'invoiceData': invoiceData,
-            'products': lines,
-            'totalSum': totalSumFinal,
-            'paidAmount': effectivePaid,
-          },
-        );
-
-        // Trigger background sync without awaiting
+        _lastInvoice = await CustomerOperationService.saveInvoice(invoiceData);
         ConnectivityService.instance.forceSync();
       }
 
@@ -1588,79 +1462,6 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   Future<int> _fetchNextInvoiceNumber() async {
     final type = widget.isReturnInvoice ? 'return' : 'sale';
     return LocalInvoiceCounter.nextNumber(type);
-  }
-
-  Future<void> _commitClientAndBoxWrites({
-    required DocumentReference<Map<String, dynamic>> clientDocRef,
-    required DocumentReference<Map<String, dynamic>> boxDocRef,
-    required String effectiveClient,
-    required double updatedBalance,
-    required String invoiceId,
-    required int newInvoiceNumber,
-    required double totalSumFinal,
-    required double effectivePaid,
-    required double balance,
-    required String paymentMethod,
-    required String notes,
-    required List<Map<String, dynamic>> products,
-    required double existingBalance,
-    required double invoiceDiscount,
-  }) async {
-    final batch = FirebaseFirestore.instance.batch();
-    batch.set(
-      clientDocRef,
-      {'clientName': effectiveClient, 'balance': updatedBalance},
-      SetOptions(merge: true),
-    );
-    batch.set(clientDocRef.collection(_clientInvoiceSubcollection).doc(), {
-      'invoiceId': invoiceId,
-      'invoiceNumber': newInvoiceNumber,
-      'date': _selectedDate,
-      'totalSum': totalSumFinal,
-      'paidAmount': effectivePaid,
-      'balance': balance,
-      'previousBalance': _clientBalance,
-      'paymentMethod': paymentMethod,
-      'notes': notes,
-      'invoiceDiscount': invoiceDiscount,
-      'isSpecial': false,
-      'products': products,
-    });
-    // Entry 1: Invoice total (debt increase)
-    batch.set(
-        clientDocRef.collection('balanceHistory').doc('${invoiceId}_sale'), {
-      'enteredBalance': totalSumFinal,
-      'balanceBefore': existingBalance,
-      'timestamp': FieldValue.serverTimestamp(),
-      'type': 'sale',
-      'invoiceId': invoiceId,
-      'invoiceNumber': newInvoiceNumber,
-    });
-    // Entry 2: Payment received (debt decrease) — only if > 0
-    if (effectivePaid > 0) {
-      batch.set(
-          clientDocRef.collection('balanceHistory').doc('${invoiceId}_pay'), {
-        'enteredBalance': effectivePaid,
-        'balanceBefore': existingBalance + totalSumFinal,
-        'timestamp': FieldValue.serverTimestamp(),
-        'type': 'sale_payment',
-        'invoiceId': invoiceId,
-        'invoiceNumber': newInvoiceNumber,
-      });
-    }
-    batch.set(
-      boxDocRef,
-      {'value': FieldValue.increment(effectivePaid)},
-      SetOptions(merge: true),
-    );
-    batch.set(boxDocRef.collection('changes').doc(), {
-      'date': FieldValue.serverTimestamp(),
-      'value': effectivePaid,
-      'type': 'addition',
-      'name': effectiveClient,
-      'invoiceNumber': newInvoiceNumber,
-    });
-    await batch.commit();
   }
 
   Future<void> _fetchAndSetClientBalance(String clientName) async {

@@ -1,8 +1,9 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 
 import '../Services/invoice_number_utils.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/product_repository.dart';
 
 class ProductReportPage extends StatefulWidget {
   const ProductReportPage({super.key});
@@ -87,17 +88,17 @@ class _ProductReportPageState extends State<ProductReportPage> {
   }
 
   Future<void> _fetchProductNames() async {
-    try {
-      final snap =
-          await FirebaseFirestore.instance.collection('products').get();
-      setState(() {
-        _productNames =
-            snap.docs.map((d) => d['name'] as String).toList()..sort();
-        _loadingProducts = false;
-      });
-    } catch (_) {
-      setState(() => _loadingProducts = false);
-    }
+    final names = ProductRepository.instance
+        .getAll()
+        .map((product) => product.name)
+        .where((name) => name.isNotEmpty)
+        .toList()
+      ..sort();
+    if (!mounted) return;
+    setState(() {
+      _productNames = names;
+      _loadingProducts = false;
+    });
   }
 
   Future<void> _pickDate(bool isStart) async {
@@ -127,15 +128,13 @@ class _ProductReportPageState extends State<ProductReportPage> {
 
     final start =
         DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
-    final end = DateTime(
-        _endDate!.year, _endDate!.month, _endDate!.day, 23, 59, 59);
+    final end =
+        DateTime(_endDate!.year, _endDate!.month, _endDate!.day, 23, 59, 59);
 
     try {
-      final invoicesSnap = await FirebaseFirestore.instance
-          .collection('invoices')
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('date', isLessThanOrEqualTo: Timestamp.fromDate(end))
-          .get();
+      final invoices = InvoiceRepository.instance.getAllSales().where(
+          (invoice) =>
+              !invoice.date.isBefore(start) && !invoice.date.isAfter(end));
 
       double totalQuantity = 0;
       double totalRevenue = 0;
@@ -145,20 +144,11 @@ class _ProductReportPageState extends State<ProductReportPage> {
 
       // Fallback for old invoice lines without frozen costPrice on the line.
       double catalogCost = 0;
-      final productSnap = await FirebaseFirestore.instance
-          .collection('products')
-          .where('name', isEqualTo: _selectedProduct)
-          .limit(1)
-          .get();
-      if (productSnap.docs.isNotEmpty) {
-        catalogCost = invoiceNum(productSnap.docs.first.data()['costPrice']);
-      }
+      final product = ProductRepository.instance.findByName(_selectedProduct!);
+      if (product != null) catalogCost = product.costPrice;
 
-      for (final doc in invoicesSnap.docs) {
-        final data = doc.data();
-        final products = (data['products'] as List<dynamic>?) ?? [];
-        for (final p in products) {
-          final pMap = Map<String, dynamic>.from(p as Map);
+      for (final invoice in invoices) {
+        for (final pMap in invoice.products) {
           if (invoiceCatalogProductName(pMap) != _selectedProduct) continue;
 
           final qty = invoiceNum(pMap['amount']);
@@ -228,16 +218,15 @@ class _ProductReportPageState extends State<ProductReportPage> {
                 decoration: InputDecoration(
                   hintText: 'ابحث عن منتج...',
                   hintTextDirection: TextDirection.rtl,
-                  prefixIcon:
-                      const Icon(Icons.search, color: Colors.black54),
+                  prefixIcon: const Icon(Icons.search, color: Colors.black54),
                   suffixIcon: _searchQuery.isNotEmpty
                       ? IconButton(
                           icon: const Icon(Icons.clear, color: Colors.black54),
                           onPressed: _clearProductSearch,
                         )
                       : null,
-                  contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12.w, vertical: 10.h),
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10.r),
                     borderSide: BorderSide(color: Colors.grey.shade400),
@@ -413,8 +402,7 @@ class _ProductReportPageState extends State<ProductReportPage> {
                               strokeWidth: 2, color: Colors.white))
                       : Text('عرض التقرير',
                           style: TextStyle(
-                              fontSize: 16.sp,
-                              fontWeight: FontWeight.bold)),
+                              fontSize: 16.sp, fontWeight: FontWeight.bold)),
                 ),
               ),
               if (_stats != null) ...[
@@ -469,8 +457,7 @@ class _ReportResultCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return Card(
       elevation: 3,
-      shape:
-          RoundedRectangleBorder(borderRadius: BorderRadius.circular(14.r)),
+      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14.r)),
       child: Container(
         width: double.infinity,
         decoration: BoxDecoration(
@@ -524,9 +511,8 @@ class _ReportResultCard extends StatelessWidget {
             if (stats.totalQuantitySold > 0)
               _Row(
                   label: 'متوسط سعر البيع',
-                  value:
-                      (stats.totalRevenue / stats.totalQuantitySold)
-                          .toStringAsFixed(2),
+                  value: (stats.totalRevenue / stats.totalQuantitySold)
+                      .toStringAsFixed(2),
                   unit: 'ج.م / وحدة'),
           ],
         ),
@@ -556,8 +542,7 @@ class _Row extends StatelessWidget {
         children: [
           Text(label,
               style: TextStyle(
-                  fontSize: 13.sp,
-                  color: Colors.black.withOpacity(0.6))),
+                  fontSize: 13.sp, color: Colors.black.withOpacity(0.6))),
           Row(children: [
             Text(value,
                 style: TextStyle(
@@ -569,8 +554,7 @@ class _Row extends StatelessWidget {
             SizedBox(width: 4.w),
             Text(unit,
                 style: TextStyle(
-                    fontSize: 12.sp,
-                    color: Colors.black.withOpacity(0.5))),
+                    fontSize: 12.sp, color: Colors.black.withOpacity(0.5))),
           ]),
         ],
       ),
@@ -607,8 +591,7 @@ class _DatePickerButton extends StatelessWidget {
               children: [
                 Text(label,
                     style: TextStyle(
-                        fontSize: 11.sp,
-                        color: Colors.black.withOpacity(0.5))),
+                        fontSize: 11.sp, color: Colors.black.withOpacity(0.5))),
                 Text(
                   date != null
                       ? '${date!.day}/${date!.month}/${date!.year}'

@@ -1,14 +1,13 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'invoice_number_utils.dart';
 import 'invoice_special_service.dart';
-import 'invoice_stock_service.dart';
 import 'client_invoice_running_balance_service.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/balance_history_repository.dart';
-import '../repositories/box_repository.dart';
 import '../sync/connectivity_service.dart';
-import '../sync/sync_queue_manager.dart';
+import 'customer_operation_service.dart';
+import 'customer_balance_store.dart';
 
 /// Delete / lookup sales invoices in [invoices] and client subcollections.
 class SalesInvoiceActionsService {
@@ -52,7 +51,8 @@ class SalesInvoiceActionsService {
       final candidateId = rootInvoiceIdFrom(candidate);
       if (rootId.isNotEmpty && candidateId == rootId) return true;
       final invoiceNumber = fallback['invoiceNumber']?.toString().trim() ?? '';
-      return invoiceNumber.isNotEmpty &&
+      return rootId.isEmpty &&
+          invoiceNumber.isNotEmpty &&
           candidate['invoiceNumber']?.toString().trim() == invoiceNumber;
     }
 
@@ -66,6 +66,14 @@ class SalesInvoiceActionsService {
       salesInvoices: sales,
       returnInvoices: returns,
       payments: payments,
+      initialBalance: CustomerBalanceStore.hasBase(clientId)
+          ? ClientInvoiceRunningBalanceService.carryForward(
+              currentBalance: ClientRepository.instance
+                  .computeLiveBalanceFromHive(clientId),
+              salesInvoices: sales,
+              returnInvoices: returns,
+              payments: payments)
+          : 0,
     );
 
     final clientPageData = candidates[targetIndex];
@@ -125,23 +133,17 @@ class SalesInvoiceActionsService {
     }
     if (rootId.isEmpty) return payload;
 
-    final rootSnap = await FirebaseFirestore.instance
-        .collection(collection)
-        .doc(rootId)
-        .get();
-    if (rootSnap.exists) {
-      payload = {
-        ...rootSnap.data()!,
-        'id': rootId,
-        '_sourceCollection': collection,
-        if (clientSubDocId != null && clientSubDocId.isNotEmpty)
-          '_clientSubDocId': clientSubDocId,
-      };
-    } else {
-      payload['id'] = rootId;
-      payload['_sourceCollection'] = collection;
-    }
-    return payload;
+    final local = collection == 'returnInvoices'
+        ? InvoiceRepository.instance.getReturnById(rootId)
+        : InvoiceRepository.instance.getSaleById(rootId);
+    if (local == null)
+      throw StateError('Invoice must be cached before editing');
+    return {
+      ...payload,
+      ...local.toMap(),
+      'id': rootId,
+      '_sourceCollection': collection
+    };
   }
 
   /// Deletes root invoice, matching client copy, restores stock, updates balance in Hive first.
@@ -150,64 +152,8 @@ class SalesInvoiceActionsService {
     required Map<String, dynamic> invoice,
     required String rootInvoiceId,
   }) async {
-    final clientName = invoice['clientName']?.toString() ?? '';
-    String clientId = invoice['clientId']?.toString() ?? '';
-    if (clientId.isEmpty && clientName.isNotEmpty) {
-      final localClient = ClientRepository.instance.findByName(clientName);
-      clientId = localClient?.id ?? clientName;
-    }
-
-    final products = List<Map<String, dynamic>>.from(
-      (invoice['products'] as List?) ?? [],
-    );
-
-    // 1. Delete invoice from local Hive cache
-    await InvoiceRepository.instance.deleteSaleLocal(rootInvoiceId);
-
-    // 2. Restore products stock in Hive & background Firestore
-    if (products.isNotEmpty) {
-      await InvoiceStockService.applyStockChanges(
-        lines: products,
-        restore: true,
-        changeDate: DateTime.now(),
-      );
-    }
-
-    final totalSum = invoiceNum(invoice['totalSum']);
-    final paidAmount = invoiceNum(invoice['paidAmount']);
-
-    // 3. Adjust Cash Box locally if there was a payment
-    if (paidAmount > 0) {
-      await BoxRepository.instance.decrement(paidAmount);
-    }
-
-    // 4. Update client balance in Hive
-    if (clientId.isNotEmpty) {
-      final unpaid = totalSum - paidAmount;
-      final localClient = ClientRepository.instance.getById(clientId) ??
-          ClientRepository.instance.findByName(clientName);
-      if (localClient != null) {
-        final newBal = localClient.balance - unpaid;
-        await ClientRepository.instance
-            .updateLocalBalance(localClient.id, newBal);
-      }
-      await BalanceHistoryRepository.instance
-          .deleteByInvoiceId('client', clientId, rootInvoiceId);
-    }
-
-    // 5. Enqueue background deletion to Firebase with complete payload
-    await SyncQueueManager.instance.enqueue(
-      operationType: 'deleteInvoice',
-      payload: {
-        'clientId': clientId,
-        'invoiceId': rootInvoiceId,
-        'products': products,
-        'totalSum': totalSum,
-        'paidAmount': paidAmount,
-      },
-    );
-
-    // Trigger sync in background
+    await CustomerOperationService.deleteInvoice(rootInvoiceId,
+        isReturn: invoiceIsReturn(invoice));
     ConnectivityService.instance.forceSync();
   }
 }

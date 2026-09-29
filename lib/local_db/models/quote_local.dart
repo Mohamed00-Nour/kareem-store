@@ -63,7 +63,8 @@ class QuoteLocal extends HiveObject {
       final decoded = jsonDecode(productsJson);
       if (decoded is List) {
         return decoded
-            .map((e) => e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
+            .map((e) =>
+                e is Map ? Map<String, dynamic>.from(e) : <String, dynamic>{})
             .toList();
       }
       return [];
@@ -95,8 +96,10 @@ class QuoteLocal extends HiveObject {
       parsedDate = rawDate.toDate();
     } else if (rawDate is DateTime) {
       parsedDate = rawDate;
+    } else if (rawDate is String) {
+      parsedDate = DateTime.tryParse(rawDate) ?? DateTime(1970);
     } else {
-      parsedDate = DateTime.now();
+      parsedDate = DateTime(1970);
     }
 
     String pJson = '[]';
@@ -105,7 +108,6 @@ class QuoteLocal extends HiveObject {
     } else if (data['productsJson'] is String) {
       pJson = data['productsJson'];
     }
-
 
     return QuoteLocal(
       id: docId,

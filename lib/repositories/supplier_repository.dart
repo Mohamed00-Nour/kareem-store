@@ -1,7 +1,9 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/supplier_local.dart';
-import '../sync/sync_queue_manager.dart';
+import '../sync/cloud_snapshot_guard.dart';
+import '../sync/local_operation_journal.dart';
+import '../Services/supplier_balance_store.dart';
 import '../utils/entity_name_normalizer.dart';
 
 import 'balance_history_repository.dart';
@@ -20,9 +22,14 @@ class SupplierRepository {
 
   /// Compute live running balance for a supplier directly from local Hive transaction history.
   double computeLiveBalanceFromHive(String supplierId) {
+    final cached = suppliersBox.get(supplierId);
+    if (SupplierBalanceStore.hasBase(supplierId)) {
+      return SupplierBalanceStore.balance(supplierId,
+          fallback: cached?.balance ?? 0);
+    }
     return BalanceHistoryRepository.instance.calculateSupplierBalance(
       supplierId,
-      fallback: suppliersBox.get(supplierId)?.balance ?? 0.0,
+      fallback: cached?.balance ?? 0.0,
     );
   }
 
@@ -76,49 +83,87 @@ class SupplierRepository {
 
   /// Full sync — downloads all suppliers from Firestore into Hive.
   Future<void> fullSync() async {
+    final startedAt = DateTime.now();
     final snap = await _fs.collection('suppliers').get();
-    final box = suppliersBox;
-    final pendingIds = SyncQueueManager.instance.unfinishedEntityIds(
-      operationType: 'createSupplier',
-      idKey: 'supplierId',
-    );
-    final Map<String, SupplierLocal> entries = {};
     for (final doc in snap.docs) {
-      final serverSupplier = SupplierLocal.fromFirestore(doc.id, doc.data());
-      final localExisting = box.get(doc.id);
-      if (localExisting != null) {
-        serverSupplier.balance = localExisting.balance;
-      }
-      entries[doc.id] = serverSupplier;
+      await hydrateCloud(doc.id, doc.data());
     }
-    final staleKeys = box.keys
-        .where((key) =>
-            !entries.containsKey(key.toString()) &&
-            !pendingIds.contains(key.toString()))
-        .toList(growable: false);
-    await box.deleteAll(staleKeys);
-    await box.putAll(entries);
-    appMetaBox.put(
+    await appMetaBox.put(
       HiveMetaKeys.lastSupplierSyncAt,
-      DateTime.now().toIso8601String(),
+      startedAt.toIso8601String(),
     );
   }
 
-  /// Delta sync — fetches suppliers into Hive.
-  /// Performs fullSync to guarantee complete supplier list caching because supplier documents
-  /// in Firestore may not contain an updatedAt field.
+  /// Fetches supplier profile changes after the initial compatibility
+  /// baseline. Financial changes arrive through the sequenced receipt feed.
   Future<void> deltaSync() async {
-    await fullSync();
+    final raw = appMetaBox.get(HiveMetaKeys.lastSupplierSyncAt)?.toString();
+    final cursor = DateTime.tryParse(raw ?? '');
+    if (cursor == null) {
+      await fullSync();
+      return;
+    }
+    final startedAt = DateTime.now();
+    final snap = await _fs
+        .collection('suppliers')
+        .where('updatedAt', isGreaterThan: Timestamp.fromDate(cursor))
+        .get();
+    for (final doc in snap.docs) {
+      await hydrateCloud(doc.id, doc.data());
+    }
+    await appMetaBox.put(
+      HiveMetaKeys.lastSupplierSyncAt,
+      startedAt.toIso8601String(),
+    );
   }
+
+  Future<void> hydrateCloud(String id, Map<String, dynamic>? data) async {
+    final events = <String, Map<String, dynamic>>{};
+    if (data != null && data.containsKey('financialBaseBalance')) {
+      final snap = await _fs
+          .collection('suppliers')
+          .doc(id)
+          .collection('financialOperations')
+          .get();
+      for (final doc in snap.docs) events[doc.id] = doc.data();
+    }
+    await mergeCloud(id, data, events: events);
+  }
+
+  Future<void> mergeCloud(String id, Map<String, dynamic>? data,
+          {Map<String, Map<String, dynamic>> events = const {}}) =>
+      LocalOperationJournal.exclusive(() async {
+        final path = 'suppliers/$id';
+        if (data != null) {
+          await appMetaBox.put('supplierCloudBalance:$id', {
+            'balance': data['totalBalance'] ?? data['balance'],
+            'version': data['_version'] ?? 0
+          });
+        }
+        if (data == null || !CloudSnapshotGuard.accepts(path, data)) return;
+        if (data['_deleted'] == true) {
+          await deleteLocal(id);
+          await CloudSnapshotGuard.record(path, data);
+          return;
+        }
+        if (!suppliersBox.containsKey(id)) {
+          await SupplierBalanceStore.initializeFromCloud(id, data);
+        }
+        for (final event in events.entries) {
+          await SupplierBalanceStore.importEvent(id, event.key, event.value);
+        }
+        await upsertLocal(id, data);
+        await CloudSnapshotGuard.record(path, data);
+      });
 
   /// Upsert a single supplier into local cache.
   Future<void> upsertLocal(String docId, Map<String, dynamic> data) async {
     final incoming = SupplierLocal.fromFirestore(docId, data);
-    final existing = suppliersBox.get(docId);
-    if (existing != null) {
-      // Supplier balance is owned by the local Hive ledger. Realtime supplier
-      // metadata must never replace it with a delayed Firestore aggregate.
-      incoming.balance = existing.balance;
+    if (SupplierBalanceStore.hasBase(docId)) {
+      incoming.balance = SupplierBalanceStore.balance(docId);
+    } else {
+      final existing = suppliersBox.get(docId);
+      if (existing != null) incoming.balance = existing.balance;
     }
     await suppliersBox.put(docId, incoming);
   }

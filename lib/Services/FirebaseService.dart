@@ -28,6 +28,7 @@ class FirebaseService {
     return FirebaseFirestore.instance.collection('employees').snapshots().map((snapshot) {
       double totalBorrowValue = 0.0;
       for (var doc in snapshot.docs) {
+      if ((doc.data() as Map?)?['_deleted'] == true) continue;
         Employee employee = Employee.fromMap(doc.data() as Map<String, dynamic>, doc.id);
         totalBorrowValue += employee.borrows.fold(0.0, (sum, borrow) => sum + double.parse(borrow.value));
       }
@@ -39,6 +40,7 @@ class FirebaseService {
     return FirebaseFirestore.instance.collection('employees').snapshots().map((snapshot) {
       double totalMedicineValue = 0.0;
       for (var doc in snapshot.docs) {
+      if ((doc.data() as Map?)?['_deleted'] == true) continue;
         Employee employee = Employee.fromMap(doc.data() as Map<String, dynamic>, doc.id);
         totalMedicineValue += employee.medicines.fold(0.0, (sum, medicine) => sum + double.parse(medicine.value));
       }
@@ -98,6 +100,7 @@ class FirebaseService {
     return FirebaseFirestore.instance.collection('spare_parts').snapshots().map((snapshot) {
       double total = 0.0;
       for (var doc in snapshot.docs) {
+      if ((doc.data() as Map?)?['_deleted'] == true) continue;
         total += double.tryParse(doc['value']) ?? 0.0;
       }
       return total;
@@ -113,6 +116,7 @@ class FirebaseService {
     var totalProfitMargin = 0.0;
     var totalSum = 0.0;
     for (final doc in snapshot.docs) {
+      if ((doc.data() as Map?)?['_deleted'] == true) continue;
       totalProfitMargin += _docNum(doc['profitMargin']);
       totalSum += _docNum(doc['totalSum']);
     }
@@ -129,6 +133,7 @@ class FirebaseService {
     var returnProfit = 0.0;
     var returnSum = 0.0;
     for (final doc in returnsSnap.docs) {
+      if ((doc.data() as Map?)?['_deleted'] == true) continue;
       returnProfit += _docNum(doc['profitMargin']);
       returnSum += _docNum(doc['totalSum']);
     }
@@ -156,6 +161,7 @@ class FirebaseService {
     return _firestore.collection('buying invoices').snapshots().map((snapshot) {
       double totalSum = 0.0;
       for (var doc in snapshot.docs) {
+      if ((doc.data() as Map?)?['_deleted'] == true) continue;
         totalSum += doc['totalSum'] ?? 0.0;
       }
       return totalSum;
@@ -183,6 +189,7 @@ class FirebaseService {
         .map((snapshot) {
       double totalSum = 0.0;
       for (var doc in snapshot.docs) {
+      if ((doc.data() as Map?)?['_deleted'] == true) continue;
         totalSum += doc['totalSum'] ?? 0.0;
       }
       return totalSum;
@@ -229,6 +236,7 @@ class FirebaseService {
         .map((snapshot) {
       double totalSum = 0.0;
       for (var doc in snapshot.docs) {
+      if ((doc.data() as Map?)?['_deleted'] == true) continue;
         totalSum += doc['totalSum'] ?? 0.0;
       }
       return totalSum;
@@ -239,6 +247,7 @@ class FirebaseService {
     QuerySnapshot snapshot = await _firestore.collection('invoices').get();
     Set<DateTime> months = {};
     for (var doc in snapshot.docs) {
+      if ((doc.data() as Map?)?['_deleted'] == true) continue;
       Timestamp timestamp = doc['date'];
       DateTime date = timestamp.toDate();
       DateTime month = DateTime(date.year, date.month);

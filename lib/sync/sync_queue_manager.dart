@@ -4,6 +4,7 @@ import 'package:hive/hive.dart';
 import 'package:uuid/uuid.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/sync_queue_item.dart';
+import 'sync_operation_diagnostics.dart';
 
 /// Manages all pending offline write operations.
 ///
@@ -36,8 +37,12 @@ class SyncQueueManager {
       createdAt: DateTime.now(),
       retryCount: 0,
       status: 'pending',
+      diagnosticsJson:
+          SyncOperationDiagnostics.fromPayload(id, operationType, payload)
+              .toJson(),
     );
     await syncQueueBox.put(id, item);
+    await syncQueueBox.flush();
     return id;
   }
 
@@ -99,7 +104,10 @@ class SyncQueueManager {
   }
 
   /// Number of pending (not yet synced) items.
-  int get pendingCount => getPending().length;
+  int get pendingCount => getAll().where((e) => e.status != 'synced').length;
+  int get failedCount => getAll()
+      .where((e) => e.status == 'failed' || e.status == 'preparing')
+      .length;
 
   /// True when there are items waiting to be synced.
   bool get hasPending => pendingCount > 0;
@@ -111,7 +119,8 @@ class SyncQueueManager {
     return syncQueueBox.values.any((item) =>
         item.status == 'pending' ||
         item.status == 'failed' ||
-        item.status == 'syncing');
+        item.status == 'syncing' ||
+        item.status == 'preparing');
   }
 
   /// True when there are operations currently being uploaded.
@@ -130,59 +139,166 @@ class SyncQueueManager {
     final item = syncQueueBox.get(operationId);
     if (item != null) {
       item.status = 'syncing';
+      item.lastAttemptAt = DateTime.now();
+      item.nextRetryAt = null;
       await item.save();
+      await syncQueueBox.flush();
     }
   }
 
   /// Mark an item as successfully synced and remove it from the queue.
   Future<void> markSynced(String operationId) async {
     await syncQueueBox.delete(operationId);
+    await syncQueueBox.flush();
   }
 
   /// Mark an item as failed and increment its retry count.
-  Future<void> markFailed(String operationId, String errorMessage) async {
+  Future<void> markFailed(String operationId, Object error) async {
     final item = syncQueueBox.get(operationId);
     if (item != null) {
+      final details = SyncFailureClassifier.classify(error);
+      item.lastAttemptAt ??= DateTime.now();
       item.status = 'failed';
       item.retryCount++;
-      item.lastError = errorMessage;
+      item.lastError = details.technicalMessage;
+      item.errorCategory = details.category;
+      item.errorCode = details.code;
+      item.nextRetryAt = details.canRetryAutomatically
+          ? _automaticRetryTime(item.operationId, item.retryCount)
+          : null;
+      _appendAttempt(item, details);
       await item.save();
+      await syncQueueBox.flush();
     }
   }
 
+  static DateTime _automaticRetryTime(String operationId, int retryCount) {
+    const seconds = [2, 5, 15, 60, 300];
+    final index = (retryCount - 1).clamp(0, seconds.length - 1);
+    final baseMs = seconds[index] * 1000;
+    final jitterMs = operationId.hashCode.abs() % (baseMs ~/ 5 + 1);
+    return DateTime.now().add(Duration(milliseconds: baseMs + jitterMs));
+  }
+
+  static void _appendAttempt(SyncQueueItem item, SyncFailureDetails details) {
+    List<dynamic> history = [];
+    try {
+      history = jsonDecode(item.attemptHistoryJson) as List<dynamic>;
+    } catch (_) {}
+    history.add({
+      'attempt': item.retryCount,
+      'at': (item.lastAttemptAt ?? DateTime.now()).toIso8601String(),
+      'category': details.category,
+      'code': details.code,
+      'message': details.technicalMessage,
+    });
+    if (history.length > 20) history = history.sublist(history.length - 20);
+    item.attemptHistoryJson = jsonEncode(history);
+  }
+
   /// Reset a failed item back to 'pending' so it can be retried.
-  Future<void> resetToPending(String operationId) async {
+  Future<bool> resetToPending(String operationId) async {
     final item = syncQueueBox.get(operationId);
-    if (item != null) {
+    if (item != null && canRetry(item)) {
       item.status = 'pending';
+      item.retryCount = 0;
+      item.lastError = null;
+      item.errorCategory = null;
+      item.errorCode = null;
+      item.nextRetryAt = null;
       await item.save();
+      await syncQueueBox.flush();
+      return true;
     }
+    return false;
   }
 
   /// Recovers uploads interrupted by an app/process shutdown.
   Future<void> recoverInterruptedItems() async {
     if (!_isBoxReady) return;
+    for (final item in syncQueueBox.values) {
+      var changed = false;
+      if (item.diagnosticsJson == null || item.diagnosticsJson!.isEmpty) {
+        item.diagnosticsJson = SyncOperationDiagnostics.fromItem(item).toJson();
+        changed = true;
+      }
+      if (item.status == 'failed' && item.errorCategory == null) {
+        item.errorCategory =
+            SyncFailureClassifier.inferCategory(item.lastError);
+        changed = true;
+      }
+      // Older builds classified Firestore quota exhaustion as a temporary
+      // network failure and retried it repeatedly. Preserve the operation but
+      // stop automatic attempts until the user retries after resolving quota.
+      final reclassified = SyncFailureClassifier.classify(item.lastError ?? '');
+      if (item.status == 'failed' &&
+          reclassified.category == SyncErrorCategories.quota) {
+        if (item.errorCategory != SyncErrorCategories.quota ||
+            item.errorCode != reclassified.code) {
+          item.errorCategory = SyncErrorCategories.quota;
+          item.errorCode = reclassified.code;
+          changed = true;
+        }
+        if (item.nextRetryAt != null) {
+          item.nextRetryAt = null;
+          changed = true;
+        }
+      }
+      if (changed) await item.save();
+    }
     final interrupted = syncQueueBox.values
         .where((item) => item.status == 'syncing')
         .toList(growable: false);
     for (final item in interrupted) {
       item.status = 'pending';
+      item.nextRetryAt = null;
       await item.save();
     }
+    await syncQueueBox.flush();
   }
 
   /// Manual retry starts failed operations with a fresh retry budget.
   Future<void> resetFailedItems() async {
     if (!_isBoxReady) return;
     final failed = syncQueueBox.values
-        .where((item) => item.status == 'failed')
+        .where((item) => item.status == 'failed' && canRetryAutomatically(item))
         .toList(growable: false);
     for (final item in failed) {
       item.status = 'pending';
       item.retryCount = 0;
       item.lastError = null;
+      item.errorCategory = null;
+      item.errorCode = null;
+      item.nextRetryAt = null;
       await item.save();
     }
+    await syncQueueBox.flush();
+  }
+
+  bool canRetry(SyncQueueItem item) {
+    final category = item.errorCategory ??
+        (item.status == 'failed'
+            ? SyncFailureClassifier.inferCategory(item.lastError)
+            : null);
+    return SyncErrorCategories.canRetry(category);
+  }
+
+  bool canRetryAutomatically(SyncQueueItem item) {
+    final category = item.errorCategory ??
+        (item.status == 'failed'
+            ? SyncFailureClassifier.inferCategory(item.lastError)
+            : null);
+    return SyncErrorCategories.canRetryAutomatically(category);
+  }
+
+  bool isReadyForAutomaticAttempt(SyncQueueItem item, DateTime now) {
+    if (item.status == 'pending') return true;
+    if (item.status != 'failed' ||
+        !canRetryAutomatically(item) ||
+        item.retryCount >= 5) {
+      return false;
+    }
+    return item.nextRetryAt == null || !item.nextRetryAt!.isAfter(now);
   }
 
   /// Decode payload JSON back to a Dart Map.

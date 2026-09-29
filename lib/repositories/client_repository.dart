@@ -1,10 +1,12 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/client_local.dart';
-import '../sync/sync_queue_manager.dart';
 import '../utils/entity_name_normalizer.dart';
 
 import 'balance_history_repository.dart';
+import '../Services/customer_balance_store.dart';
+import '../sync/cloud_snapshot_guard.dart';
+import '../sync/local_operation_journal.dart';
 
 /// Repository for Client data.
 ///
@@ -76,46 +78,86 @@ class ClientRepository {
 
   /// Full sync — downloads all clients from Firestore into Hive.
   Future<void> fullSync() async {
+    final startedAt = DateTime.now();
     final snap = await _fs.collection('clients').get();
-    final box = clientsBox;
-
-    final pendingClientIds = SyncQueueManager.instance.unfinishedEntityIds(
-      operationType: 'createClient',
-      idKey: 'clientId',
-    );
-    final Map<String, ClientLocal> entries = {};
     for (final doc in snap.docs) {
-      final serverClient = ClientLocal.fromFirestore(doc.id, doc.data());
-      final localExisting = box.get(doc.id);
-      if (localExisting != null) {
-        // Hive is our primary local DB — preserve local Hive balance from being overwritten by stale server reads
-        serverClient.balance = localExisting.balance;
-      }
-      entries[doc.id] = serverClient;
+      await hydrateCloud(doc.id, doc.data());
     }
-    final staleKeys = box.keys
-        .where((key) =>
-            !entries.containsKey(key.toString()) &&
-            !pendingClientIds.contains(key.toString()))
-        .toList(growable: false);
-    await box.deleteAll(staleKeys);
-    await box.putAll(entries);
-    appMetaBox.put(
-      HiveMetaKeys.lastClientSyncAt,
-      DateTime.now().toIso8601String(),
-    );
+    await appMetaBox.put(
+        HiveMetaKeys.lastClientSyncAt, startedAt.toIso8601String());
   }
 
-  /// Delta sync — fetches clients into Hive.
-  /// Performs fullSync to guarantee complete client list caching because client documents
-  /// in Firestore may not contain an updatedAt field.
+  Future<void> hydrateCloud(String id, Map<String, dynamic>? data) async {
+    final events = <String, Map<String, dynamic>>{};
+    if (data != null && data.containsKey('financialBaseBalance')) {
+      final snapshot = await _fs
+          .collection('clients')
+          .doc(id)
+          .collection('financialOperations')
+          .get();
+      for (final doc in snapshot.docs) events[doc.id] = doc.data();
+    }
+    await mergeCloud(id, data, events: events);
+  }
+
+  Future<void> mergeCloud(String id, Map<String, dynamic>? data,
+          {Map<String, Map<String, dynamic>> events = const {}}) =>
+      LocalOperationJournal.exclusive(() async {
+        final path = 'clients/' + id;
+        if (data != null)
+          await appMetaBox.put('customerCloudBalance:' + id,
+              {'balance': data['balance'], 'version': data['_version'] ?? 0});
+        if (data == null || !CloudSnapshotGuard.accepts(path, data)) return;
+        if (data['_deleted'] == true) {
+          // Financial history must remain reviewable; archived customers are
+          // removed from the active cache without deleting their local ledger.
+          await deleteLocal(id);
+          await CloudSnapshotGuard.record(path, data);
+          return;
+        }
+        if (!clientsBox.containsKey(id))
+          await CustomerBalanceStore.initializeFromCloud(id, data);
+        for (final event in events.entries) {
+          await CustomerBalanceStore.importEvent(id, event.key, event.value);
+        }
+        await upsertLocal(id, data);
+        await CloudSnapshotGuard.record(path, data);
+      });
+
+  /// Fetches client profile changes after the initial compatibility baseline.
+  /// Financial changes arrive through the sequenced receipt feed.
   Future<void> deltaSync() async {
-    await fullSync();
+    final raw = appMetaBox.get(HiveMetaKeys.lastClientSyncAt)?.toString();
+    final cursor = DateTime.tryParse(raw ?? '');
+    if (cursor == null) {
+      await fullSync();
+      return;
+    }
+    final startedAt = DateTime.now();
+    final snap = await _fs
+        .collection('clients')
+        .where('updatedAt', isGreaterThan: Timestamp.fromDate(cursor))
+        .get();
+    for (final doc in snap.docs) {
+      await hydrateCloud(doc.id, doc.data());
+    }
+    await appMetaBox.put(
+      HiveMetaKeys.lastClientSyncAt,
+      startedAt.toIso8601String(),
+    );
   }
 
   /// Upsert a single client into the local cache.
   Future<void> upsertLocal(String docId, Map<String, dynamic> data) async {
-    await clientsBox.put(docId, ClientLocal.fromFirestore(docId, data));
+    final incoming = ClientLocal.fromFirestore(docId, data);
+    final existing = clientsBox.get(docId);
+    if (CustomerBalanceStore.hasBase(docId)) {
+      incoming.balance = CustomerBalanceStore.balance(docId);
+    } else if (existing != null &&
+        CloudSnapshotGuard.pendingPath('clients/' + docId)) {
+      incoming.balance = existing.balance;
+    }
+    await clientsBox.put(docId, incoming);
   }
 
   /// Update local cached balance for a client.

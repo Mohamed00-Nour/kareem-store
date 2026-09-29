@@ -22,6 +22,8 @@
     <application
         android:label="أبو مجدي للحدايد والعدد"
         android:name="${applicationName}"
+        android:allowBackup="false"
+        android:fullBackupContent="false"
         android:icon="@mipmap/ic_launcher">
         <activity
             android:name=".MainActivity"

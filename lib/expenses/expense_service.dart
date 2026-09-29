@@ -1,7 +1,7 @@
 import 'dart:async';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:uuid/uuid.dart';
-import '../local_db/models/expense_local.dart';
+import '../local_db/hive_init.dart';
 import '../repositories/expense_repository.dart';
 import '../sync/sync_queue_manager.dart';
 import '../sync/connectivity_service.dart';
@@ -16,9 +16,6 @@ class ExpenseService {
     'مصاريف السائق',
     'مصاريف عامة',
   ];
-
-  static CollectionReference<Map<String, dynamic>> get _expenses =>
-      _db.collection('expenses');
 
   static CollectionReference<Map<String, dynamic>> get _categories =>
       _db.collection('expense_categories');
@@ -55,7 +52,8 @@ class ExpenseService {
     final trimmed = name.trim();
     if (trimmed.isEmpty) return;
     try {
-      final existing = await _categories.where('name', isEqualTo: trimmed).get();
+      final existing =
+          await _categories.where('name', isEqualTo: trimmed).get();
       if (existing.docs.isNotEmpty) return;
       await _categories.add({
         'name': trimmed,
@@ -76,17 +74,12 @@ class ExpenseService {
   }
 
   static Stream<List<Expenses>> expensesStream() {
-    return _expenses.snapshots().map((snap) {
-      final list = snap.docs
-          .map((d) => Expenses.fromMap(d.data(), id: d.id))
-          .toList();
-      list.sort((a, b) {
-        final da = expenseDateFromData(a.toMap()) ?? DateTime(1970);
-        final db = expenseDateFromData(b.toMap()) ?? DateTime(1970);
-        return db.compareTo(da);
-      });
-      return list;
-    });
+    return (() async* {
+      yield getLocalExpenses();
+      await for (final _ in expensesBox.watch()) {
+        yield getLocalExpenses();
+      }
+    })();
   }
 
   /// Get all expenses from Hive local cache instantly (offline-first).
@@ -132,24 +125,7 @@ class ExpenseService {
       },
     );
 
-    // 3. Direct write if online
-    try {
-      final ref = _expenses.doc(docId);
-      await ref.set({
-        'id': docId,
-        'category': category.trim(),
-        'name': category.trim(),
-        'value': amount.toString(),
-        'notes': notes.trim(),
-        'attributes': attributes,
-        'date': dateOnly.toIso8601String().split('T').first,
-        'dateTimestamp': Timestamp.fromDate(dateOnly),
-        'time': FieldValue.serverTimestamp(),
-      }, SetOptions(merge: true));
-      await addCategory(category.trim());
-    } catch (_) {}
-
-    ConnectivityService.instance.forceSync();
+    unawaited(ConnectivityService.instance.forceSync());
   }
 
   static Future<void> deleteExpense(String id) async {
@@ -162,12 +138,7 @@ class ExpenseService {
       payload: {'id': id},
     );
 
-    // 3. Direct delete if online
-    try {
-      await _expenses.doc(id).delete();
-    } catch (_) {}
-
-    ConnectivityService.instance.forceSync();
+    unawaited(ConnectivityService.instance.forceSync());
   }
 
   /// Parses expense date from Firestore document (supports legacy records).

@@ -1,13 +1,15 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+
+import '../Services/invoice_number_utils.dart';
+import '../repositories/invoice_repository.dart';
+import '../repositories/product_repository.dart';
 
 class BestProductsReportPage extends StatefulWidget {
   const BestProductsReportPage({super.key});
 
   @override
-  State<BestProductsReportPage> createState() =>
-      _BestProductsReportPageState();
+  State<BestProductsReportPage> createState() => _BestProductsReportPageState();
 }
 
 class _BestProductsReportPageState extends State<BestProductsReportPage>
@@ -71,17 +73,17 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
   }
 
   Future<void> _fetchProductNames() async {
-    try {
-      final snap =
-          await FirebaseFirestore.instance.collection('products').get();
-      setState(() {
-        _productNames =
-            snap.docs.map((d) => d['name'] as String).toList()..sort();
-        _loadingProducts = false;
-      });
-    } catch (_) {
-      setState(() => _loadingProducts = false);
-    }
+    final names = ProductRepository.instance
+        .getAll()
+        .map((product) => product.name)
+        .where((name) => name.isNotEmpty)
+        .toList()
+      ..sort();
+    if (!mounted) return;
+    setState(() {
+      _productNames = names;
+      _loadingProducts = false;
+    });
   }
 
   void _selectProduct(String name) {
@@ -131,38 +133,29 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
 
     final start =
         DateTime(_startDate!.year, _startDate!.month, _startDate!.day);
-    final end = DateTime(
-        _endDate!.year, _endDate!.month, _endDate!.day, 23, 59, 59);
+    final end =
+        DateTime(_endDate!.year, _endDate!.month, _endDate!.day, 23, 59, 59);
 
     try {
-      // Fetch all products cost prices
-      final productsSnap =
-          await FirebaseFirestore.instance.collection('products').get();
-      final Map<String, double> costPrices = {};
-      for (final doc in productsSnap.docs) {
-        costPrices[doc['name'] as String] =
-            (doc.data()['costPrice'] ?? 0.0).toDouble();
-      }
-
-      // Fetch invoices in range
-      final invoicesSnap = await FirebaseFirestore.instance
-          .collection('invoices')
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(start))
-          .where('date', isLessThanOrEqualTo: Timestamp.fromDate(end))
-          .get();
+      final costPrices = {
+        for (final product in ProductRepository.instance.getAll())
+          product.name: product.costPrice,
+      };
+      final invoices = InvoiceRepository.instance.getAllSales().where(
+          (invoice) =>
+              !invoice.date.isBefore(start) && !invoice.date.isAfter(end));
 
       final Map<String, _ProductStat> statsMap = {};
 
-      for (final doc in invoicesSnap.docs) {
-        final products =
-            (doc.data()['products'] as List<dynamic>?) ?? [];
-        for (final p in products) {
-          final pMap = p as Map<String, dynamic>;
-          final name = pMap['product'] as String? ?? '';
-          final qty =
-              double.tryParse(pMap['amount']?.toString() ?? '0') ?? 0;
-          final revenue = (pMap['total'] ?? 0.0).toDouble();
-          final cost = (costPrices[name] ?? 0.0) * qty;
+      for (final invoice in invoices) {
+        for (final pMap in invoice.products) {
+          final name = invoiceCatalogProductName(pMap);
+          final qty = invoiceNum(pMap['amount']);
+          final revenue = invoiceNum(pMap['total']);
+          final cost = invoiceLineTotalCost(
+            pMap,
+            catalogUnitCost: costPrices[name] ?? 0.0,
+          );
 
           if (statsMap.containsKey(name)) {
             statsMap[name] = _ProductStat(
@@ -224,8 +217,7 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
             indicatorColor: Colors.orange,
             labelColor: Colors.orange,
             unselectedLabelColor: Colors.white70,
-            labelStyle:
-                TextStyle(fontSize: 12.sp, fontWeight: FontWeight.bold),
+            labelStyle: TextStyle(fontSize: 12.sp, fontWeight: FontWeight.bold),
             tabs: const [
               Tab(text: 'الكمية'),
               Tab(text: 'الإيرادات'),
@@ -277,18 +269,15 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
                           horizontal: 12.w, vertical: 10.h),
                       border: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10.r),
-                        borderSide:
-                            BorderSide(color: Colors.grey.shade400),
+                        borderSide: BorderSide(color: Colors.grey.shade400),
                       ),
                       enabledBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10.r),
-                        borderSide:
-                            BorderSide(color: Colors.grey.shade400),
+                        borderSide: BorderSide(color: Colors.grey.shade400),
                       ),
                       focusedBorder: OutlineInputBorder(
                         borderRadius: BorderRadius.circular(10.r),
-                        borderSide:
-                            const BorderSide(color: Colors.orange),
+                        borderSide: const BorderSide(color: Colors.orange),
                       ),
                       filled: true,
                       fillColor: Colors.white.withOpacity(0.85),
@@ -313,8 +302,7 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
                   if (_loadingProducts)
                     Padding(
                       padding: EdgeInsets.only(top: 8.h),
-                      child: const Center(
-                          child: CircularProgressIndicator()),
+                      child: const Center(child: CircularProgressIndicator()),
                     )
                   else if (_showProductSuggestions && _searchQuery.isNotEmpty)
                     Container(
@@ -380,8 +368,7 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
                                       ),
                                       trailing: selected
                                           ? Icon(Icons.check_circle,
-                                              color: Colors.orange,
-                                              size: 20.sp)
+                                              color: Colors.orange, size: 20.sp)
                                           : null,
                                     ),
                                   ),
@@ -415,18 +402,16 @@ class _BestProductsReportPageState extends State<BestProductsReportPage>
                     width: double.infinity,
                     child: ElevatedButton(
                       style: ElevatedButton.styleFrom(
-                        backgroundColor:
-                            Colors.amber.shade700.withOpacity(0.9),
+                        backgroundColor: Colors.amber.shade700.withOpacity(0.9),
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
                             borderRadius: BorderRadius.circular(12.r)),
                         padding: EdgeInsets.symmetric(vertical: 12.h),
                       ),
-                      onPressed: (_startDate != null &&
-                              _endDate != null &&
-                              !_loading)
-                          ? _fetchReport
-                          : null,
+                      onPressed:
+                          (_startDate != null && _endDate != null && !_loading)
+                              ? _fetchReport
+                              : null,
                       child: _loading
                           ? SizedBox(
                               width: 20.w,
@@ -511,8 +496,8 @@ class _ProductList extends StatelessWidget {
         child: Text(
           'لا توجد بيانات\nاختر فترة زمنية واضغط عرض التقرير',
           textAlign: TextAlign.center,
-          style: TextStyle(
-              fontSize: 14.sp, color: Colors.black.withOpacity(0.5)),
+          style:
+              TextStyle(fontSize: 14.sp, color: Colors.black.withOpacity(0.5)),
         ),
       );
     }
@@ -524,16 +509,15 @@ class _ProductList extends StatelessWidget {
         final rank = index + 1;
         return Card(
           elevation: 2,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12.r)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
           margin: EdgeInsets.symmetric(vertical: 5.h),
           child: Container(
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.9),
               borderRadius: BorderRadius.circular(12.r),
             ),
-            padding:
-                EdgeInsets.symmetric(vertical: 12.h, horizontal: 14.w),
+            padding: EdgeInsets.symmetric(vertical: 12.h, horizontal: 14.w),
             child: Row(
               children: [
                 Container(
@@ -610,8 +594,7 @@ class _DatePickerButton extends StatelessWidget {
               children: [
                 Text(label,
                     style: TextStyle(
-                        fontSize: 11.sp,
-                        color: Colors.black.withOpacity(0.5))),
+                        fontSize: 11.sp, color: Colors.black.withOpacity(0.5))),
                 Text(
                   date != null
                       ? '${date!.day}/${date!.month}/${date!.year}'

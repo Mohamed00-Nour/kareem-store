@@ -1,6 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/quote_local.dart';
+import '../sync/cloud_snapshot_guard.dart';
+import '../sync/local_operation_journal.dart';
 
 /// Repository for Price Quotes.
 ///
@@ -29,37 +31,23 @@ class QuoteRepository {
     await quotesBox.delete(id);
   }
 
+  Future<void> mergeCloud(String id, Map<String, dynamic>? data) =>
+      LocalOperationJournal.exclusive(() async {
+        final path = 'price_quotes/' + id;
+        if (!CloudSnapshotGuard.accepts(path, data)) return;
+        if (appMetaBox.containsKey('executedQuote:' + id)) return;
+        if (data == null || data['_deleted'] == true || data['deleted'] == true)
+          await deleteLocal(id);
+        else
+          await upsertLocal(id, data);
+        if (data != null) await CloudSnapshotGuard.record(path, data);
+      });
   Future<void> fullSync() async {
     final snap = await _fs.collection('price_quotes').get();
-    final Map<String, QuoteLocal> map = {};
-    for (final doc in snap.docs) {
-      map[doc.id] = QuoteLocal.fromFirestore(doc.id, doc.data());
-    }
-    await quotesBox.clear();
-    await quotesBox.putAll(map);
-    await appMetaBox.put(HiveMetaKeys.lastQuoteSyncAt, DateTime.now().toIso8601String());
+    for (final doc in snap.docs) await mergeCloud(doc.id, doc.data());
+    await appMetaBox.put(
+        HiveMetaKeys.lastQuoteSyncAt, DateTime.now().toIso8601String());
   }
 
-  Future<void> deltaSync() async {
-    final lastSyncStr = appMetaBox.get(HiveMetaKeys.lastQuoteSyncAt) as String?;
-    if (lastSyncStr == null) {
-      await fullSync();
-      return;
-    }
-    final lastSync = DateTime.parse(lastSyncStr);
-    final snap = await _fs
-        .collection('price_quotes')
-        .where('createdAt', isGreaterThan: Timestamp.fromDate(lastSync))
-        .get();
-
-    for (final doc in snap.docs) {
-      final data = doc.data();
-      if (data['deleted'] == true) {
-        await quotesBox.delete(doc.id);
-      } else {
-        await quotesBox.put(doc.id, QuoteLocal.fromFirestore(doc.id, data));
-      }
-    }
-    await appMetaBox.put(HiveMetaKeys.lastQuoteSyncAt, DateTime.now().toIso8601String());
-  }
+  Future<void> deltaSync() => fullSync();
 }

@@ -11,6 +11,7 @@ class ClientInvoiceRunningBalanceService {
     required List<Map<String, dynamic>> salesInvoices,
     required List<Map<String, dynamic>> returnInvoices,
     required List<Map<String, dynamic>> payments,
+    double initialBalance = 0,
   }) {
     final entries = <_RunningBalanceEntry>[
       ...salesInvoices.map(
@@ -33,9 +34,19 @@ class ClientInvoiceRunningBalanceService {
       ),
     ];
 
-    entries.sort((a, b) => _entryDate(a).compareTo(_entryDate(b)));
+    entries.sort((a, b) {
+      final aOpening = a.kind == _RunningBalanceEntryKind.payment &&
+          a.data['type'] == 'opening';
+      final bOpening = b.kind == _RunningBalanceEntryKind.payment &&
+          b.data['type'] == 'opening';
+      if (aOpening != bOpening) return aOpening ? -1 : 1;
+      final date = _entryDate(a).compareTo(_entryDate(b));
+      if (date != 0) return date;
+      return (a.data['id']?.toString() ?? '')
+          .compareTo(b.data['id']?.toString() ?? '');
+    });
 
-    var running = 0.0;
+    var running = initialBalance;
     for (final entry in entries) {
       final data = entry.data;
       data['_computedPrevBalance'] = running;
@@ -72,6 +83,25 @@ class ClientInvoiceRunningBalanceService {
     }
   }
 
+  /// Preserve the accepted opening/carry balance when historical cache is incomplete.
+  static double carryForward(
+      {required double currentBalance,
+      required List<Map<String, dynamic>> salesInvoices,
+      required List<Map<String, dynamic>> returnInvoices,
+      required List<Map<String, dynamic>> payments}) {
+    double net = 0;
+    for (final invoice in salesInvoices) net += invoiceUnpaidAmount(invoice);
+    for (final invoice in returnInvoices) net -= invoiceUnpaidAmount(invoice);
+    for (final payment in payments) {
+      final type = payment['type'];
+      final amount = invoiceNum(
+          payment['enteredBalance'] ?? payment['amount'] ?? payment['value']);
+      if (['opening', 'addition', 'sale'].contains(type)) net += amount;
+      if (['deduction', 'return'].contains(type)) net -= amount;
+    }
+    return currentBalance - net;
+  }
+
   static DateTime _entryDate(_RunningBalanceEntry entry) {
     final raw = entry.kind == _RunningBalanceEntryKind.payment
         ? entry.data['timestamp']
@@ -80,9 +110,7 @@ class ClientInvoiceRunningBalanceService {
     if (raw is DateTime) return raw;
     if (raw is String) return DateTime.tryParse(raw) ?? DateTime(0);
     if (raw is int) return DateTime.fromMillisecondsSinceEpoch(raw);
-    return entry.kind == _RunningBalanceEntryKind.payment
-        ? DateTime.now()
-        : DateTime(0);
+    return DateTime(0);
   }
 }
 

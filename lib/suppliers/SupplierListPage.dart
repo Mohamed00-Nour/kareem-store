@@ -300,7 +300,10 @@ class _SupplierListPageState extends State<SupplierListPage> {
       await FirebaseFirestore.instance
           .collection('suppliers')
           .doc(supplierId)
-          .delete();
+          .set({
+        '_deleted': true,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }, SetOptions(merge: true));
       await SupplierRepository.instance.deleteLocal(supplierId);
       await BalanceHistoryRepository.instance
           .deleteForParent('supplier', supplierId);

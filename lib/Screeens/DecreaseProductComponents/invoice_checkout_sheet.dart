@@ -28,6 +28,39 @@ class CheckoutSelectionResult {
   });
 }
 
+String? validateInvoiceCheckoutPayment({
+  required double paidAmount,
+  required double invoiceTotal,
+  required String paymentMethod,
+  required bool isReturnInvoice,
+}) {
+  const tolerance = 0.001;
+  final isCash = paymentMethod == 'نقداً';
+  final isDeferredSale = !isReturnInvoice && paymentMethod == 'آجل';
+
+  if (paidAmount < -tolerance) {
+    return 'المبلغ المدفوع لا يمكن أن يكون سالب';
+  }
+
+  if (isReturnInvoice) {
+    if (paidAmount - invoiceTotal > tolerance) {
+      return 'المبلغ المدفوع أكبر من الإجمالي';
+    }
+    if (isCash && paidAmount + tolerance < invoiceTotal) {
+      return 'المبلغ المدفوع أصغر من الإجمالي';
+    }
+    return null;
+  }
+
+  if (paidAmount + tolerance < invoiceTotal && !isDeferredSale) {
+    return 'المبلغ المدفوع أصغر من الإجمالي، اختر آجل للحفظ';
+  }
+  if (paidAmount - invoiceTotal > tolerance && !isCash && !isDeferredSale) {
+    return 'المبلغ المدفوع أكبر من الإجمالي، اختر نقداً أو آجل للحفظ';
+  }
+  return null;
+}
+
 Future<CheckoutSelectionResult?> showInvoiceCheckoutSheet({
   required BuildContext context,
   required bool isEditing,
@@ -203,6 +236,14 @@ class _InvoiceCheckoutSheetContentState
 
   String invoiceAmount(double amount) => amount.toStringAsFixed(2);
 
+  double? _parseBreakdownAmount(TextEditingController controller) {
+    final text = controller.text.trim();
+    if (text.isEmpty) return 0.0;
+    final value = invoiceTryParseAmount(text);
+    if (value == null || value < -0.001) return null;
+    return value;
+  }
+
   @override
   Widget build(BuildContext context) {
     return Builder(
@@ -248,10 +289,24 @@ class _InvoiceCheckoutSheetContentState
           double paid = invoiceTryParseAmount(paidCtrl.text) ?? 0.0;
           double remaining = paid - totalAfterDiscount;
           final bool isCash = paymentMethod == 'نقداً';
-          final bool isDeferredSale =
-              !widget.isReturnInvoice && paymentMethod == 'آجل';
-          final bool paidLessThanTotal =
-              isCash && paid + 0.001 < totalAfterDiscount;
+          final paymentValidationMessage = validateInvoiceCheckoutPayment(
+            paidAmount: paid,
+            invoiceTotal: totalAfterDiscount,
+            paymentMethod: paymentMethod,
+            isReturnInvoice: widget.isReturnInvoice,
+          );
+          final breakdownAmounts = [
+            _parseBreakdownAmount(walletCtrl),
+            _parseBreakdownAmount(cashCtrl),
+            _parseBreakdownAmount(instapayCtrl),
+            _parseBreakdownAmount(bankTransferCtrl),
+          ];
+          final hasInvalidBreakdown =
+              breakdownAmounts.any((amount) => amount == null);
+          final breakdownTotal = breakdownAmounts.whereType<double>().fold(
+                0.0,
+                (total, amount) => total + amount,
+              );
 
           void syncPaidForPaymentMethod() {
             if (paymentMethod == 'نقداً') {
@@ -259,6 +314,62 @@ class _InvoiceCheckoutSheetContentState
             } else {
               paidCtrl.text = lastManualPaid;
             }
+          }
+
+          Widget paymentBreakdownField({
+            required Key fieldKey,
+            required TextEditingController controller,
+            required String label,
+            required IconData icon,
+            required Color color,
+          }) {
+            final valueIsInvalid = _parseBreakdownAmount(controller) == null;
+            return TextField(
+              key: fieldKey,
+              controller: controller,
+              keyboardType:
+                  const TextInputType.numberWithOptions(decimal: true),
+              textAlign: TextAlign.center,
+              onTap: () => _selectAllField(controller),
+              onChanged: (_) => setSheet(() {}),
+              decoration: InputDecoration(
+                labelText: label,
+                labelStyle: TextStyle(
+                  fontSize: 12.sp,
+                  color: valueIsInvalid ? Colors.red.shade700 : color,
+                  fontWeight: FontWeight.w600,
+                ),
+                hintText: '0.00',
+                hintStyle: TextStyle(fontSize: 12.sp, color: Colors.grey),
+                prefixIcon: Icon(
+                  valueIsInvalid ? Icons.error_outline : icon,
+                  color: valueIsInvalid ? Colors.red.shade700 : color,
+                  size: 20.sp,
+                ),
+                filled: true,
+                fillColor: Colors.white,
+                border: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10.r),
+                ),
+                enabledBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10.r),
+                  borderSide: BorderSide(
+                    color: valueIsInvalid
+                        ? Colors.red.shade400
+                        : Colors.grey.shade300,
+                  ),
+                ),
+                focusedBorder: OutlineInputBorder(
+                  borderRadius: BorderRadius.circular(10.r),
+                  borderSide: BorderSide(
+                    color: valueIsInvalid ? Colors.red.shade700 : color,
+                    width: 1.5,
+                  ),
+                ),
+                contentPadding:
+                    EdgeInsets.symmetric(vertical: 12.h, horizontal: 8.w),
+              ),
+            );
           }
 
           return Directionality(
@@ -274,30 +385,39 @@ class _InvoiceCheckoutSheetContentState
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
                   children: [
-                    Row(
-                      children: [
-                        Text('طريقة الدفع',
-                            style: TextStyle(
-                                fontSize: 13.sp, fontWeight: FontWeight.bold)),
-                        const Spacer(),
-                        ...['نقداً', 'آجل', 'بطاقه', 'ش'].map((m) => Row(
-                              mainAxisSize: MainAxisSize.min,
-                              children: [
-                                Radio<String>(
-                                  value: m,
-                                  groupValue: paymentMethod,
-                                  activeColor: Colors.green,
-                                  materialTapTargetSize:
-                                      MaterialTapTargetSize.shrinkWrap,
-                                  onChanged: (v) => setSheet(() {
-                                    paymentMethod = v!;
-                                    syncPaidForPaymentMethod();
-                                  }),
-                                ),
-                                Text(m, style: TextStyle(fontSize: 11.sp)),
-                              ],
-                            )),
-                      ],
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(
+                        'طريقة الدفع',
+                        style: TextStyle(
+                          fontSize: 13.sp,
+                          fontWeight: FontWeight.bold,
+                        ),
+                      ),
+                    ),
+                    SizedBox(height: 6.h),
+                    Wrap(
+                      alignment: WrapAlignment.center,
+                      spacing: 6.w,
+                      runSpacing: 6.h,
+                      children: ['نقداً', 'آجل', 'بطاقه', 'ش']
+                          .map(
+                            (method) => ChoiceChip(
+                              label: Text(
+                                method,
+                                style: TextStyle(fontSize: 11.sp),
+                              ),
+                              selected: paymentMethod == method,
+                              selectedColor: Colors.green.shade100,
+                              checkmarkColor: Colors.green.shade800,
+                              visualDensity: VisualDensity.compact,
+                              onSelected: (_) => setSheet(() {
+                                paymentMethod = method;
+                                syncPaidForPaymentMethod();
+                              }),
+                            ),
+                          )
+                          .toList(),
                     ),
                     SizedBox(height: 10.h),
                     Row(
@@ -339,6 +459,7 @@ class _InvoiceCheckoutSheetContentState
                             SizedBox(width: 12.w),
                             Expanded(
                               child: TextField(
+                                key: const Key('invoice-paid-amount-field'),
                                 controller: paidCtrl,
                                 textAlign: TextAlign.center,
                                 keyboardType:
@@ -366,11 +487,11 @@ class _InvoiceCheckoutSheetContentState
                         ),
                       ],
                     ),
-                    if (paidLessThanTotal)
+                    if (paymentValidationMessage != null)
                       Padding(
                         padding: EdgeInsets.only(top: 6.h),
                         child: Text(
-                          'المبلغ المدفوع أصغر من الإجمالي',
+                          paymentValidationMessage,
                           textAlign: TextAlign.center,
                           style: TextStyle(
                             fontSize: 12.sp,
@@ -380,81 +501,122 @@ class _InvoiceCheckoutSheetContentState
                         ),
                       ),
                     SizedBox(height: 8.h),
-                    Row(children: [
-                      Expanded(
-                        child: Container(
-                          padding: EdgeInsets.symmetric(
-                              vertical: 10.h, horizontal: 10.w),
-                          decoration: BoxDecoration(
-                            color: remaining >= 0
-                                ? Colors.green.shade50
-                                : Colors.red.shade50,
-                            border: Border.all(
-                                color: remaining >= 0
-                                    ? Colors.green.shade300
-                                    : Colors.red.shade300),
-                            borderRadius: BorderRadius.circular(8.r),
-                          ),
-                          child: Text(
-                            remaining.toStringAsFixed(1),
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                                fontSize: 16.sp,
-                                fontWeight: FontWeight.bold,
-                                color: remaining >= 0
-                                    ? Colors.green.shade700
-                                    : Colors.red.shade700),
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                'الباقي',
+                                style: TextStyle(
+                                  fontSize: 12.sp,
+                                  fontWeight: FontWeight.bold,
+                                ),
+                              ),
+                              SizedBox(height: 6.h),
+                              Container(
+                                padding: EdgeInsets.symmetric(
+                                  vertical: 10.h,
+                                  horizontal: 10.w,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: remaining >= 0
+                                      ? Colors.green.shade50
+                                      : Colors.red.shade50,
+                                  border: Border.all(
+                                    color: remaining >= 0
+                                        ? Colors.green.shade300
+                                        : Colors.red.shade300,
+                                  ),
+                                  borderRadius: BorderRadius.circular(8.r),
+                                ),
+                                child: Text(
+                                  remaining.toStringAsFixed(1),
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 16.sp,
+                                    fontWeight: FontWeight.bold,
+                                    color: remaining >= 0
+                                        ? Colors.green.shade700
+                                        : Colors.red.shade700,
+                                  ),
+                                ),
+                              ),
+                            ],
                           ),
                         ),
-                      ),
-                      SizedBox(width: 6.w),
-                      Text('الباقي', style: TextStyle(fontSize: 12.sp)),
-                      SizedBox(width: 6.w),
-                      GestureDetector(
-                        onTap: () => setSheet(() {
-                          discountIsPercent = !discountIsPercent;
-                        }),
-                        child: Container(
-                          padding: EdgeInsets.symmetric(
-                              horizontal: 10.w, vertical: 9.h),
-                          decoration: BoxDecoration(
-                            color: discountIsPercent
-                                ? Colors.orange.shade100
-                                : Colors.grey.shade200,
-                            borderRadius: BorderRadius.circular(8.r),
+                        SizedBox(width: 10.w),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Row(
+                                children: [
+                                  Text(
+                                    'الخصم',
+                                    style: TextStyle(
+                                      fontSize: 12.sp,
+                                      fontWeight: FontWeight.bold,
+                                    ),
+                                  ),
+                                  const Spacer(),
+                                  InkWell(
+                                    borderRadius: BorderRadius.circular(8.r),
+                                    onTap: () => setSheet(() {
+                                      discountIsPercent = !discountIsPercent;
+                                    }),
+                                    child: Container(
+                                      padding: EdgeInsets.symmetric(
+                                        horizontal: 8.w,
+                                        vertical: 3.h,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: Colors.orange.shade100,
+                                        borderRadius:
+                                            BorderRadius.circular(8.r),
+                                      ),
+                                      child: Text(
+                                        discountIsPercent ? '%' : 'ج.م',
+                                        style: TextStyle(
+                                          fontSize: 11.sp,
+                                          fontWeight: FontWeight.bold,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                              SizedBox(height: 6.h),
+                              TextField(
+                                controller: discountCtrl,
+                                textAlign: TextAlign.center,
+                                keyboardType:
+                                    const TextInputType.numberWithOptions(
+                                  decimal: true,
+                                ),
+                                decoration: InputDecoration(
+                                  hintText: '0',
+                                  suffixText: discountIsPercent ? '%' : 'ج.م',
+                                  border: OutlineInputBorder(
+                                    borderRadius: BorderRadius.circular(8.r),
+                                  ),
+                                  contentPadding: EdgeInsets.symmetric(
+                                    vertical: 8.h,
+                                    horizontal: 6.w,
+                                  ),
+                                ),
+                                onTap: () => _selectAllField(discountCtrl),
+                                onChanged: (v) => setSheet(() {
+                                  invoiceDiscount = double.tryParse(v) ?? 0.0;
+                                }),
+                              ),
+                            ],
                           ),
-                          child: Text('%',
-                              style: TextStyle(
-                                  fontSize: 14.sp,
-                                  fontWeight: FontWeight.bold)),
                         ),
-                      ),
-                      SizedBox(width: 6.w),
-                      SizedBox(
-                        width: 80.w,
-                        child: TextField(
-                          controller: discountCtrl,
-                          textAlign: TextAlign.center,
-                          keyboardType: const TextInputType.numberWithOptions(
-                              decimal: true),
-                          decoration: InputDecoration(
-                            hintText: '0',
-                            border: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8.r)),
-                            contentPadding: EdgeInsets.symmetric(
-                                vertical: 8.h, horizontal: 6.w),
-                          ),
-                          onTap: () => _selectAllField(discountCtrl),
-                          onChanged: (v) => setSheet(() {
-                            invoiceDiscount = double.tryParse(v) ?? 0.0;
-                          }),
-                        ),
-                      ),
-                      SizedBox(width: 8.w),
-                      Text('الخصم',
-                          style: TextStyle(
-                              fontSize: 13.sp, fontWeight: FontWeight.bold)),
-                    ]),
+                      ],
+                    ),
                     SizedBox(height: 14.h),
                     Align(
                       alignment: Alignment.centerRight,
@@ -626,136 +788,195 @@ class _InvoiceCheckoutSheetContentState
                       ),
                     ),
                     SizedBox(height: 12.h),
-                    // ── Payment Breakdown Fields Header ──
-                    Align(
-                      alignment: Alignment.centerRight,
-                      child: Text(
-                        'تفاصيل توزيع المدفوعات (اختياري)',
-                        style: TextStyle(
-                          fontSize: 13.sp,
-                          fontWeight: FontWeight.bold,
-                          color: Colors.black87,
-                        ),
+                    Container(
+                      width: double.infinity,
+                      padding: EdgeInsets.all(12.r),
+                      decoration: BoxDecoration(
+                        color: Colors.grey.shade50,
+                        borderRadius: BorderRadius.circular(12.r),
+                        border: Border.all(color: Colors.grey.shade300),
                       ),
-                    ),
-                    SizedBox(height: 8.h),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: walletCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            textAlign: TextAlign.right,
-                            onTap: () => _selectAllField(walletCtrl),
-                            decoration: InputDecoration(
-                              labelText: 'محفظة',
-                              labelStyle: TextStyle(
-                                  fontSize: 12.sp,
-                                  color: Colors.orange.shade800),
-                              hintText: '0.0',
-                              hintStyle: TextStyle(
-                                  fontSize: 12.sp, color: Colors.grey),
-                              border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8.r)),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8.r),
-                                borderSide: BorderSide(
-                                    color: Colors.orange.shade800, width: 1.5),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          Row(
+                            children: [
+                              Icon(
+                                Icons.account_balance_wallet_outlined,
+                                size: 20.sp,
+                                color: Colors.orange.shade800,
                               ),
-                              contentPadding: EdgeInsets.symmetric(
-                                  vertical: 8.h, horizontal: 10.w),
+                              SizedBox(width: 8.w),
+                              Expanded(
+                                child: Text(
+                                  'توزيع المدفوعات',
+                                  style: TextStyle(
+                                    fontSize: 14.sp,
+                                    fontWeight: FontWeight.bold,
+                                    color: Colors.black87,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                'اختياري',
+                                style: TextStyle(
+                                  fontSize: 11.sp,
+                                  color: Colors.grey.shade600,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 4.h),
+                          Text(
+                            'سجّل طريقة استلام المبلغ لعرضها في استعلامات المدفوعات.',
+                            style: TextStyle(
+                              fontSize: 11.sp,
+                              color: Colors.grey.shade700,
                             ),
                           ),
-                        ),
-                        SizedBox(width: 8.w),
-                        Expanded(
-                          child: TextField(
-                            controller: cashCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            textAlign: TextAlign.right,
-                            onTap: () => _selectAllField(cashCtrl),
-                            decoration: InputDecoration(
-                              labelText: 'نقدي',
-                              labelStyle: TextStyle(
-                                  fontSize: 12.sp,
-                                  color: Colors.green.shade800),
-                              hintText: '0.0',
-                              hintStyle: TextStyle(
-                                  fontSize: 12.sp, color: Colors.grey),
-                              border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8.r)),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8.r),
-                                borderSide: BorderSide(
-                                    color: Colors.green.shade800, width: 1.5),
+                          SizedBox(height: 12.h),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: paymentBreakdownField(
+                                  fieldKey: const Key(
+                                    'invoice-breakdown-wallet-field',
+                                  ),
+                                  controller: walletCtrl,
+                                  label: 'محفظة',
+                                  icon: Icons.phone_android,
+                                  color: Colors.orange.shade800,
+                                ),
                               ),
-                              contentPadding: EdgeInsets.symmetric(
-                                  vertical: 8.h, horizontal: 10.w),
+                              SizedBox(width: 8.w),
+                              Expanded(
+                                child: paymentBreakdownField(
+                                  fieldKey: const Key(
+                                    'invoice-breakdown-cash-field',
+                                  ),
+                                  controller: cashCtrl,
+                                  label: 'نقدي',
+                                  icon: Icons.payments_outlined,
+                                  color: Colors.green.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 10.h),
+                          Row(
+                            children: [
+                              Expanded(
+                                child: paymentBreakdownField(
+                                  fieldKey: const Key(
+                                    'invoice-breakdown-instapay-field',
+                                  ),
+                                  controller: instapayCtrl,
+                                  label: 'إنستاباي',
+                                  icon: Icons.flash_on_outlined,
+                                  color: Colors.purple.shade700,
+                                ),
+                              ),
+                              SizedBox(width: 8.w),
+                              Expanded(
+                                child: paymentBreakdownField(
+                                  fieldKey: const Key(
+                                    'invoice-breakdown-bank-field',
+                                  ),
+                                  controller: bankTransferCtrl,
+                                  label: 'تحويل بنكي',
+                                  icon: Icons.account_balance_outlined,
+                                  color: Colors.blue.shade700,
+                                ),
+                              ),
+                            ],
+                          ),
+                          SizedBox(height: 12.h),
+                          Container(
+                            padding: EdgeInsets.symmetric(
+                              horizontal: 10.w,
+                              vertical: 8.h,
+                            ),
+                            decoration: BoxDecoration(
+                              color: hasInvalidBreakdown
+                                  ? Colors.red.shade50
+                                  : Colors.orange.shade50,
+                              borderRadius: BorderRadius.circular(10.r),
+                              border: Border.all(
+                                color: hasInvalidBreakdown
+                                    ? Colors.red.shade300
+                                    : Colors.orange.shade200,
+                              ),
+                            ),
+                            child: Row(
+                              children: [
+                                Expanded(
+                                  child: Column(
+                                    crossAxisAlignment:
+                                        CrossAxisAlignment.start,
+                                    children: [
+                                      Text(
+                                        'إجمالي التوزيع',
+                                        style: TextStyle(
+                                          fontSize: 11.sp,
+                                          color: Colors.grey.shade700,
+                                        ),
+                                      ),
+                                      SizedBox(height: 2.h),
+                                      Text(
+                                        hasInvalidBreakdown
+                                            ? 'راجع القيم المدخلة'
+                                            : '${invoiceAmount(breakdownTotal)} ج.م',
+                                        style: TextStyle(
+                                          fontSize: 16.sp,
+                                          fontWeight: FontWeight.bold,
+                                          color: hasInvalidBreakdown
+                                              ? Colors.red.shade700
+                                              : Colors.orange.shade900,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                                SizedBox(width: 8.w),
+                                OutlinedButton.icon(
+                                  key: const Key(
+                                    'apply-payment-breakdown-total',
+                                  ),
+                                  onPressed: hasInvalidBreakdown
+                                      ? null
+                                      : () {
+                                          final value = invoiceAmount(
+                                            breakdownTotal,
+                                          );
+                                          paidCtrl.text = value;
+                                          paidCtrl.selection =
+                                              TextSelection.collapsed(
+                                                  offset: value.length);
+                                          lastManualPaid = value;
+                                          setSheet(() {});
+                                        },
+                                  icon: Icon(Icons.check_circle_outline,
+                                      size: 18.sp),
+                                  label: Text(
+                                    'اعتماده كمدفوع',
+                                    style: TextStyle(fontSize: 11.sp),
+                                  ),
+                                  style: OutlinedButton.styleFrom(
+                                    foregroundColor: Colors.orange.shade900,
+                                    side: BorderSide(
+                                      color: Colors.orange.shade400,
+                                    ),
+                                    padding: EdgeInsets.symmetric(
+                                      horizontal: 10.w,
+                                      vertical: 9.h,
+                                    ),
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
-                        ),
-                      ],
-                    ),
-                    SizedBox(height: 8.h),
-                    Row(
-                      children: [
-                        Expanded(
-                          child: TextField(
-                            controller: instapayCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            textAlign: TextAlign.right,
-                            onTap: () => _selectAllField(instapayCtrl),
-                            decoration: InputDecoration(
-                              labelText: 'أنستاباي',
-                              labelStyle: TextStyle(
-                                  fontSize: 12.sp,
-                                  color: Colors.purple.shade800),
-                              hintText: '0.0',
-                              hintStyle: TextStyle(
-                                  fontSize: 12.sp, color: Colors.grey),
-                              border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8.r)),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8.r),
-                                borderSide: BorderSide(
-                                    color: Colors.purple.shade800, width: 1.5),
-                              ),
-                              contentPadding: EdgeInsets.symmetric(
-                                  vertical: 8.h, horizontal: 10.w),
-                            ),
-                          ),
-                        ),
-                        SizedBox(width: 8.w),
-                        Expanded(
-                          child: TextField(
-                            controller: bankTransferCtrl,
-                            keyboardType: const TextInputType.numberWithOptions(
-                                decimal: true),
-                            textAlign: TextAlign.right,
-                            onTap: () => _selectAllField(bankTransferCtrl),
-                            decoration: InputDecoration(
-                              labelText: 'تحويل بنكي',
-                              labelStyle: TextStyle(
-                                  fontSize: 12.sp, color: Colors.blue.shade800),
-                              hintText: '0.0',
-                              hintStyle: TextStyle(
-                                  fontSize: 12.sp, color: Colors.grey),
-                              border: OutlineInputBorder(
-                                  borderRadius: BorderRadius.circular(8.r)),
-                              focusedBorder: OutlineInputBorder(
-                                borderRadius: BorderRadius.circular(8.r),
-                                borderSide: BorderSide(
-                                    color: Colors.blue.shade800, width: 1.5),
-                              ),
-                              contentPadding: EdgeInsets.symmetric(
-                                  vertical: 8.h, horizontal: 10.w),
-                            ),
-                          ),
-                        ),
-                      ],
+                        ],
+                      ),
                     ),
                     SizedBox(height: 14.h),
                     Row(children: [
@@ -772,6 +993,7 @@ class _InvoiceCheckoutSheetContentState
                       SizedBox(width: 8.w),
                       Expanded(
                         child: ElevatedButton(
+                          key: const Key('invoice-checkout-continue-button'),
                           style: ElevatedButton.styleFrom(
                             backgroundColor: Colors.orange.withOpacity(0.85),
                             shape: RoundedRectangleBorder(
@@ -813,54 +1035,29 @@ class _InvoiceCheckoutSheetContentState
                                     return;
                                   }
                                   final paidAmount = parsedPaid ?? 0.0;
-                                  if (paidAmount < -0.001) {
+                                  final validationMessage =
+                                      validateInvoiceCheckoutPayment(
+                                    paidAmount: paidAmount,
+                                    invoiceTotal: totalAfterDiscount,
+                                    paymentMethod: paymentMethod,
+                                    isReturnInvoice: widget.isReturnInvoice,
+                                  );
+                                  if (validationMessage != null) {
                                     ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                            'المبلغ المدفوع لا يمكن أن يكون سالب'),
+                                      SnackBar(
+                                        content: Text(validationMessage),
                                       ),
                                     );
                                     return;
-                                  }
-                                  if (!isDeferredSale &&
-                                      paidAmount - totalAfterDiscount > 0.001) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                            'المبلغ المدفوع أكبر من الإجمالي'),
-                                      ),
-                                    );
-                                    return;
-                                  }
-                                  if (paymentMethod == 'نقداً' &&
-                                      paidAmount + 0.001 < totalAfterDiscount) {
-                                    ScaffoldMessenger.of(context).showSnackBar(
-                                      const SnackBar(
-                                        content: Text(
-                                            'المبلغ المدفوع أصغر من الإجمالي'),
-                                      ),
-                                    );
-                                    return;
-                                  }
-
-                                  double? parseBreakdownAmount(
-                                      TextEditingController controller) {
-                                    final text = controller.text.trim();
-                                    if (text.isEmpty) return 0.0;
-                                    final value = invoiceTryParseAmount(text);
-                                    if (value == null || value < -0.001) {
-                                      return null;
-                                    }
-                                    return value;
                                   }
 
                                   final wallet =
-                                      parseBreakdownAmount(walletCtrl);
-                                  final cash = parseBreakdownAmount(cashCtrl);
+                                      _parseBreakdownAmount(walletCtrl);
+                                  final cash = _parseBreakdownAmount(cashCtrl);
                                   final instapay =
-                                      parseBreakdownAmount(instapayCtrl);
+                                      _parseBreakdownAmount(instapayCtrl);
                                   final bankTransfer =
-                                      parseBreakdownAmount(bankTransferCtrl);
+                                      _parseBreakdownAmount(bankTransferCtrl);
                                   if (wallet == null ||
                                       cash == null ||
                                       instapay == null ||

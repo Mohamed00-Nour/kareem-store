@@ -28,11 +28,6 @@ class InvoiceCubit extends Cubit<InvoiceState> {
 
   Future<void> fetchClients() async {
     _loadClientsFromLocalCache();
-    if (ConnectivityService.instance.isOnline) {
-      ClientRepository.instance.deltaSync().then((_) {
-        _loadClientsFromLocalCache();
-      }).catchError((_) {});
-    }
   }
 
   void _loadClientsFromLocalCache() {
@@ -44,11 +39,6 @@ class InvoiceCubit extends Cubit<InvoiceState> {
 
   Future<void> fetchProducts() async {
     _loadProductsFromLocalCache();
-    if (ConnectivityService.instance.isOnline) {
-      ProductRepository.instance.deltaSync().then((_) {
-        _loadProductsFromLocalCache();
-      }).catchError((_) {});
-    }
   }
 
   void _loadProductsFromLocalCache() {

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+
+import '../repositories/supplier_repository.dart';
 
 class DeletedSuppliersPage extends StatelessWidget {
   final Set<String> deletedSuppliers;
@@ -11,13 +12,8 @@ class DeletedSuppliersPage extends StatelessWidget {
     required this.onRestoreSupplier,
   }) : super(key: key);
 
-  Future<String> _getSupplierName(String supplierId) async {
-    final doc = await FirebaseFirestore.instance
-        .collection('suppliers')
-        .doc(supplierId)
-        .get();
-    return doc.exists ? doc['name'] ?? 'Unknown' : 'Unknown';
-  }
+  String _getSupplierName(String supplierId) =>
+      SupplierRepository.instance.getById(supplierId)?.name ?? 'Unknown';
 
   @override
   Widget build(BuildContext context) {
@@ -41,32 +37,15 @@ class DeletedSuppliersPage extends StatelessWidget {
             elevation: 2,
             color: Colors.orange.withOpacity(0.7),
             margin: const EdgeInsets.all(10.0),
-            child: FutureBuilder<String>(
-              future: _getSupplierName(supplierId),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return ListTile(
-                    title: Center(
-                        child: CircularProgressIndicator(
-                            color: Colors.orange.withOpacity(0.7))),
-                  );
-                } else if (snapshot.hasError) {
-                  return const ListTile(
-                    title: Center(child: Text('Error fetching supplier name')),
-                  );
-                } else {
-                  final supplierName = snapshot.data!;
-                  return ListTile(
-                    title: Center(child: Text('اسم المورد: $supplierName')),
-                    trailing: IconButton(
-                      icon: const Icon(Icons.restore, color: Colors.white),
-                      onPressed: () {
-                        _showRestoreConfirmationDialog(context, supplierId);
-                      },
-                    ),
-                  );
-                }
-              },
+            child: ListTile(
+              title: Center(
+                  child: Text('اسم المورد: ${_getSupplierName(supplierId)}')),
+              trailing: IconButton(
+                icon: const Icon(Icons.restore, color: Colors.white),
+                onPressed: () {
+                  _showRestoreConfirmationDialog(context, supplierId);
+                },
+              ),
             ),
           );
         },

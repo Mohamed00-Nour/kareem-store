@@ -1,12 +1,8 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../local_db/hive_init.dart';
-import '../local_db/models/balance_history_local.dart';
-import '../repositories/balance_history_repository.dart';
-import '../repositories/box_repository.dart';
-import '../repositories/supplier_repository.dart';
 import '../sync/connectivity_service.dart';
-import '../sync/sync_queue_manager.dart';
+import 'supplier_operation_service.dart';
 
 class SupplierPaymentResult {
   final double previousBalance;
@@ -69,24 +65,6 @@ class SupplierPaymentService {
       throw ArgumentError.value(direction, 'direction');
     }
 
-    final supplier = SupplierRepository.instance.getById(supplierId);
-    final previousBalance =
-        BalanceHistoryRepository.instance.calculateSupplierBalance(
-      supplierId,
-      fallback: supplier?.balance ?? 0.0,
-    );
-    final isIncrease = direction == 'له';
-    final newBalance = previousBalance + (isIncrease ? amount : -amount);
-    final operationStamp = DateTime.now().microsecondsSinceEpoch;
-    final historyId =
-        'supplier_voucher_${supplierId}_${voucherNumber}_$operationStamp';
-    final voucherId = '${historyId}_voucher';
-    final cleanDescription = description.trim();
-    final notes = [
-      'سند $direction رقم $voucherNumber',
-      if (cleanDescription.isNotEmpty) cleanDescription,
-    ].join(' - ');
-
     final storedVoucher = appMetaBox.get(
       HiveMetaKeys.nextSupplierVoucherNumber,
     );
@@ -98,63 +76,23 @@ class SupplierPaymentService {
       );
     }
 
-    await SupplierRepository.instance.updateLocalBalance(
-      supplierId,
-      newBalance,
-    );
-    await BalanceHistoryRepository.instance.upsertLocal(
-      BalanceHistoryLocal(
-        id: historyId,
-        parentId: supplierId,
-        parentType: 'supplier',
-        enteredBalance: amount,
-        balanceBefore: previousBalance,
-        type: 'voucher',
-        direction: direction,
-        notes: notes,
-        timestamp: date,
-      ),
-    );
-
-    if (!isIncrease) {
-      await BoxRepository.instance.decrement(amount);
-    }
-
-    await SyncQueueManager.instance.enqueue(
-      operationType: 'adjustSupplierBalance',
-      payload: {
-        'supplierId': supplierId,
-        'supplierName': supplierName,
-        'amount': amount,
-        'isAddition': isIncrease,
-        'direction': direction,
-        'newBalance': newBalance,
-        'historyId': historyId,
-        'voucherId': voucherId,
-        'voucherNumber': voucherNumber,
-        'paymentMethod': paymentMethod,
-        'description': cleanDescription,
-        'logEntry': {
-          'enteredBalance': amount,
-          'balanceBefore': previousBalance,
-          'type': 'voucher',
-          'direction': direction,
-          'notes': notes,
-          'voucherId': voucherId,
-          'voucherNumber': voucherNumber,
-          'paymentMethod': paymentMethod,
-          'timestamp': date.toIso8601String(),
-        },
-      },
+    final saved = await SupplierOperationService.savePayment(
+      supplierId: supplierId,
+      direction: direction,
+      amount: amount,
+      description: description,
+      date: date,
+      paymentMethod: paymentMethod,
+      voucherNumber: voucherNumber,
     );
     if (ConnectivityService.instance.isOnline) {
       ConnectivityService.instance.forceSync();
     }
 
     return SupplierPaymentResult(
-      previousBalance: previousBalance,
-      newBalance: newBalance,
-      historyId: historyId,
+      previousBalance: saved.previousBalance,
+      newBalance: saved.newBalance,
+      historyId: saved.historyId,
     );
   }
 }

@@ -4,7 +4,7 @@ import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'sync/connectivity_service.dart';
 import 'sync/sync_queue_manager.dart';
 import 'repositories/product_repository.dart';
-import 'Services/invoice_number_utils.dart';
+import 'Widgets/paginated_firestore_history_table.dart';
 
 class EditProductPage extends StatefulWidget {
   final String productId;
@@ -168,7 +168,6 @@ class _EditProductPageState extends State<EditProductPage> {
         const SnackBar(content: Text('تم حفظ البيانات بنجاح')),
       );
       Navigator.of(context).pop();
-
     } catch (e) {
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(
@@ -474,58 +473,16 @@ class ProductChangesPage extends StatelessWidget {
             style: TextStyle(fontSize: 20.sp, color: Colors.white)),
         backgroundColor: Colors.black.withOpacity(0.7),
       ),
-      body: StreamBuilder<QuerySnapshot>(
-        stream: FirebaseFirestore.instance
+      body: PaginatedFirestoreHistoryTable(
+        collection: FirebaseFirestore.instance
             .collection('products')
             .doc(productId)
-            .collection('changes')
-            .snapshots(),
-        builder: (context, snapshot) {
-          if (!snapshot.hasData) {
-            return const Center(child: CircularProgressIndicator());
-          }
-
-          final changes = snapshot.data!.docs;
-
-          return SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            child: DataTable(
-              columns: [
-                DataColumn(
-                    label: Text('التاريخ',
-                        style: TextStyle(
-                            fontSize: 18.sp, fontWeight: FontWeight.bold))),
-                DataColumn(
-                    label: Text('الكمية',
-                        style: TextStyle(
-                            fontSize: 18.sp, fontWeight: FontWeight.bold))),
-                DataColumn(
-                    label: Text('النوع',
-                        style: TextStyle(
-                            fontSize: 18.sp, fontWeight: FontWeight.bold))),
-              ],
-              rows: changes.map((change) {
-                return DataRow(cells: [
-                  DataCell(Text(
-                      (change['date'] as Timestamp)
-                          .toDate()
-                          .toString()
-                          .split(' ')[0],
-                      style: TextStyle(fontSize: 14.sp))),
-                  DataCell(Text(invoiceAmount(change['amount']),
-                      style: TextStyle(fontSize: 14.sp))),
-                  DataCell(Text(
-                    change['type'] == 'decrease'
-                        ? 'بيع'
-                        : change['type'] == 'update'
-                            ? 'تحديث'
-                            : 'شراء',
-                    style: TextStyle(fontSize: 14.sp),
-                  )),
-                ]);
-              }).toList(),
-            ),
-          );
+            .collection('changes'),
+        typeLabels: const {
+          'decrease': 'بيع',
+          'increase': 'شراء',
+          'update': 'تحديث',
+          'edit': 'تحديث',
         },
       ),
     );

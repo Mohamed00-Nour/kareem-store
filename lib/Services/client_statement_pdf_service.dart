@@ -1,3 +1,5 @@
+import '../repositories/client_repository.dart';
+import 'customer_statement_data.dart';
 import 'dart:io';
 
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -22,36 +24,34 @@ class ClientStatementPdfService {
     required DateTime from,
     required DateTime to,
   }) async {
-    final firestore = FirebaseFirestore.instance;
-
-    final clientDoc = await firestore.collection('clients').doc(clientId).get();
-    var clientName = clientId;
-    if (clientDoc.exists) {
-      final name = clientDoc.data()?['clientName']?.toString();
-      if (name != null && name.trim().isNotEmpty) {
-        clientName = name.trim();
-      }
-    }
+    final clientName =
+        ClientRepository.instance.getById(clientId)?.name ?? clientId;
 
     final startInclusive = DateTime(from.year, from.month, from.day, 0, 0, 0);
     final endInclusive = DateTime(to.year, to.month, to.day, 23, 59, 59);
 
-    final amiriRegular =
-        pw.Font.ttf((await rootBundle.load('fonts/Amiri-Regular.ttf'))
-            .buffer
-            .asByteData());
+    final amiriRegular = pw.Font.ttf(
+        (await rootBundle.load('fonts/Amiri-Regular.ttf')).buffer.asByteData());
     final amiriBold = pw.Font.ttf(
         (await rootBundle.load('fonts/Amiri-Bold.ttf')).buffer.asByteData());
     final tajawal = pw.Font.ttf(
-        (await rootBundle.load('fonts/Tajawal-Medium.ttf')).buffer.asByteData());
+        (await rootBundle.load('fonts/Tajawal-Medium.ttf'))
+            .buffer
+            .asByteData());
 
-    pw.TextStyle cell({bool bold = false, double fontSize = 9, bool useTajawal = false}) =>
+    pw.TextStyle cell(
+            {bool bold = false,
+            double fontSize = 9,
+            bool useTajawal = false}) =>
         pw.TextStyle(
           font: useTajawal ? tajawal : (bold ? amiriBold : amiriRegular),
           fontSize: fontSize,
         );
 
-    pw.Widget rtl(String text, {bool bold = false, double fontSize = 9, bool useTajawal = false}) =>
+    pw.Widget rtl(String text,
+            {bool bold = false,
+            double fontSize = 9,
+            bool useTajawal = false}) =>
         pw.Text(
           text,
           textDirection: pw.TextDirection.rtl,
@@ -62,11 +62,14 @@ class ClientStatementPdfService {
     final periodStr =
         'من ${DateFormat('dd/MM/yyyy').format(startInclusive)} إلى ${DateFormat('dd/MM/yyyy').format(endInclusive)}';
     final nowStr = DateFormat('dd/MM/yyyy hh:mm a').format(DateTime.now());
-    final settings = await PrinterSettingsService.load();
+    final settings = PrinterSettingsService.current;
     final invoiceFooter = settings.salesInvoiceFooter;
     final reportFooter = settings.a4ReportFooter;
 
-    pw.Widget center(String text, {bool bold = false, double fontSize = 10, bool useTajawal = false}) =>
+    pw.Widget center(String text,
+            {bool bold = false,
+            double fontSize = 10,
+            bool useTajawal = false}) =>
         pw.Text(
           text,
           textDirection: pw.TextDirection.rtl,
@@ -78,9 +81,8 @@ class ClientStatementPdfService {
 
     switch (type) {
       case ClientStatementType.financial:
-        final clientBalance = clientDoc.exists
-            ? (clientDoc.data()?['balance'] as num?)?.toDouble() ?? 0.0
-            : 0.0;
+        final clientBalance =
+            ClientRepository.instance.computeLiveBalanceFromHive(clientId);
         await _addFinancialPages(
           pdf: pdf,
           clientId: clientId,
@@ -167,43 +169,52 @@ class ClientStatementPdfService {
     required String nowStr,
     required String reportFooter,
     required PrinterSettings settings,
-    required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
-    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
-    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
+    required pw.TextStyle Function(
+            {bool bold, double fontSize, bool useTajawal})
+        cell,
+    required pw.Widget Function(String text,
+            {bool bold, double fontSize, bool useTajawal})
+        rtl,
+    required pw.Widget Function(String text,
+            {bool bold, double fontSize, bool useTajawal})
+        center,
   }) async {
     final logoFile = HeaderHelper.getLogoFile(settings);
-    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final logoPdfImage =
+        logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
     final headerLines = HeaderHelper.getHeaderLines(settings);
-    final snap = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(clientId)
-        .collection('balanceHistory')
-        .orderBy('timestamp', descending: true)
-        .get();
+    final localHistory = CustomerStatementData.financialHistory(clientId);
 
     final payments = <Map<String, dynamic>>[];
-    for (final doc in snap.docs) {
-      final data = doc.data();
+    for (final data in localHistory) {
       final ts = data['timestamp'];
-      if (ts is! Timestamp) continue;
-      final date = ts.toDate();
+      final date = ts as DateTime;
       if (date.isBefore(start) || date.isAfter(end)) continue;
       final entered = (data['enteredBalance'] as num?)?.toDouble() ?? 0.0;
       final before = (data['balanceBefore'] as num?)?.toDouble() ?? 0.0;
 
       final type = data['type']?.toString() ?? 'deduction';
       final invoiceNumber = data['invoiceNumber']?.toString() ?? '';
-      final notes = (data['notes'] ?? data['description'] ?? '').toString().trim();
+      final notes =
+          (data['notes'] ?? data['description'] ?? '').toString().trim();
 
       String description = '';
       if (type == 'sale') {
-        description = invoiceNumber.isNotEmpty ? 'فاتورة مبيعات رقم $invoiceNumber' : 'فاتورة مبيعات';
+        description = invoiceNumber.isNotEmpty
+            ? 'فاتورة مبيعات رقم $invoiceNumber'
+            : 'فاتورة مبيعات';
       } else if (type == 'sale_payment') {
-        description = invoiceNumber.isNotEmpty ? 'سداد من فاتورة رقم $invoiceNumber' : 'سداد فاتورة';
+        description = invoiceNumber.isNotEmpty
+            ? 'سداد من فاتورة رقم $invoiceNumber'
+            : 'سداد فاتورة';
       } else if (type == 'return') {
-        description = invoiceNumber.isNotEmpty ? 'مرتجع مبيعات رقم $invoiceNumber' : 'مرتجع مبيعات';
+        description = invoiceNumber.isNotEmpty
+            ? 'مرتجع مبيعات رقم $invoiceNumber'
+            : 'مرتجع مبيعات';
       } else if (type == 'return_payment') {
-        description = invoiceNumber.isNotEmpty ? 'سداد مرتجع رقم $invoiceNumber' : 'سداد مرتجع';
+        description = invoiceNumber.isNotEmpty
+            ? 'سداد مرتجع رقم $invoiceNumber'
+            : 'سداد مرتجع';
       } else if (type == 'opening') {
         description = 'رصيد افتتاحي';
       } else if (type == 'addition') {
@@ -215,7 +226,10 @@ class ClientStatementPdfService {
         description += ' ($notes)';
       }
 
-      final isIncrease = type == 'sale' || type == 'addition' || type == 'opening' || type == 'return_payment';
+      final isIncrease = type == 'sale' ||
+          type == 'addition' ||
+          type == 'opening' ||
+          type == 'return_payment';
       final after = isIncrease ? before + entered : before - entered;
       final sign = isIncrease ? '+' : '-';
 
@@ -273,7 +287,9 @@ class ClientStatementPdfService {
       final tsB = b['timestamp'];
       DateTime? dateA, dateB;
       if (tsA is Timestamp) dateA = tsA.toDate();
+      if (tsA is DateTime) dateA = tsA;
       if (tsB is Timestamp) dateB = tsB.toDate();
+      if (tsB is DateTime) dateB = tsB;
 
       if (dateA != null && dateB != null) {
         final cmp = dateB.compareTo(dateA); // Descending!
@@ -337,7 +353,9 @@ class ClientStatementPdfService {
               pw.SizedBox(height: 4),
               pw.Align(
                 alignment: pw.Alignment.centerLeft,
-                child: pw.Text('تاريخ التقرير: $nowStr', textDirection: pw.TextDirection.rtl, style: cell(fontSize: 8, useTajawal: true)),
+                child: pw.Text('تاريخ التقرير: $nowStr',
+                    textDirection: pw.TextDirection.rtl,
+                    style: cell(fontSize: 8, useTajawal: true)),
               ),
               pw.SizedBox(height: 16),
               if (payments.isEmpty)
@@ -346,7 +364,8 @@ class ClientStatementPdfService {
                 )
               else
                 pw.Table(
-                  border: pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
+                  border:
+                      pw.TableBorder.all(color: PdfColors.grey400, width: 0.5),
                   columnWidths: {
                     0: const pw.FlexColumnWidth(1.5),
                     1: const pw.FlexColumnWidth(3.0),
@@ -372,7 +391,8 @@ class ClientStatementPdfService {
                           dataCell(DateFormat('dd/MM/yyyy')
                               .format(p['date'] as DateTime)),
                           dataCell(p['description'] as String),
-                          dataCell('${p['sign']}${(p['entered'] as double).toStringAsFixed(2)}'),
+                          dataCell(
+                              '${p['sign']}${(p['entered'] as double).toStringAsFixed(2)}'),
                           dataCell((p['before'] as double).toStringAsFixed(2)),
                           dataCell((p['after'] as double).toStringAsFixed(2)),
                         ],
@@ -381,7 +401,8 @@ class ClientStatementPdfService {
                 ),
               pw.Spacer(),
               pw.Container(
-                padding: const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 10),
+                padding:
+                    const pw.EdgeInsets.symmetric(vertical: 6, horizontal: 10),
                 decoration: const pw.BoxDecoration(
                   color: PdfColors.grey100,
                   border: pw.Border(
@@ -420,32 +441,30 @@ class ClientStatementPdfService {
     required String nowStr,
     required String invoiceFooter,
     required PrinterSettings settings,
-    required pw.TextStyle Function({bool bold, double fontSize, bool useTajawal}) cell,
-    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) rtl,
-    required pw.Widget Function(String text, {bool bold, double fontSize, bool useTajawal}) center,
+    required pw.TextStyle Function(
+            {bool bold, double fontSize, bool useTajawal})
+        cell,
+    required pw.Widget Function(String text,
+            {bool bold, double fontSize, bool useTajawal})
+        rtl,
+    required pw.Widget Function(String text,
+            {bool bold, double fontSize, bool useTajawal})
+        center,
     required String invoicesSubcollection,
     required String statementHeader,
     required String invoiceTypeLabel,
     required String emptyMessage,
   }) async {
     final logoFile = HeaderHelper.getLogoFile(settings);
-    final logoPdfImage = logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
+    final logoPdfImage =
+        logoFile != null ? pw.MemoryImage(logoFile.readAsBytesSync()) : null;
     final headerLines = HeaderHelper.getHeaderLines(settings);
-    final snap = await FirebaseFirestore.instance
-        .collection('clients')
-        .doc(clientId)
-        .collection(invoicesSubcollection)
-        .orderBy('date', descending: true)
-        .get();
-
-    final invoices = <QueryDocumentSnapshot<Map<String, dynamic>>>[];
-    for (final doc in snap.docs) {
-      final date = doc.data()['date'];
-      if (date is! Timestamp) continue;
-      final d = date.toDate();
-      if (d.isBefore(start) || d.isAfter(end)) continue;
-      invoices.add(doc);
-    }
+    final invoices = CustomerStatementData.invoices(clientId,
+            returns: invoicesSubcollection == 'returnInvoices')
+        .where((invoice) {
+      final date = invoice['date'] as DateTime;
+      return !date.isBefore(start) && !date.isAfter(end);
+    }).toList();
 
     if (invoices.isEmpty) {
       pdf.addPage(
@@ -468,8 +487,7 @@ class ClientStatementPdfService {
       return;
     }
 
-    for (final doc in invoices) {
-      final data = Map<String, dynamic>.from(doc.data() as Map);
+    for (final data in invoices) {
       final rawDate = data['date'];
       final date = rawDate is Timestamp
           ? rawDate.toDate()
@@ -477,14 +495,10 @@ class ClientStatementPdfService {
               ? rawDate
               : (DateTime.tryParse(rawDate?.toString() ?? '') ??
                   DateTime.now()));
-      final products =
-          List<Map<String, dynamic>>.from(data['products'] ?? []);
-      final totalSum =
-          (data['totalSum'] as num?)?.toDouble() ?? 0.0;
-      final paid =
-          (data['paidAmount'] as num?)?.toDouble() ?? 0.0;
-      final previous =
-          (data['previousBalance'] as num?)?.toDouble() ?? 0.0;
+      final products = List<Map<String, dynamic>>.from(data['products'] ?? []);
+      final totalSum = (data['totalSum'] as num?)?.toDouble() ?? 0.0;
+      final paid = (data['paidAmount'] as num?)?.toDouble() ?? 0.0;
+      final previous = invoiceDynamicPreviousBalance(data);
       final remaining = invoiceClientRemainingOwed(data);
       final invoiceNumber = data['invoiceNumber']?.toString() ?? '-';
 
@@ -576,8 +590,7 @@ class ClientStatementPdfService {
                 ),
                 pw.SizedBox(height: 12),
                 rtl('الرصيد السابق: ${invoiceAmount(previous)}'),
-                rtl('إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
-                    bold: true),
+                rtl('إجمالي الفاتورة: ${invoiceAmount(totalSum)}', bold: true),
                 rtl('المدفوع: ${invoiceAmount(paid)}'),
                 rtl('المتبقي من الفاتورة: ${invoiceAmount(totalSum - paid)}'),
                 rtl('المتبقي عليكم: ${invoiceAmount(remaining)}'),

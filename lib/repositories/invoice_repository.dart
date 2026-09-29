@@ -2,7 +2,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive/hive.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/invoice_local.dart';
-import '../sync/sync_queue_manager.dart';
+import '../sync/cloud_snapshot_guard.dart';
+import '../sync/local_operation_journal.dart';
 
 /// Repository for Invoices (Sales, Returns, and Buying).
 ///
@@ -162,100 +163,74 @@ class InvoiceRepository {
 
   // ── Sync with Firestore ───────────────────────────────────────────────────
 
+  Future<void> mergeCloudInvoice(
+          String collection, String id, Map<String, dynamic>? data) =>
+      LocalOperationJournal.exclusive(() async {
+        final path = collection + '/' + id;
+        if (!CloudSnapshotGuard.accepts(path, data)) return;
+        if (data == null || data['_deleted'] == true) {
+          await appMetaBox.put(
+              'deletedCustomerInvoice:' + collection + ':' + id, true);
+          if (collection == 'returnInvoices')
+            await deleteReturnLocal(id);
+          else
+            await deleteSaleLocal(id);
+        } else {
+          if (collection == 'returnInvoices')
+            await upsertReturnLocal(id, data);
+          else
+            await upsertSaleLocal(id, data);
+        }
+        if (data != null) await CloudSnapshotGuard.record(path, data);
+      });
+
   Future<void> fullSyncSales() async {
     final snap = await _fs.collection('invoices').get();
-    final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
-      operationType: 'updateInvoiceSpecial',
-      idKey: 'invoiceId',
-    );
-    final Map<String, InvoiceLocal> map = {};
     for (final doc in snap.docs) {
-      final remote =
-          InvoiceLocal.fromFirestore(doc.id, doc.data(), defaultType: 'sale');
-      final local = invoicesBox.get(doc.id);
-      if (pendingSpecialIds.contains(doc.id) && local != null) {
-        remote.isSpecial = local.isSpecial;
-      }
-      map[doc.id] = remote;
+      await mergeCloudInvoice('invoices', doc.id, doc.data());
     }
-    await invoicesBox.putAll(map);
     await appMetaBox.put(
         HiveMetaKeys.lastInvoiceSyncAt, DateTime.now().toIso8601String());
   }
 
-  Future<void> deltaSyncSales() async {
-    await fullSyncSales();
-  }
+  Future<void> deltaSyncSales() => fullSyncSales();
 
+  Future<void> mergeCloudBuying(String id, Map<String, dynamic>? data) =>
+      LocalOperationJournal.exclusive(() async {
+        final path = 'buying invoices/$id';
+        if (!CloudSnapshotGuard.accepts(path, data)) return;
+        if (data == null || data['_deleted'] == true) {
+          await deleteBuyingLocal(id);
+        } else {
+          await upsertBuyingLocal(id, data);
+          await CloudSnapshotGuard.record(path, data);
+        }
+      });
   Future<void> fullSyncReturns() async {
     final snap = await _fs.collection('returnInvoices').get();
-    final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
-      operationType: 'updateInvoiceSpecial',
-      idKey: 'invoiceId',
-    );
-    final Map<String, InvoiceLocal> map = {};
     for (final doc in snap.docs) {
-      final remote =
-          InvoiceLocal.fromFirestore(doc.id, doc.data(), defaultType: 'return');
-      final local = returnInvoicesBox.get(doc.id);
-      if (pendingSpecialIds.contains(doc.id) && local != null) {
-        remote.isSpecial = local.isSpecial;
-      }
-      map[doc.id] = remote;
+      await mergeCloudInvoice('returnInvoices', doc.id, doc.data());
     }
-    await returnInvoicesBox.putAll(map);
     await appMetaBox.put(
         HiveMetaKeys.lastReturnInvoiceSyncAt, DateTime.now().toIso8601String());
   }
 
-  Future<void> deltaSyncReturns() async {
-    await fullSyncReturns();
-  }
+  Future<void> deltaSyncReturns() => fullSyncReturns();
 
   Future<void> fullSyncBuying() async {
     final results = await Future.wait([
       _fs.collection('buying invoices').get(),
       _fs.collectionGroup('buying invoices').get(),
     ]);
-
-    final pendingCreates = SyncQueueManager.instance.unfinishedEntityIds(
-      operationType: 'createBuyingInvoice',
-      idKey: 'invoiceId',
-    );
-    final pendingEdits = SyncQueueManager.instance.unfinishedEntityIds(
-      operationType: 'editBuyingInvoice',
-      idKey: 'invoiceId',
-    );
-    final pendingDeletes = <String>{
-      ...SyncQueueManager.instance.unfinishedEntityIds(
-        operationType: 'deleteBuyingInvoice',
-        idKey: 'invoiceId',
-      ),
-      ...SyncQueueManager.instance.unfinishedEntityIds(
-        operationType: 'deleteBuyingInvoice',
-        idKey: 'supplierSubDocId',
-      ),
-    };
-    final protectedIds = {...pendingCreates, ...pendingEdits};
-    final protectedInvoiceNumbers = protectedIds
-        .map((id) => buyingInvoicesBox.get(id)?.invoiceNumber ?? 0)
-        .where((number) => number > 0)
-        .toSet();
-
-    final byIdentity = <String, InvoiceLocal>{};
-    for (final doc in [...results[0].docs, ...results[1].docs]) {
+    // Process legacy supplier subcollection copies first. The canonical root
+    // document wins when both copies have the same legacy version.
+    for (final doc in [...results[1].docs, ...results[0].docs]) {
       final data = Map<String, dynamic>.from(doc.data());
       final linkedId = data['invoiceId']?.toString().trim() ?? '';
       final storedId = data['id']?.toString().trim() ?? '';
       final canonicalId = linkedId.isNotEmpty
           ? linkedId
           : (storedId.isNotEmpty ? storedId : doc.id);
-      if (pendingDeletes.contains(doc.id) ||
-          pendingDeletes.contains(canonicalId) ||
-          pendingDeletes.contains(storedId)) {
-        continue;
-      }
-
       final inferredSupplierId = doc.reference.parent.parent?.id.trim() ?? '';
       var supplierId = data['supplierId']?.toString().trim().isNotEmpty == true
           ? data['supplierId'].toString().trim()
@@ -275,39 +250,8 @@ class InvoiceRepository {
       data['id'] = canonicalId;
       data['invoiceId'] = canonicalId;
       if (supplierId.isNotEmpty) data['supplierId'] = supplierId;
-
-      final invoice = InvoiceLocal.fromFirestore(
-        canonicalId,
-        data,
-        defaultType: 'buying',
-      );
-      final number = invoice.invoiceNumber;
-      if (protectedIds.contains(doc.id) ||
-          protectedIds.contains(canonicalId) ||
-          protectedInvoiceNumbers.contains(number)) {
-        continue;
-      }
-      final identity = number > 0
-          ? '${invoice.supplierId}|number:$number'
-          : '${invoice.supplierId}|id:$canonicalId';
-      byIdentity.putIfAbsent(identity, () => invoice);
+      await mergeCloudBuying(canonicalId, data);
     }
-
-    final cloudEntries = <String, InvoiceLocal>{
-      for (final invoice in byIdentity.values) invoice.id: invoice,
-    };
-    for (final id in protectedIds) {
-      final local = buyingInvoicesBox.get(id);
-      if (local != null) cloudEntries[id] = local;
-    }
-
-    final retainedIds = cloudEntries.keys.toSet();
-    final staleKeys = buyingInvoicesBox.keys.where((key) {
-      final id = key.toString();
-      return !retainedIds.contains(id) && !protectedIds.contains(id);
-    }).toList(growable: false);
-    await buyingInvoicesBox.deleteAll(staleKeys);
-    await buyingInvoicesBox.putAll(cloudEntries);
     await appMetaBox.put(
       HiveMetaKeys.lastBuyingInvoiceSyncAt,
       DateTime.now().toIso8601String(),
@@ -327,7 +271,6 @@ class InvoiceRepository {
         .doc(supplierId)
         .collection('returnBuyingInvoices')
         .get();
-    final entries = <String, InvoiceLocal>{};
     for (final doc in snap.docs) {
       final data = Map<String, dynamic>.from(doc.data());
       final canonicalId =
@@ -339,20 +282,23 @@ class InvoiceRepository {
           supplierName != null) {
         data['supplierName'] = supplierName;
       }
-      entries[canonicalId] = InvoiceLocal.fromFirestore(
-        canonicalId,
-        data,
-        defaultType: 'buying_return',
-      );
+      await mergeCloudBuyingReturn(supplierId, canonicalId, data);
     }
-
-    final staleKeys = buyingReturnInvoicesBox.values
-        .where((invoice) => invoice.supplierId == supplierId)
-        .where((invoice) => !entries.containsKey(invoice.id))
-        .map((invoice) => invoice.key)
-        .where((key) => key != null)
-        .toList(growable: false);
-    await buyingReturnInvoicesBox.deleteAll(staleKeys);
-    await buyingReturnInvoicesBox.putAll(entries);
   }
+
+  Future<void> mergeCloudBuyingReturn(
+    String supplierId,
+    String id,
+    Map<String, dynamic>? data,
+  ) =>
+      LocalOperationJournal.exclusive(() async {
+        final path = 'suppliers/$supplierId/returnBuyingInvoices/$id';
+        if (!CloudSnapshotGuard.accepts(path, data)) return;
+        if (data == null || data['_deleted'] == true) {
+          await deleteBuyingReturnLocal(id);
+        } else {
+          await upsertBuyingReturnLocal(id, data);
+          await CloudSnapshotGuard.record(path, data);
+        }
+      });
 }

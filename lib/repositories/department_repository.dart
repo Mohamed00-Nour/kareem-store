@@ -30,17 +30,44 @@ class DepartmentRepository {
   }
 
   Future<void> fullSync() async {
+    final startedAt = DateTime.now();
     final snap = await _fs.collection('departments').get();
     final Map<String, DepartmentLocal> map = {};
     for (final doc in snap.docs) {
-      map[doc.id] = DepartmentLocal.fromFirestore(doc.id, doc.data());
+      if (doc.data()['_deleted'] != true) {
+        map[doc.id] = DepartmentLocal.fromFirestore(doc.id, doc.data());
+      }
     }
     await departmentsBox.clear();
     await departmentsBox.putAll(map);
-    await appMetaBox.put(HiveMetaKeys.lastDepartmentSyncAt, DateTime.now().toIso8601String());
+    await appMetaBox.put(
+      HiveMetaKeys.lastDepartmentSyncAt,
+      startedAt.toIso8601String(),
+    );
   }
 
   Future<void> deltaSync() async {
-    await fullSync();
+    final raw = appMetaBox.get(HiveMetaKeys.lastDepartmentSyncAt)?.toString();
+    final cursor = DateTime.tryParse(raw ?? '');
+    if (cursor == null) {
+      await fullSync();
+      return;
+    }
+    final startedAt = DateTime.now();
+    final snap = await _fs
+        .collection('departments')
+        .where('updatedAt', isGreaterThan: Timestamp.fromDate(cursor))
+        .get();
+    for (final doc in snap.docs) {
+      if (doc.data()['_deleted'] == true) {
+        await deleteLocal(doc.id);
+      } else {
+        await upsertLocal(doc.id, doc.data());
+      }
+    }
+    await appMetaBox.put(
+      HiveMetaKeys.lastDepartmentSyncAt,
+      startedAt.toIso8601String(),
+    );
   }
 }

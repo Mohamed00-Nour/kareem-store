@@ -4,6 +4,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/foundation.dart';
 import 'package:hive/hive.dart';
 import '../local_db/models/payment_breakdown_local.dart';
+import '../local_db/hive_init.dart';
 import '../sync/connectivity_service.dart';
 import '../sync/sync_queue_manager.dart';
 
@@ -171,19 +172,39 @@ class PaymentBreakdownRepository {
     return box.values.toList();
   }
 
-  /// Full background sync from Firestore into Hive
+  /// Imports the initial collection once, then only records changed since the
+  /// previous successful pass. New deletes are tombstones so another device
+  /// can remove its local Hive copy without rescanning the collection.
   Future<void> fullSyncFromFirestore() async {
     if (!ConnectivityService.instance.isOnline) return;
+    final startedAt = DateTime.now();
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('payment_breakdowns')
-          .get();
+      final cursor = appMetaBox.get(
+        HiveMetaKeys.lastPaymentBreakdownSyncAt,
+      ) as String?;
+      Query<Map<String, dynamic>> query =
+          FirebaseFirestore.instance.collection('payment_breakdowns');
+      if (cursor != null) {
+        query = query.where(
+          'updatedAt',
+          isGreaterThan: Timestamp.fromDate(DateTime.parse(cursor)),
+        );
+      }
+      final snap = await query.get();
 
       for (final doc in snap.docs) {
         final data = doc.data();
-        final local = PaymentBreakdownLocal.fromFirestore(doc.id, data);
-        await upsertLocal(local);
+        if (data['deleted'] == true || data['_deleted'] == true) {
+          await box.delete(doc.id);
+        } else {
+          final local = PaymentBreakdownLocal.fromFirestore(doc.id, data);
+          await upsertLocal(local);
+        }
       }
+      await appMetaBox.put(
+        HiveMetaKeys.lastPaymentBreakdownSyncAt,
+        startedAt.toIso8601String(),
+      );
     } catch (e) {
       debugPrint('Error fetching payment breakdowns from Firestore: $e');
     }

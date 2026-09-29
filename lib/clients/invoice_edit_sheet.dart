@@ -6,10 +6,6 @@ class _InvoiceEditSheet extends StatefulWidget {
   final List<Map<String, dynamic>> originalProducts;
   final List<_ProdInfo> allProds;
   final String clientId;
-  final Future<void> Function(
-    String clientInvoiceDocId,
-    Map<String, dynamic> fields,
-  ) onSyncRoot;
 
   const _InvoiceEditSheet({
     required this.invoiceId,
@@ -17,7 +13,6 @@ class _InvoiceEditSheet extends StatefulWidget {
     required this.originalProducts,
     required this.allProds,
     required this.clientId,
-    required this.onSyncRoot,
   });
 
   @override
@@ -101,108 +96,34 @@ class _InvoiceEditSheetState extends State<_InvoiceEditSheet> {
                 'product': r.prodInfo!.name,
                 'amount': r.amount,
                 'selectedPrice': r.price,
-                'total': r.total,
+                'total': r.total
               })
           .toList();
-
-      for (var op in widget.originalProducts) {
-        final oa = double.tryParse(op['amount'].toString()) ?? 0.0;
-        if (oa <= 0) continue;
-        final q = await FirebaseFirestore.instance
-            .collection('products')
-            .where('name', isEqualTo: op['product'])
-            .get();
-        for (var doc in q.docs) {
-          final qty = (doc['quantity'] as num).toDouble();
-          await FirebaseFirestore.instance
-              .collection('products')
-              .doc(doc.id)
-              .update({'quantity': qty + oa});
-          await FirebaseFirestore.instance
-              .collection('products')
-              .doc(doc.id)
-              .collection('changes')
-              .add({
-            'date': DateTime.now(),
-            'amount': oa,
-            'type': 'increase',
-          });
-        }
-      }
-
-      for (var np in updatedProducts) {
-        final na = double.tryParse(np['amount'].toString()) ?? 0.0;
-        if (na <= 0) continue;
-        final q = await FirebaseFirestore.instance
-            .collection('products')
-            .where('name', isEqualTo: np['product'])
-            .get();
-        for (var doc in q.docs) {
-          final qty = (doc['quantity'] as num).toDouble();
-          await FirebaseFirestore.instance
-              .collection('products')
-              .doc(doc.id)
-              .update({'quantity': qty - na});
-          await FirebaseFirestore.instance
-              .collection('products')
-              .doc(doc.id)
-              .collection('changes')
-              .add({
-            'date': DateTime.now(),
-            'amount': na,
-            'type': 'decrease',
-          });
-        }
-      }
-
-      final newTotalSum = updatedProducts.fold(
-        0.0,
-        (s, p) => s + (double.tryParse(p['total'].toString()) ?? 0.0),
-      );
-      var newPaid = double.tryParse(paidCtrl.text.replaceAll(',', '.')) ?? 0.0;
-      if (newPaid < 0) newPaid = 0;
-      if (!_isDeferredSale && newPaid > newTotalSum) {
-        if (mounted) {
-          ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
-            content: Text('المدفوع لا يمكن أن يكون أكبر من إجمالي الفاتورة'),
-          ));
-        }
-        isSaving.value = false;
-        return;
-      }
-
-      final newInvoiceBalance = newTotalSum - newPaid;
-
-      await FirebaseFirestore.instance
-          .collection('clients')
-          .doc(widget.clientId)
-          .collection('invoices')
-          .doc(widget.invoiceId)
-          .update({
+      final total = updatedProducts.fold<double>(
+              0, (sum, line) => sum + invoiceNum(line['total'])) -
+          invoiceResolveDiscount(widget.invoiceData);
+      final paid = _num(paidCtrl.text);
+      if (paid > total)
+        throw ArgumentError('Paid amount exceeds invoice total');
+      await CustomerOperationService.saveInvoice({
+        ...widget.invoiceData,
+        'id': widget.invoiceId,
+        'invoiceId': widget.invoiceId,
+        'clientId': widget.clientId,
         'products': updatedProducts,
-        'totalSum': newTotalSum,
-        'paidAmount': newPaid,
-        'balance': newInvoiceBalance,
-      });
-      await widget.onSyncRoot(widget.invoiceId, {
-        'products': updatedProducts,
-        'totalSum': newTotalSum,
-        'paidAmount': newPaid,
-        'balance': newInvoiceBalance,
-      });
-
-      await ClientInvoiceBalanceSyncService.syncForClient(widget.clientId);
-
+        'totalSum': total,
+        'paidAmount': paid
+      }, editing: true, isReturn: invoiceIsReturn(widget.invoiceData));
+      ConnectivityService.instance.forceSync();
       if (!mounted) return;
       FocusScope.of(context).unfocus();
       Navigator.pop(context, true);
     } catch (e) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text('حدث خطأ: $e')),
-        );
-      }
-      isSaving.value = false;
+      if (mounted)
+        ScaffoldMessenger.of(context)
+            .showSnackBar(SnackBar(content: Text(e.toString())));
+    } finally {
+      if (mounted) isSaving.value = false;
     }
   }
 

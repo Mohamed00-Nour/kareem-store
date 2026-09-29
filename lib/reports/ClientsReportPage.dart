@@ -1,7 +1,8 @@
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart' hide TextDirection;
+
+import '../repositories/invoice_repository.dart';
 
 class ClientsReportPage extends StatefulWidget {
   const ClientsReportPage({super.key});
@@ -80,25 +81,19 @@ class _ClientsReportPageState extends State<ClientsReportPage>
     setState(() => _loading = true);
 
     try {
-      final snap = await FirebaseFirestore.instance
-          .collection('invoices')
-          .where('date', isGreaterThanOrEqualTo: Timestamp.fromDate(_startDate!))
-          .where('date', isLessThanOrEqualTo: Timestamp.fromDate(_endDate!))
-          .get();
+      final invoices = InvoiceRepository.instance.getAllSales().where(
+          (invoice) =>
+              !invoice.date.isBefore(_startDate!) &&
+              !invoice.date.isAfter(_endDate!));
 
       final Map<String, _ClientStat> map = {};
 
-      for (final doc in snap.docs) {
-        final data = doc.data();
-        final clientName = (data['clientName'] ?? '').toString();
+      for (final invoice in invoices) {
+        final clientName = invoice.clientName;
         if (clientName.isEmpty) continue;
 
-        final totalSum = (data['totalSum'] ?? 0.0) is num
-            ? (data['totalSum'] as num).toDouble()
-            : double.tryParse(data['totalSum'].toString()) ?? 0.0;
-        final profit = (data['profitMargin'] ?? 0.0) is num
-            ? (data['profitMargin'] as num).toDouble()
-            : double.tryParse(data['profitMargin'].toString()) ?? 0.0;
+        final totalSum = invoice.totalSum;
+        final profit = invoice.profitMargin;
 
         if (map.containsKey(clientName)) {
           final prev = map[clientName]!;
@@ -125,10 +120,8 @@ class _ClientsReportPageState extends State<ClientsReportPage>
           ..sort((a, b) => b.totalSales.compareTo(a.totalSales));
         _byProfit = List.from(all)
           ..sort((a, b) => b.totalProfit.compareTo(a.totalProfit));
-        _grandSales =
-            all.fold(0.0, (s, c) => s + c.totalSales);
-        _grandProfit =
-            all.fold(0.0, (s, c) => s + c.totalProfit);
+        _grandSales = all.fold(0.0, (s, c) => s + c.totalSales);
+        _grandProfit = all.fold(0.0, (s, c) => s + c.totalProfit);
         _loading = false;
       });
     } catch (e) {
@@ -165,8 +158,7 @@ class _ClientsReportPageState extends State<ClientsReportPage>
             indicatorColor: Colors.orange,
             labelColor: Colors.orange,
             unselectedLabelColor: Colors.white70,
-            labelStyle:
-                TextStyle(fontSize: 12.sp, fontWeight: FontWeight.bold),
+            labelStyle: TextStyle(fontSize: 12.sp, fontWeight: FontWeight.bold),
             tabs: const [
               Tab(text: 'أعلى مبيعاً'),
               Tab(text: 'أعلى أرباحاً'),
@@ -178,8 +170,7 @@ class _ClientsReportPageState extends State<ClientsReportPage>
             // ── Date range picker ──────────────────────────────────
             Container(
               color: Colors.white,
-              padding:
-                  EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
+              padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
               child: Row(
                 children: [
                   Expanded(
@@ -216,8 +207,7 @@ class _ClientsReportPageState extends State<ClientsReportPage>
             // ── Search bar ────────────────────────────────────────
             Container(
               color: Colors.white,
-              padding:
-                  EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
+              padding: EdgeInsets.symmetric(horizontal: 12.w, vertical: 8.h),
               child: TextField(
                 controller: _searchController,
                 textDirection: TextDirection.rtl,
@@ -234,8 +224,8 @@ class _ClientsReportPageState extends State<ClientsReportPage>
                           },
                         )
                       : null,
-                  contentPadding: EdgeInsets.symmetric(
-                      horizontal: 12.w, vertical: 10.h),
+                  contentPadding:
+                      EdgeInsets.symmetric(horizontal: 12.w, vertical: 10.h),
                   border: OutlineInputBorder(
                     borderRadius: BorderRadius.circular(10.r),
                     borderSide: BorderSide(color: Colors.grey.shade400),
@@ -258,8 +248,7 @@ class _ClientsReportPageState extends State<ClientsReportPage>
             if (!_loading && _bySales.isNotEmpty)
               Container(
                 color: Colors.black.withOpacity(0.7),
-                padding: EdgeInsets.symmetric(
-                    horizontal: 16.w, vertical: 8.h),
+                padding: EdgeInsets.symmetric(horizontal: 16.w, vertical: 8.h),
                 child: Row(
                   mainAxisAlignment: MainAxisAlignment.spaceAround,
                   children: [
@@ -360,12 +349,10 @@ class _DateButton extends StatelessWidget {
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
           children: [
             Text(value,
-                style: TextStyle(
-                    fontSize: 13.sp, fontWeight: FontWeight.bold)),
+                style: TextStyle(fontSize: 13.sp, fontWeight: FontWeight.bold)),
             Text(label,
                 style: TextStyle(
-                    fontSize: 11.sp,
-                    color: Colors.black.withOpacity(0.5))),
+                    fontSize: 11.sp, color: Colors.black.withOpacity(0.5))),
           ],
         ),
       ),
@@ -388,13 +375,9 @@ class _SummaryChip extends StatelessWidget {
       children: [
         Text(value,
             style: TextStyle(
-                color: color,
-                fontSize: 13.sp,
-                fontWeight: FontWeight.bold)),
+                color: color, fontSize: 13.sp, fontWeight: FontWeight.bold)),
         SizedBox(height: 2.h),
-        Text(label,
-            style: TextStyle(
-                color: Colors.white70, fontSize: 10.sp)),
+        Text(label, style: TextStyle(color: Colors.white70, fontSize: 10.sp)),
       ],
     );
   }
@@ -412,8 +395,8 @@ class _ClientList extends StatelessWidget {
       return Center(
         child: Text(
           'لا توجد بيانات في هذه الفترة',
-          style: TextStyle(
-              fontSize: 14.sp, color: Colors.black.withOpacity(0.5)),
+          style:
+              TextStyle(fontSize: 14.sp, color: Colors.black.withOpacity(0.5)),
         ),
       );
     }
@@ -429,22 +412,20 @@ class _ClientList extends StatelessWidget {
         final primaryValue = sortBy == 'sales' ? c.totalSales : c.totalProfit;
         final primaryLabel =
             sortBy == 'sales' ? 'إجمالي المبيعات' : 'إجمالي الأرباح';
-        final profitPct = c.totalSales > 0
-            ? (c.totalProfit / c.totalSales * 100)
-            : 0.0;
+        final profitPct =
+            c.totalSales > 0 ? (c.totalProfit / c.totalSales * 100) : 0.0;
 
         return Card(
           elevation: 2,
-          shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12.r)),
+          shape:
+              RoundedRectangleBorder(borderRadius: BorderRadius.circular(12.r)),
           margin: EdgeInsets.symmetric(vertical: 5.h),
           child: Container(
             decoration: BoxDecoration(
               color: Colors.white.withOpacity(0.95),
               borderRadius: BorderRadius.circular(12.r),
             ),
-            padding:
-                EdgeInsets.symmetric(vertical: 12.h, horizontal: 14.w),
+            padding: EdgeInsets.symmetric(vertical: 12.h, horizontal: 14.w),
             child: Row(
               children: [
                 // Rank badge
@@ -485,15 +466,13 @@ class _ClientList extends StatelessWidget {
                         children: [
                           _Chip(
                             label: 'المبيعات',
-                            value:
-                                '${c.totalSales.toStringAsFixed(2)} ج.م',
+                            value: '${c.totalSales.toStringAsFixed(2)} ج.م',
                             color: Colors.orange.shade700,
                           ),
                           SizedBox(width: 8.w),
                           _Chip(
                             label: 'الأرباح',
-                            value:
-                                '${c.totalProfit.toStringAsFixed(2)} ج.م',
+                            value: '${c.totalProfit.toStringAsFixed(2)} ج.م',
                             color: c.totalProfit >= 0
                                 ? Colors.green.shade700
                                 : Colors.red,
@@ -541,8 +520,7 @@ class _ClientList extends StatelessWidget {
                     Text(
                       primaryLabel,
                       style: TextStyle(
-                          fontSize: 9.sp,
-                          color: Colors.black.withOpacity(0.4)),
+                          fontSize: 9.sp, color: Colors.black.withOpacity(0.4)),
                     ),
                   ],
                 ),
@@ -560,8 +538,7 @@ class _Chip extends StatelessWidget {
   final String value;
   final Color color;
 
-  const _Chip(
-      {required this.label, required this.value, required this.color});
+  const _Chip({required this.label, required this.value, required this.color});
 
   @override
   Widget build(BuildContext context) {
@@ -578,15 +555,12 @@ class _Chip extends StatelessWidget {
             TextSpan(
               text: '$label: ',
               style: TextStyle(
-                  fontSize: 10.sp,
-                  color: Colors.black.withOpacity(0.5)),
+                  fontSize: 10.sp, color: Colors.black.withOpacity(0.5)),
             ),
             TextSpan(
               text: value,
               style: TextStyle(
-                  fontSize: 10.sp,
-                  fontWeight: FontWeight.bold,
-                  color: color),
+                  fontSize: 10.sp, fontWeight: FontWeight.bold, color: color),
             ),
           ],
         ),
@@ -594,4 +568,3 @@ class _Chip extends StatelessWidget {
     );
   }
 }
-

@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
+
+import 'repositories/client_repository.dart';
 
 class DeletedClientsPage extends StatelessWidget {
   final Set<String> deletedClients;
@@ -33,27 +34,13 @@ class DeletedClientsPage extends StatelessWidget {
             margin: const EdgeInsets.all(10.0),
             child: ListTile(
               title: Center(
-                child: FutureBuilder<DocumentSnapshot>(
-                  future: FirebaseFirestore.instance
-                      .collection('clients')
-                      .doc(clientId)
-                      .get(),
-                  builder: (context, snapshot) {
-                    String displayName = clientId;
-                    if (snapshot.hasData && snapshot.data!.exists) {
-                      final data =
-                          snapshot.data!.data() as Map<String, dynamic>?;
-                      displayName = data?['clientName']?.toString() ?? clientId;
-                    }
-                    return Text(
-                      'اسم العميل: $displayName',
-                      style: const TextStyle(
-                        color: Colors.white,
-                        fontWeight: FontWeight.bold,
-                        fontSize: 16,
-                      ),
-                    );
-                  },
+                child: Text(
+                  'اسم العميل: ${ClientRepository.instance.getById(clientId)?.name ?? clientId}',
+                  style: const TextStyle(
+                    color: Colors.white,
+                    fontWeight: FontWeight.bold,
+                    fontSize: 16,
+                  ),
                 ),
               ),
               trailing: IconButton(

@@ -1,5 +1,4 @@
 import 'package:flutter/material.dart';
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:hive_flutter/hive_flutter.dart';
 import '../local_db/hive_init.dart';
@@ -37,26 +36,11 @@ class DepartmentsPage extends StatelessWidget {
           final localDepartments = DepartmentRepository.instance.getAll();
 
           if (localDepartments.isEmpty) {
-            return StreamBuilder<QuerySnapshot>(
-              stream: FirebaseFirestore.instance.collection('departments').snapshots(),
-              builder: (context, snapshot) {
-                if (snapshot.connectionState == ConnectionState.waiting) {
-                  return Center(
-                    child: CircularProgressIndicator(
-                      color: Colors.orange.withOpacity(0.8),
-                    ),
-                  );
-                }
-                if (!snapshot.hasData || snapshot.data!.docs.isEmpty) {
-                  return Center(child: Text('No departments found.'));
-                }
-                final docs = snapshot.data!.docs;
-                return _buildGrid(context, docs.map((d) => (d.data() as Map<String, dynamic>)['name']?.toString() ?? '').toList());
-              },
-            );
+            return const Center(child: Text('No departments found.'));
           }
 
-          return _buildGrid(context, localDepartments.map((d) => d.name).toList());
+          return _buildGrid(
+              context, localDepartments.map((d) => d.name).toList());
         },
       ),
     );
@@ -100,8 +84,8 @@ class DepartmentsPage extends StatelessWidget {
                   SizedBox(height: 10.h),
                   Text(
                     name,
-                    style: TextStyle(
-                        fontSize: 16.sp, fontWeight: FontWeight.bold),
+                    style:
+                        TextStyle(fontSize: 16.sp, fontWeight: FontWeight.bold),
                   ),
                 ],
               ),

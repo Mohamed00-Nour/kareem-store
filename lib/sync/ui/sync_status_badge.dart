@@ -1,3 +1,5 @@
+import 'dart:async';
+import '../../local_db/hive_init.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../sync/connectivity_service.dart';
@@ -25,6 +27,8 @@ class _SyncStatusBadgeState extends State<SyncStatusBadge>
   bool _isOnline = ConnectivityService.instance.isOnline;
   int _pendingCount = SyncQueueManager.instance.pendingCount;
   bool _isSyncing = false;
+  int _failedCount = SyncQueueManager.instance.failedCount;
+  StreamSubscription? _networkSub, _queueSub;
 
   @override
   void initState() {
@@ -34,30 +38,27 @@ class _SyncStatusBadgeState extends State<SyncStatusBadge>
       duration: const Duration(seconds: 1),
     )..repeat();
 
-    ConnectivityService.instance.onlineStream.listen((online) {
-      if (!mounted) return;
-      setState(() {
-        _isOnline = online;
-        _isSyncing = online && SyncQueueManager.instance.hasPending;
-        _pendingCount = SyncQueueManager.instance.pendingCount;
-      });
+    _networkSub = ConnectivityService.instance.onlineStream.listen((online) {
+      _isOnline = online;
+      _refreshStatus();
     });
+    _queueSub = syncQueueBox.watch().listen((_) => _refreshStatus());
+    _refreshStatus();
+  }
 
-    // Refresh pending count periodically
-    Stream.periodic(const Duration(seconds: 3)).listen((_) {
-      if (!mounted) return;
-      final count = SyncQueueManager.instance.pendingCount;
-      if (count != _pendingCount) {
-        setState(() {
-          _pendingCount = count;
-          _isSyncing = _isOnline && count > 0;
-        });
-      }
+  void _refreshStatus() {
+    if (!mounted) return;
+    setState(() {
+      _pendingCount = SyncQueueManager.instance.pendingCount;
+      _failedCount = SyncQueueManager.instance.failedCount;
+      _isSyncing = _isOnline && SyncQueueManager.instance.hasSyncingItems;
     });
   }
 
   @override
   void dispose() {
+    _networkSub?.cancel();
+    _queueSub?.cancel();
     _spinController.dispose();
     super.dispose();
   }
@@ -95,6 +96,8 @@ class _SyncStatusBadgeState extends State<SyncStatusBadge>
   }
 
   Widget _buildIcon() {
+    if (_failedCount > 0)
+      return Icon(Icons.error_outline, color: Colors.redAccent, size: 20.sp);
     if (_isSyncing) {
       return RotationTransition(
         turns: _spinController,
@@ -131,17 +134,25 @@ class _SyncStatusBadgeState extends State<SyncStatusBadge>
       );
     }
     // Online & synced
-    return Icon(Icons.cloud_done_outlined, color: Colors.greenAccent, size: 20.sp);
+    return Icon(Icons.cloud_done_outlined,
+        color: Colors.greenAccent, size: 20.sp);
   }
 
   String get _tooltipText {
+    if (_failedCount > 0)
+      return 'فشل رفع عمليات محفوظة محلياً. افتح لوحة المزامنة للمراجعة.';
+    if (_pendingCount > 0 && !_isSyncing)
+      return 'عمليات محفوظة محلياً في انتظار الرفع';
     if (_isSyncing) return 'جارٍ المزامنة...';
-    if (!_isOnline && _pendingCount > 0) return 'غير متصل — $_pendingCount عملية معلقة';
+    if (!_isOnline && _pendingCount > 0)
+      return 'غير متصل — $_pendingCount عملية معلقة';
     if (!_isOnline) return 'غير متصل بالإنترنت';
     return 'متصل — كل البيانات محدّثة';
   }
 
   String get _labelText {
+    if (_failedCount > 0) return '$_failedCount خطأ';
+    if (_pendingCount > 0 && !_isSyncing) return '$_pendingCount معلق';
     if (_isSyncing) return 'مزامنة...';
     if (!_isOnline && _pendingCount > 0) return '$_pendingCount معلّق';
     if (!_isOnline) return 'غير متصل';
@@ -149,6 +160,8 @@ class _SyncStatusBadgeState extends State<SyncStatusBadge>
   }
 
   Color get _labelColor {
+    if (_failedCount > 0) return Colors.redAccent;
+    if (_pendingCount > 0 && !_isSyncing) return Colors.orange;
     if (_isSyncing) return Colors.lightBlueAccent;
     if (!_isOnline) return Colors.orange;
     return Colors.greenAccent;

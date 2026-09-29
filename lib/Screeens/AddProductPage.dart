@@ -10,18 +10,15 @@ import '../Buing Invoices/BuyingInvoiceListPage.dart';
 import '../Buing Invoices/BuyingInvoiceDetailPage.dart';
 import '../Services/invoice_number_utils.dart';
 import '../Services/quick_entity_creation_service.dart';
-import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/buying_invoice_update_service.dart';
+import '../Services/supplier_operation_service.dart';
 import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../sync/connectivity_service.dart';
 import '../sync/sync_queue_manager.dart';
 import '../repositories/supplier_repository.dart';
 import '../repositories/product_repository.dart';
-import '../repositories/invoice_repository.dart';
-import '../repositories/box_repository.dart';
 import '../repositories/balance_history_repository.dart';
-import '../local_db/models/balance_history_local.dart';
 import '../local_db/hive_init.dart';
 import '../utils/entity_name_normalizer.dart';
 import 'package:hive_flutter/hive_flutter.dart';
@@ -339,12 +336,13 @@ class _AddProductPageState extends State<AddProductPage> {
         // Resolve supplier ID if not yet known
         String resolvedSupplierId = _editingSupplierId ?? '';
         if (resolvedSupplierId.isEmpty) {
-          final sq = await FirebaseFirestore.instance
-              .collection('suppliers')
-              .where('name', isEqualTo: effectiveSupplier.name)
-              .limit(1)
-              .get();
-          resolvedSupplierId = sq.docs.isNotEmpty ? sq.docs.first.id : '';
+          resolvedSupplierId = SupplierRepository.instance
+                  .findByName(effectiveSupplier.name)
+                  ?.id ??
+              '';
+        }
+        if (resolvedSupplierId.isEmpty) {
+          throw StateError('يجب تحميل المورد محلياً قبل تعديل الفاتورة');
         }
 
         final effectiveDiscountAmt = discountIsPercent
@@ -447,6 +445,12 @@ class _AddProductPageState extends State<AddProductPage> {
         'paymentMethod': paymentMethod,
         'products': _addedProducts
             .map((p) => {
+                  if (((p['productId'] ?? p['id'])?.toString() ?? '')
+                      .isNotEmpty)
+                    'id': (p['productId'] ?? p['id']).toString(),
+                  if (((p['productId'] ?? p['id'])?.toString() ?? '')
+                      .isNotEmpty)
+                    'productId': (p['productId'] ?? p['id']).toString(),
                   'product': p['product'],
                   'amount': (p['amount'] as num).toDouble(),
                   'cost': (p['cost'] as num).toDouble(),
@@ -466,98 +470,11 @@ class _AddProductPageState extends State<AddProductPage> {
             .toList(),
       };
 
-      _lastInvoice = Map<String, dynamic>.from(invoiceData);
-
-      // 1. Write invoice to local Hive database (<10ms)
-      await InvoiceRepository.instance.upsertBuyingLocal(docId, invoiceData);
-
-      // 2. Update supplier balance locally
-      if (workingSupplier.id.isNotEmpty) {
-        await BalanceHistoryRepository.instance.upsertLocal(
-          BalanceHistoryLocal(
-            id: '${docId}_buying',
-            parentId: workingSupplier.id,
-            parentType: 'supplier',
-            enteredBalance: totalSum,
-            balanceBefore: existingSupplierBalance,
-            type: 'buying',
-            invoiceId: docId,
-            invoiceNumber: newInvoiceNumber.toString(),
-            timestamp: _selectedDate ?? DateTime.now(),
-          ),
-        );
-        if (effectivePaid > 0) {
-          await BalanceHistoryRepository.instance.upsertLocal(
-            BalanceHistoryLocal(
-              id: '${docId}_pay',
-              parentId: workingSupplier.id,
-              parentType: 'supplier',
-              enteredBalance: effectivePaid,
-              balanceBefore: existingSupplierBalance + totalSum,
-              type: 'buying_payment',
-              invoiceId: docId,
-              invoiceNumber: newInvoiceNumber.toString(),
-              timestamp: _selectedDate ?? DateTime.now(),
-            ),
-          );
-        }
-        final updatedBalance =
-            BalanceHistoryRepository.instance.calculateSupplierBalance(
-          workingSupplier.id,
-          fallback: existingSupplierBalance + balance,
-        );
-        await SupplierRepository.instance.updateLocalBalance(
-          workingSupplier.id,
-          updatedBalance,
-        );
-      }
-
-      // 3. Update products stock and prices locally
-      for (var product in _addedProducts) {
-        final name = product['product']?.toString() ?? '';
-        final localProd = ProductRepository.instance.findByName(name);
-        if (localProd != null) {
-          final addedQty = (product['amount'] as num).toDouble();
-          localProd.quantity += addedQty;
-          if (product['newCostPrice'] != null) {
-            localProd.costPrice = (product['newCostPrice'] as num).toDouble();
-          }
-          if (product['newSellingPrice1'] != null) {
-            localProd.sellingPrice1 =
-                (product['newSellingPrice1'] as num).toDouble();
-          }
-          if (product['newSellingPrice2'] != null) {
-            localProd.sellingPrice2 =
-                (product['newSellingPrice2'] as num).toDouble();
-          }
-          if (product['newSellingPrice3'] != null) {
-            localProd.sellingPrice3 =
-                (product['newSellingPrice3'] as num).toDouble();
-          }
-          await productsBox.put(localProd.id, localProd);
-        }
-      }
-
-      // 4. Update cash box locally
-      if (effectivePaid > 0) {
-        await BoxRepository.instance.decrement(effectivePaid);
-      }
-
-      // 5. Enqueue background sync to Firebase
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'createBuyingInvoice',
-        payload: {
-          'supplierId': workingSupplier.id,
-          'supplierName': workingSupplier.name,
-          'invoiceId': docId,
-          'invoiceData': invoiceData,
-          'products': invoiceData['products'],
-          'paidAmount': effectivePaid,
-        },
-      );
+      _lastInvoice =
+          await SupplierOperationService.saveBuyingInvoice(invoiceData);
 
       // Trigger background sync without awaiting
-      ConnectivityService.instance.forceSync();
+      unawaited(ConnectivityService.instance.forceSync());
 
       if (!mounted) return;
       setState(() {
@@ -891,23 +808,36 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   Future<String?> _resolveLineProductDocId(Map<String, dynamic> line) async {
-    final productId = line['productId']?.toString() ?? '';
+    final productId =
+        (line['productId'] ?? line['id'])?.toString().trim() ?? '';
+    if (productId.isNotEmpty &&
+        ProductRepository.instance.getById(productId) != null) {
+      return productId;
+    }
+    final name = line['product']?.toString() ?? '';
+    if (name.isEmpty) return null;
+    final localProduct = ProductRepository.instance.findByName(name);
+    if (localProduct != null) return localProduct.id;
+    if (!ConnectivityService.instance.isOnline) return null;
     if (productId.isNotEmpty) {
       final doc = await FirebaseFirestore.instance
           .collection('products')
           .doc(productId)
           .get();
-      if (doc.exists) return productId;
+      if (doc.exists && doc.data() != null) {
+        await ProductRepository.instance.upsertLocal(productId, doc.data()!);
+        return productId;
+      }
     }
-    final name = line['product']?.toString() ?? '';
-    if (name.isEmpty) return null;
     final query = await FirebaseFirestore.instance
         .collection('products')
         .where('name', isEqualTo: name)
         .limit(1)
         .get();
     if (query.docs.isEmpty) return null;
-    return query.docs.first.id;
+    final doc = query.docs.first;
+    await ProductRepository.instance.upsertLocal(doc.id, doc.data());
+    return doc.id;
   }
 
   Future<void> _showChangeLineProductNameDialog(int index) async {
@@ -987,58 +917,43 @@ class _AddProductPageState extends State<AddProductPage> {
 
     try {
       final docId = await _resolveLineProductDocId(line);
-      if (docId != null) {
-        final nameTaken = await FirebaseFirestore.instance
-            .collection('products')
-            .where('name', isEqualTo: newName)
-            .limit(1)
-            .get();
-        if (nameTaken.docs.isNotEmpty && nameTaken.docs.first.id != docId) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('اسم المنتج مستخدم بالفعل في المخزون')),
-          );
-          return;
-        }
-        await FirebaseFirestore.instance
-            .collection('products')
-            .doc(docId)
-            .update({'name': newName});
-      } else {
-        final nameTaken = await FirebaseFirestore.instance
-            .collection('products')
-            .where('name', isEqualTo: newName)
-            .limit(1)
-            .get();
-        if (nameTaken.docs.isNotEmpty) {
-          if (!mounted) return;
-          ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(
-                content: Text('اسم المنتج مستخدم بالفعل في المخزون')),
-          );
-          return;
-        }
+      if (docId == null || ProductRepository.instance.getById(docId) == null) {
+        throw StateError('يجب تحميل المنتج محلياً قبل تغيير اسمه');
       }
+      final nameTaken = ProductRepository.instance.findByName(newName);
+      if (nameTaken != null && nameTaken.id != docId) {
+        if (!mounted) return;
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('اسم المنتج مستخدم بالفعل في المخزون')),
+        );
+        return;
+      }
+      await ProductRepository.instance.renameLocalFirst(docId, newName);
+      unawaited(ConnectivityService.instance.forceSync());
 
       if (!mounted) return;
       setState(() {
         for (var i = 0; i < _addedProducts.length; i++) {
-          if (_addedProducts[i]['product'] != oldName) continue;
+          final lineProductId =
+              (_addedProducts[i]['productId'] ?? _addedProducts[i]['id'])
+                  ?.toString();
+          final matchesProduct = lineProductId?.isNotEmpty == true
+              ? lineProductId == docId
+              : _addedProducts[i]['product'] == oldName;
+          if (!matchesProduct) continue;
           final updated = Map<String, dynamic>.from(_addedProducts[i]);
           updated['product'] = newName;
-          if (docId != null) updated['productId'] = docId;
+          updated['id'] = docId;
+          updated['productId'] = docId;
           _addedProducts[i] = updated;
         }
 
         final catalogIdx = _products.indexWhere(
-          (p) =>
-              (docId != null && p.id == docId) ||
-              (docId == null && p.name == oldName),
+          (p) => p.id == docId,
         );
         if (catalogIdx >= 0) {
           _products[catalogIdx].name = newName;
-          if (docId != null) _products[catalogIdx].id = docId;
+          _products[catalogIdx].id = docId;
         }
         _dataModified = true;
       });
@@ -1565,6 +1480,7 @@ class _AddProductPageState extends State<AddProductPage> {
                             );
                             if (!mounted) return;
                             final entry = {
+                              'id': product.id,
                               'product': product.name,
                               'productId': product.id,
                               'date': _selectedDate,

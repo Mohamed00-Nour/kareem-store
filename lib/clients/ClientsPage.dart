@@ -1,3 +1,5 @@
+import '../Services/customer_local_views.dart';
+import '../Services/customer_balance_store.dart';
 // import 'package:flutter/material.dart';
 // import 'package:cloud_firestore/cloud_firestore.dart';
 //
@@ -101,8 +103,8 @@
 //             ),
 //           ),
 //           Expanded(
-//             child: StreamBuilder<QuerySnapshot>(
-//               stream: FirebaseFirestore.instance.collection('clients').snapshots(),
+//             child: StreamBuilder<LocalCustomerSnapshot>(
+//               stream: CustomerLocalViews.watch(),
 //               builder: (context, snapshot) {
 //                 if (!snapshot.hasData) {
 //                   return  Center(child: CircularProgressIndicator(
@@ -171,15 +173,13 @@ import '../Services/party_rename_service.dart';
 import '../Widgets/egypt_phone_field.dart';
 import '../Widgets/app_responsive.dart';
 import 'ClientInvoicesPage.dart';
-import '../Services/client_invoice_balance_sync_service.dart';
 import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../sync/connectivity_service.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/balance_history_repository.dart';
-import '../repositories/box_repository.dart';
-import '../local_db/models/balance_history_local.dart';
-import '../sync/sync_queue_manager.dart';
+import '../Services/customer_operation_service.dart';
+import '../Services/quick_entity_creation_service.dart';
 
 // ─── Main Menu Page ──────────────────────────────────────────────────────────
 
@@ -270,8 +270,7 @@ class ClientsPage extends StatelessWidget {
                         // ── Phone validation ──────────────────────────────────────
                         final phoneLocal = phoneCtrl.text.trim();
                         if (phoneLocal.isNotEmpty &&
-                            !EgyptPhoneField.isValidLocalPart(
-                                phoneCtrl.text)) {
+                            !EgyptPhoneField.isValidLocalPart(phoneCtrl.text)) {
                           messenger.showSnackBar(
                             const SnackBar(
                               content: Text(
@@ -286,83 +285,16 @@ class ClientsPage extends StatelessWidget {
                         try {
                           final balance =
                               double.tryParse(balanceCtrl.text.trim()) ?? 0.0;
-                          final docRef = FirebaseFirestore.instance
-                              .collection('clients')
-                              .doc();
-                          final clientId = docRef.id;
-
-                          final data = <String, dynamic>{
-                            'clientName': name,
-                            'balance': balance,
-                            'id': clientId,
-                          };
-                          if (phoneLocal.isNotEmpty) {
-                            data['phone'] = EgyptPhoneField.toWhatsappDigits(
-                                phoneCtrl.text);
-                          }
-
-                          // ── 1. Save to local Hive database immediately (0ms) ─────
-                          await ClientRepository.instance
-                              .upsertLocal(clientId, data);
-
-                          if (balance != 0) {
-                            await BalanceHistoryRepository.instance.upsertLocal(
-                              BalanceHistoryLocal(
-                                id: '${clientId}_opening',
-                                parentId: clientId,
-                                parentType: 'client',
-                                enteredBalance: balance,
-                                balanceBefore: 0.0,
-                                type: 'opening',
-                                timestamp: DateTime.now(),
-                              ),
-                            );
-                          }
-
-                          // ── 2. Close dialog immediately — Hive is our primary DB ─
+                          await QuickEntityCreationService.instance
+                              .createClient(
+                                  name: name,
+                                  openingBalance: balance,
+                                  phone: phoneLocal.isEmpty
+                                      ? ''
+                                      : EgyptPhoneField.toWhatsappDigits(
+                                          phoneCtrl.text));
+                          ConnectivityService.instance.forceSync();
                           if (ctx.mounted) Navigator.pop(ctx);
-
-                          // ── 3. Sync to Firestore in background (non-blocking) ─────
-                          final bool isOnline =
-                              ConnectivityService.instance.isOnline;
-                          if (isOnline) {
-                            // Fire-and-forget: don't await, don't block
-                            Future(() async {
-                              try {
-                                await docRef.set(data, SetOptions(merge: true));
-                                if (balance != 0) {
-                                  await docRef
-                                      .collection('balanceHistory')
-                                      .doc('${clientId}_opening')
-                                      .set({
-                                    'enteredBalance': balance,
-                                    'balanceBefore': 0.0,
-                                    'type': 'opening',
-                                    'timestamp': FieldValue.serverTimestamp(),
-                                  });
-                                }
-                              } catch (_) {
-                                // If Firestore fails, enqueue for retry
-                                await SyncQueueManager.instance.enqueue(
-                                  operationType: 'createClient',
-                                  payload: {
-                                    'clientId': clientId,
-                                    'data': data,
-                                    'openingBalance': balance
-                                  },
-                                );
-                              }
-                            });
-                          } else {
-                            await SyncQueueManager.instance.enqueue(
-                              operationType: 'createClient',
-                              payload: {
-                                'clientId': clientId,
-                                'data': data,
-                                'openingBalance': balance
-                              },
-                            );
-                          }
                         } catch (e) {
                           setDialogState(() => isSaving = false);
                           messenger.showSnackBar(
@@ -777,12 +709,13 @@ class _ClientOpeningBalancesPageState
       final dateStr = DateFormat('dd/MM/yyyy').format(now);
       final timeStr = DateFormat('hh:mm:ss a').format(now);
 
-      final snap = await FirebaseFirestore.instance
-          .collection('client_vouchers')
-          .where('direction', isEqualTo: direction)
-          .where('voucherNumber', isEqualTo: voucherNumber)
-          .limit(1)
-          .get();
+      final snap = LocalCustomerSnapshot(CustomerLocalViews.vouchers()
+          .where((voucher) =>
+              voucher['direction'] == direction &&
+              voucher['voucherNumber'].toString() == voucherNumber.toString())
+          .map((voucher) =>
+              LocalCustomerDocument(voucher['id'].toString(), voucher))
+          .toList());
 
       if (snap.docs.isEmpty) {
         if (mounted) {
@@ -995,7 +928,7 @@ class _ClientOpeningBalancesPageState
       final dateStr = DateFormat('dd/MM/yyyy').format(now);
       final timeStr = DateFormat('hh:mm:ss a').format(now);
 
-      final snap = await FirebaseFirestore.instance.collection('clients').get();
+      final snap = CustomerLocalViews.snapshot();
 
       final reportTitle = onlyWithBalanceOwed
           ? 'عملاء عليهم أموال'
@@ -1274,20 +1207,7 @@ class _ClientOpeningBalancesPageState
 
   void _showAddAmountDialog(BuildContext context, String clientId,
       String clientName, double currentBalance) async {
-    int nextVoucher = 1;
-    try {
-      final voucherSnap = await FirebaseFirestore.instance
-          .collection('client_vouchers')
-          .orderBy('voucherNumber', descending: true)
-          .limit(1)
-          .get()
-          .timeout(const Duration(seconds: 3));
-      if (voucherSnap.docs.isNotEmpty) {
-        nextVoucher = (voucherSnap.docs.first['voucherNumber'] as int) + 1;
-      }
-    } catch (_) {
-      nextVoucher = DateTime.now().millisecondsSinceEpoch % 10000;
-    }
+    final nextVoucher = CustomerLocalViews.reserveVoucherNumber();
 
     if (!context.mounted) return;
 
@@ -1550,102 +1470,32 @@ class _ClientOpeningBalancesPageState
 
                                     setDlg(() => isSaving = true);
 
-                                    final bool isOnline = ConnectivityService.instance.isOnline;
-                                    final isAddition = direction == 'عليه';
-                                    double delta = isAddition ? amount : -amount;
-
-                                    // ── Unified local-first path (online & offline identical) ──
-                                    // Write to Hive immediately, then enqueue for Firestore sync.
-                                    // No syncForClient() call — that would trigger a full recalculation race.
+                                    final isAddition = CustomerOperationService
+                                        .voucherAddsDebt(direction);
                                     try {
-                                      final clientLocal = ClientRepository
-                                          .instance
-                                          .getById(clientId);
-                                      final double latestBalance =
-                                          clientLocal?.balance ?? currentBalance;
-                                      final double newBalance =
-                                          latestBalance + delta;
-
-                                      await ClientRepository.instance
-                                          .updateLocalBalance(
-                                              clientId, newBalance);
-
                                       final vNumber =
                                           int.tryParse(voucherCtrl.text) ??
                                               nextVoucher;
-                                      String noteStr = 'سند $direction';
-                                      noteStr += ' رقم $vNumber';
-                                      final dText = descCtrl.text.trim();
-                                      if (dText.isNotEmpty) {
-                                        noteStr += ' ($dText)';
-                                      }
-
-                                      final historyId =
-                                          DateTime.now().millisecondsSinceEpoch.toString();
-
-                                      // ── Write balance history entry to Hive ──
-                                      await BalanceHistoryRepository.instance
-                                          .upsertLocal(
-                                        BalanceHistoryLocal(
-                                          id: historyId,
-                                          parentId: clientId,
-                                          parentType: 'client',
-                                          enteredBalance: amount,
-                                          balanceBefore: latestBalance,
-                                          type: isAddition
-                                              ? 'addition'
-                                              : 'deduction',
-                                          notes: noteStr,
-                                          timestamp: selectedDate,
-                                        ),
-                                      );
-
-                                      // ── Update cash box locally ──
-                                      await BoxRepository.instance.increment(
-                                          isAddition ? -amount : amount);
-
-                                      // ── Enqueue balance sync to Firestore ──
-                                      final logEntry = <String, dynamic>{
-                                        'enteredBalance': amount,
-                                        'balanceBefore': latestBalance,
-                                        'type': isAddition
-                                            ? 'addition'
-                                            : 'deduction',
-                                        'notes': noteStr,
-                                        'timestamp':
-                                            selectedDate.toIso8601String(),
-                                      };
-                                      await SyncQueueManager.instance.enqueue(
-                                        operationType: 'adjustClientBalance',
-                                        payload: {
-                                          'clientId': clientId,
-                                          'amount': amount,
-                                          'isAddition': isAddition,
-                                          'logEntry': logEntry,
-                                          'newBalance': newBalance,
-                                          'historyId': historyId,
-                                        },
-                                      );
-
-                                      // ── Background: trigger sync + write voucher (fire-and-forget) ──
-                                      if (isOnline) {
-                                        ConnectivityService.instance.forceSync();
-                                        FirebaseFirestore.instance
-                                            .collection('client_vouchers')
-                                            .add({
-                                          'clientId': clientId,
-                                          'clientName': clientName,
-                                          'voucherNumber': vNumber,
-                                          'direction': direction,
-                                          'amount': amount,
-                                          'description': descCtrl.text,
-                                          'date': selectedDate,
-                                          'paymentMethod': paymentMethod,
-                                          'timestamp':
-                                              FieldValue.serverTimestamp(),
-                                        }).catchError((_) {});
-                                      }
-
+                                      await CustomerOperationService.savePayment(
+                                          clientId: clientId,
+                                          amount: amount,
+                                          isAddition: isAddition,
+                                          notes:
+                                              'سند $direction رقم $vNumber (' +
+                                                  descCtrl.text.trim() +
+                                                  ')',
+                                          date: selectedDate,
+                                          voucher: {
+                                            'clientId': clientId,
+                                            'clientName': clientName,
+                                            'voucherNumber': vNumber,
+                                            'direction': direction,
+                                            'amount': amount,
+                                            'description': descCtrl.text.trim(),
+                                            'date': selectedDate,
+                                            'paymentMethod': paymentMethod
+                                          });
+                                      ConnectivityService.instance.forceSync();
                                       if (ctx.mounted) Navigator.pop(ctx);
                                       if (context.mounted) {
                                         ScaffoldMessenger.of(context)
@@ -1770,10 +1620,8 @@ class _ClientOpeningBalancesPageState
               ),
             ),
             Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('clients')
-                    .snapshots(),
+              child: StreamBuilder<LocalCustomerSnapshot>(
+                stream: CustomerLocalViews.watch(),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData || _deletedClientsBox == null) {
                     return const Center(child: CircularProgressIndicator());
@@ -1991,12 +1839,13 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
       final dateStr = DateFormat('dd/MM/yyyy').format(now);
       final timeStr = DateFormat('hh:mm:ss a').format(now);
 
-      final snap = await FirebaseFirestore.instance
-          .collection('client_vouchers')
-          .where('direction', isEqualTo: direction)
-          .where('voucherNumber', isEqualTo: voucherNumber)
-          .limit(1)
-          .get();
+      final snap = LocalCustomerSnapshot(CustomerLocalViews.vouchers()
+          .where((voucher) =>
+              voucher['direction'] == direction &&
+              voucher['voucherNumber'].toString() == voucherNumber.toString())
+          .map((voucher) =>
+              LocalCustomerDocument(voucher['id'].toString(), voucher))
+          .toList());
 
       if (snap.docs.isEmpty) {
         if (mounted) {
@@ -2374,11 +2223,8 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
-        body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('clients')
-              .where('balance', isGreaterThan: 0)
-              .snapshots(),
+        body: StreamBuilder<LocalCustomerSnapshot>(
+          stream: CustomerLocalViews.watch(balanceSign: 1),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {
               return const Center(child: CircularProgressIndicator());
@@ -2388,21 +2234,20 @@ class _ClientDeferredPageState extends State<_ClientDeferredPage> {
               return const Center(child: Text('لا توجد ذمم متبقية للعملاء'));
             }
 
-            final allEntries = docs
-                .map<MapEntry<String, double>>((d) {
-                  final dData = d.data() as Map<String, dynamic>?;
-                  return MapEntry(
-                    (dData?['clientName'] ?? '').toString(),
-                    ((dData?['balance'] ?? 0.0) as num).toDouble(),
-                  );
-                })
-                .toList()
+            final allEntries = docs.map<MapEntry<String, double>>((d) {
+              final dData = d.data() as Map<String, dynamic>?;
+              return MapEntry(
+                (dData?['clientName'] ?? '').toString(),
+                ((dData?['balance'] ?? 0.0) as num).toDouble(),
+              );
+            }).toList()
               ..sort((a, b) => b.value.compareTo(a.value));
             final double grandTotal =
                 allEntries.fold(0.0, (s, e) => s + e.value);
             final clientDocs = {
               for (final d in docs)
-                ((d.data() as Map<String, dynamic>?)?['clientName'] ?? '').toString(): d
+                ((d.data() as Map<String, dynamic>?)?['clientName'] ?? '')
+                    .toString(): d
             };
 
             final filtered = _search.isEmpty
@@ -2582,7 +2427,7 @@ class _ClientRemainingReportPageState
     extends State<_ClientRemainingReportPage> {
   bool _generating = false;
 
-  Future<void> _generatePdf(List<QueryDocumentSnapshot> clients) async {
+  Future<void> _generatePdf(List<LocalCustomerDocument> clients) async {
     setState(() => _generating = true);
     try {
       final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
@@ -2622,11 +2467,10 @@ class _ClientRemainingReportPageState
                     bold: bold, color: red ? PdfColors.red : PdfColors.black)),
           );
 
-      final grandTotal = clients.fold<double>(
-          0.0, (s, d) {
-            final dData = d.data() as Map<String, dynamic>?;
-            return s + (dData?['balance'] ?? 0.0).toDouble();
-          });
+      final grandTotal = clients.fold<double>(0.0, (s, d) {
+        final dData = d.data() as Map<String, dynamic>?;
+        return s + (dData?['balance'] ?? 0.0).toDouble();
+      });
 
       final pdf = pw.Document();
       pdf.addPage(
@@ -2682,9 +2526,14 @@ class _ClientRemainingReportPageState
                         ),
                         children: [
                           dataCell('${i + 1}'),
-                          dataCell(((clients[i].data() as Map<String, dynamic>?)?['clientName'] ?? '').toString()),
+                          dataCell(((clients[i].data() as Map<String,
+                                      dynamic>?)?['clientName'] ??
+                                  '')
+                              .toString()),
                           dataCell(
-                              ((clients[i].data() as Map<String, dynamic>?)?['balance'] ?? 0.0)
+                              ((clients[i].data() as Map<String, dynamic>?)?[
+                                          'balance'] ??
+                                      0.0)
                                   .toDouble()
                                   .toStringAsFixed(2),
                               red: true),
@@ -2726,7 +2575,7 @@ class _ClientRemainingReportPageState
     }
   }
 
-  Future<void> _generateSingleClientPdf(QueryDocumentSnapshot client) async {
+  Future<void> _generateSingleClientPdf(LocalCustomerDocument client) async {
     setState(() => _generating = true);
     try {
       final amiriRegularData = await rootBundle.load('fonts/Amiri-Regular.ttf');
@@ -2890,7 +2739,7 @@ class _ClientRemainingReportPageState
     }
   }
 
-  void _onPdfReportPressed(List<QueryDocumentSnapshot> clients) {
+  void _onPdfReportPressed(List<LocalCustomerDocument> clients) {
     showModalBottomSheet(
       context: context,
       shape: const RoundedRectangleBorder(
@@ -2914,7 +2763,7 @@ class _ClientRemainingReportPageState
                 onTap: () async {
                   Navigator.pop(ctx);
                   final selectedClient =
-                      await showDialog<QueryDocumentSnapshot>(
+                      await showDialog<LocalCustomerDocument>(
                     context: context,
                     builder: (context) =>
                         _ClientSelectionDialog(clients: clients),
@@ -2952,18 +2801,16 @@ class _ClientRemainingReportPageState
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
-        body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance.collection('clients').snapshots(),
+        body: StreamBuilder<LocalCustomerSnapshot>(
+          stream: CustomerLocalViews.watch(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {
               return const Center(child: CircularProgressIndicator());
             }
-            final clients = snapshot.data!.docs
-                .where((d) {
-                  final dData = d.data() as Map<String, dynamic>?;
-                  return (dData?['balance'] ?? 0.0) != 0.0;
-                })
-                .toList()
+            final clients = snapshot.data!.docs.where((d) {
+              final dData = d.data() as Map<String, dynamic>?;
+              return (dData?['balance'] ?? 0.0) != 0.0;
+            }).toList()
               ..sort((a, b) {
                 final aData = a.data() as Map<String, dynamic>?;
                 final bData = b.data() as Map<String, dynamic>?;
@@ -2976,11 +2823,10 @@ class _ClientRemainingReportPageState
               return const Center(child: Text('لا توجد أرصدة متبقية للعملاء'));
             }
 
-            final grandTotal = clients.fold<double>(
-                0.0, (s, d) {
-                  final dData = d.data() as Map<String, dynamic>?;
-                  return s + (dData?['balance'] ?? 0.0).toDouble();
-                });
+            final grandTotal = clients.fold<double>(0.0, (s, d) {
+              final dData = d.data() as Map<String, dynamic>?;
+              return s + (dData?['balance'] ?? 0.0).toDouble();
+            });
 
             return Stack(
               children: [
@@ -3010,7 +2856,8 @@ class _ClientRemainingReportPageState
                         itemBuilder: (context, index) {
                           final doc = clients[index];
                           final docData = doc.data() as Map<String, dynamic>?;
-                          final balance = (docData?['balance'] ?? 0.0).toDouble();
+                          final balance =
+                              (docData?['balance'] ?? 0.0).toDouble();
                           return ListTile(
                             onTap: () => Navigator.push(
                               context,
@@ -3019,7 +2866,11 @@ class _ClientRemainingReportPageState
                                     ClientInvoicesPage(clientId: doc.id),
                               ),
                             ),
-                            title: Text(((doc.data() as Map<String, dynamic>?)?['clientName'] ?? '').toString(),
+                            title: Text(
+                                ((doc.data() as Map<String, dynamic>?)?[
+                                            'clientName'] ??
+                                        '')
+                                    .toString(),
                                 textAlign: TextAlign.right,
                                 style: const TextStyle(
                                     fontWeight: FontWeight.bold)),
@@ -3100,16 +2951,14 @@ class _ClientRemainingReportPageState
             );
           },
         ),
-        floatingActionButton: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance.collection('clients').snapshots(),
+        floatingActionButton: StreamBuilder<LocalCustomerSnapshot>(
+          stream: CustomerLocalViews.watch(),
           builder: (context, snapshot) {
             if (!snapshot.hasData) return const SizedBox();
-            final clients = snapshot.data!.docs
-                .where((d) {
-                  final dData = d.data() as Map<String, dynamic>?;
-                  return (dData?['balance'] ?? 0.0) != 0.0;
-                })
-                .toList();
+            final clients = snapshot.data!.docs.where((d) {
+              final dData = d.data() as Map<String, dynamic>?;
+              return (dData?['balance'] ?? 0.0) != 0.0;
+            }).toList();
             return FloatingActionButton.extended(
               backgroundColor: Colors.black87,
               onPressed:
@@ -3151,11 +3000,8 @@ class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
             style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold),
           ),
         ),
-        body: StreamBuilder<QuerySnapshot>(
-          stream: FirebaseFirestore.instance
-              .collection('clients')
-              .where('balance', isLessThan: 0)
-              .snapshots(),
+        body: StreamBuilder<LocalCustomerSnapshot>(
+          stream: CustomerLocalViews.watch(balanceSign: -1),
           builder: (context, snapshot) {
             if (!snapshot.hasData) {
               return const Center(child: CircularProgressIndicator());
@@ -3167,21 +3013,18 @@ class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
 
             final filtered = _search.isEmpty
                 ? clients
-                : clients
-                    .where((d) {
-                      final dData = d.data() as Map<String, dynamic>?;
-                      return (dData?['clientName'] ?? '')
-                          .toString()
-                          .toLowerCase()
-                          .contains(_search.toLowerCase());
-                    })
-                    .toList();
+                : clients.where((d) {
+                    final dData = d.data() as Map<String, dynamic>?;
+                    return (dData?['clientName'] ?? '')
+                        .toString()
+                        .toLowerCase()
+                        .contains(_search.toLowerCase());
+                  }).toList();
 
-            final grandTotal = clients.fold<double>(
-                0.0, (s, d) {
-                  final dData = d.data() as Map<String, dynamic>?;
-                  return s + (dData?['balance'] ?? 0.0).toDouble().abs();
-                });
+            final grandTotal = clients.fold<double>(0.0, (s, d) {
+              final dData = d.data() as Map<String, dynamic>?;
+              return s + (dData?['balance'] ?? 0.0).toDouble().abs();
+            });
 
             return Column(
               children: [
@@ -3226,7 +3069,8 @@ class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
                           itemBuilder: (context, index) {
                             final doc = filtered[index];
                             final docData = doc.data() as Map<String, dynamic>?;
-                            final balance = (docData?['balance'] ?? 0.0).toDouble();
+                            final balance =
+                                (docData?['balance'] ?? 0.0).toDouble();
                             return ListTile(
                               onTap: () => Navigator.push(
                                 context,
@@ -3235,7 +3079,11 @@ class _ClientBalanceReportPageState extends State<_ClientBalanceReportPage> {
                                       ClientInvoicesPage(clientId: doc.id),
                                 ),
                               ),
-                              title: Text(((doc.data() as Map<String, dynamic>?)?['clientName'] ?? '').toString(),
+                              title: Text(
+                                  ((doc.data() as Map<String, dynamic>?)?[
+                                              'clientName'] ??
+                                          '')
+                                      .toString(),
                                   textAlign: TextAlign.right,
                                   style: const TextStyle(
                                       fontWeight: FontWeight.bold)),
@@ -3300,10 +3148,8 @@ class _ClientBalanceCheckPageState extends State<_ClientBalanceCheckPage> {
               ),
             ),
             Expanded(
-              child: StreamBuilder<QuerySnapshot>(
-                stream: FirebaseFirestore.instance
-                    .collection('clients')
-                    .snapshots(),
+              child: StreamBuilder<LocalCustomerSnapshot>(
+                stream: CustomerLocalViews.watch(),
                 builder: (context, snapshot) {
                   if (!snapshot.hasData) {
                     return const Center(child: CircularProgressIndicator());
@@ -3331,7 +3177,11 @@ class _ClientBalanceCheckPageState extends State<_ClientBalanceCheckPage> {
                                 ClientInvoicesPage(clientId: doc.id),
                           ),
                         ),
-                        title: Text(((doc.data() as Map<String, dynamic>?)?['clientName'] ?? '').toString(),
+                        title: Text(
+                            ((doc.data() as Map<String, dynamic>?)?[
+                                        'clientName'] ??
+                                    '')
+                                .toString(),
                             textAlign: TextAlign.right,
                             style:
                                 const TextStyle(fontWeight: FontWeight.bold)),
@@ -3397,14 +3247,14 @@ class _ClientListPageState extends State<_ClientListPage> {
   /// Load clients instantly from Hive (0ms)
   void _loadFromHive() {
     final locals = ClientRepository.instance.getAll();
+    final balances = CustomerBalanceStore.balancesForClients(locals);
     if (mounted) {
       setState(() {
         _clients = locals
             .map((c) => <String, dynamic>{
                   'id': c.id,
                   'clientName': c.name,
-                  'balance': ClientRepository.instance
-                      .computeLiveBalanceFromHive(c.id),
+                  'balance': balances[c.id],
                   'phone': c.phone,
                 })
             .toList();
@@ -3455,8 +3305,10 @@ class _ClientListPageState extends State<_ClientListPage> {
                 await FirebaseFirestore.instance
                     .collection('clients')
                     .doc(clientId)
-                    .delete()
-                    .catchError((e) {
+                    .set({
+                  '_deleted': true,
+                  'updatedAt': FieldValue.serverTimestamp(),
+                }, SetOptions(merge: true)).catchError((e) {
                   debugPrint('Firestore client delete error: $e');
                 });
 
@@ -3588,15 +3440,15 @@ class _ClientListPageState extends State<_ClientListPage> {
 
     // Background sync to Firestore
     if (newDigits.isEmpty) {
-      FirebaseFirestore.instance
-          .collection('clients')
-          .doc(clientId)
-          .update({'phone': FieldValue.delete()}).catchError((_) {});
+      FirebaseFirestore.instance.collection('clients').doc(clientId).update({
+        'phone': FieldValue.delete(),
+        'updatedAt': FieldValue.serverTimestamp(),
+      }).catchError((_) {});
     } else {
-      FirebaseFirestore.instance
-          .collection('clients')
-          .doc(clientId)
-          .update({'phone': newDigits}).catchError((_) {});
+      FirebaseFirestore.instance.collection('clients').doc(clientId).update({
+        'phone': newDigits,
+        'updatedAt': FieldValue.serverTimestamp(),
+      }).catchError((_) {});
     }
 
     if (mounted) {
@@ -3715,8 +3567,7 @@ class _ClientListPageState extends State<_ClientListPage> {
                       context,
                       MaterialPageRoute(
                         builder: (context) => DeletedClientsPage(
-                          deletedClients:
-                              _deletedClientsBox!.values.toSet(),
+                          deletedClients: _deletedClientsBox!.values.toSet(),
                           onRestoreClient: (clientId) {
                             _deletedClientsBox!.delete(clientId);
                             setState(() {});
@@ -3769,7 +3620,8 @@ class _ClientListPageState extends State<_ClientListPage> {
           Expanded(
             child: visible.isEmpty
                 ? const Center(
-                    child: Text('لا يوجد عملاء', style: TextStyle(fontSize: 16)),
+                    child:
+                        Text('لا يوجد عملاء', style: TextStyle(fontSize: 16)),
                   )
                 : GridView.builder(
                     padding: const EdgeInsets.all(10),
@@ -3815,9 +3667,8 @@ class _ClientListPageState extends State<_ClientListPage> {
   }
 }
 
-
 class _ClientSelectionDialog extends StatefulWidget {
-  final List<QueryDocumentSnapshot> clients;
+  final List<LocalCustomerDocument> clients;
   const _ClientSelectionDialog({Key? key, required this.clients})
       : super(key: key);
 
@@ -3869,8 +3720,10 @@ class _ClientSelectionDialogState extends State<_ClientSelectionDialog> {
                         itemBuilder: (context, index) {
                           final doc = filtered[index];
                           final docData = doc.data() as Map<String, dynamic>?;
-                          final name = (docData?['clientName'] ?? '').toString();
-                          final balance = (docData?['balance'] ?? 0.0).toDouble();
+                          final name =
+                              (docData?['clientName'] ?? '').toString();
+                          final balance =
+                              (docData?['balance'] ?? 0.0).toDouble();
                           return ListTile(
                             title: Text(name,
                                 style: const TextStyle(

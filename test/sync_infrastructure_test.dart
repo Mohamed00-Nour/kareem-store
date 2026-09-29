@@ -1,6 +1,8 @@
+import 'dart:convert';
 import 'dart:io';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:hive_flutter/hive_flutter.dart';
+import 'package:firebase_core/firebase_core.dart';
 
 import 'package:kareem_store/local_db/models/product_local.dart';
 import 'package:kareem_store/local_db/models/client_local.dart';
@@ -22,6 +24,7 @@ import 'package:kareem_store/Services/invoice_number_utils.dart';
 import 'package:kareem_store/Services/invoice_special_service.dart';
 import 'package:kareem_store/sync/batch_sync_engine.dart';
 import 'package:kareem_store/sync/invoice_sync_normalizer.dart';
+import 'package:kareem_store/sync/sync_operation_diagnostics.dart';
 
 /// Helper: initialise Hive in a temp directory for tests.
 Future<void> initTestHive() async {
@@ -356,7 +359,7 @@ void main() {
       expect(history[1].type, 'sale_payment');
     });
 
-    test('deduplicates legacy history IDs for the same invoice number',
+    test('deduplicates legacy history IDs only through explicit invoice links',
         () async {
       const clientId = 'client_duplicate_history';
       final invoice = InvoiceLocal(
@@ -416,6 +419,10 @@ void main() {
         await BalanceHistoryRepository.instance.upsertLocal(entry);
       }
 
+      await appMetaBox.put(
+          'customerInvoiceAlias:invoices:root_invoice_502', invoice.id);
+      await appMetaBox.put(
+          'customerInvoiceAlias:invoices:client_sub_invoice_502', invoice.id);
       final history = BalanceHistoryRepository.instance.getForClient(clientId);
       expect(history.where((entry) => entry.type == 'sale'), hasLength(1));
       expect(
@@ -494,7 +501,7 @@ void main() {
       );
     });
 
-    test('deduplicates supplier invoice history and calculates one balance',
+    test('does not merge ambiguous supplier history by display number alone',
         () async {
       const supplierId = 'supplier_duplicate_history';
       final invoice = InvoiceLocal(
@@ -557,14 +564,18 @@ void main() {
 
       final history =
           BalanceHistoryRepository.instance.getForSupplier(supplierId);
-      expect(history.where((entry) => entry.type == 'buying'), hasLength(1));
+      // The two legacy IDs are not explicitly linked to the cached invoice.
+      // Equal human-facing numbers cannot prove identity across devices, so
+      // the compatibility view retains both for review and projects the
+      // cached canonical invoice as a third row.
+      expect(history.where((entry) => entry.type == 'buying'), hasLength(3));
       expect(
         history.where((entry) => entry.type == 'buying_payment'),
-        hasLength(1),
+        hasLength(3),
       );
       expect(
         BalanceHistoryRepository.instance.calculateSupplierBalance(supplierId),
-        760.0,
+        2280.0,
       );
     });
 
@@ -696,6 +707,64 @@ void main() {
       expect(item!.status, 'failed');
       expect(item.retryCount, 1);
       expect(item.lastError, 'Network timeout');
+      expect(item.errorCategory, SyncErrorCategories.transient);
+      expect(item.errorCode, 'temporary-upload-failure');
+      expect(item.lastAttemptAt, isNotNull);
+      expect(item.nextRetryAt!.isAfter(item.lastAttemptAt!), isTrue);
+      expect(jsonDecode(item.attemptHistoryJson), hasLength(1));
+    });
+
+    test('Firestore quota failure waits for manual retry without retry loop',
+        () async {
+      final id = await SyncQueueManager.instance.enqueue(
+        operationType: 'createInvoice',
+        payload: {'clientId': 'c1', 'invoiceId': 'quota-invoice'},
+      );
+      await SyncQueueManager.instance.markFailed(
+        id,
+        FirebaseException(
+          plugin: 'cloud_firestore',
+          code: 'resource-exhausted',
+          message: 'Some resource has been exhausted',
+        ),
+      );
+
+      final item = syncQueueBox.get(id)!;
+      expect(item.errorCategory, SyncErrorCategories.quota);
+      expect(item.errorCode, 'resource-exhausted');
+      expect(item.nextRetryAt, isNull);
+      final message = SyncFailureClassifier.classify(item.lastError!);
+      expect(message.userMessageAr, contains('حصة Firebase'));
+      expect(message.userMessageAr, isNot(contains('resource-exhausted')));
+      expect(SyncQueueManager.instance.canRetry(item), isTrue);
+      expect(SyncQueueManager.instance.canRetryAutomatically(item), isFalse);
+      expect(
+          SyncQueueManager.instance.isReadyForAutomaticAttempt(
+              item, DateTime.now().add(const Duration(days: 1))),
+          isFalse);
+      expect(await SyncQueueManager.instance.resetToPending(id), isTrue);
+    });
+
+    test('startup reclassifies quota failures saved by an older build',
+        () async {
+      final id = await SyncQueueManager.instance.enqueue(
+        operationType: 'createInvoice',
+        payload: {'clientId': 'c1', 'invoiceId': 'old-quota-invoice'},
+      );
+      final item = syncQueueBox.get(id)!;
+      item.status = 'failed';
+      item.errorCategory = SyncErrorCategories.transient;
+      item.errorCode = 'resource-exhausted';
+      item.lastError =
+          '[cloud_firestore/resource-exhausted] Some resource has been exhausted';
+      item.nextRetryAt = DateTime.now().add(const Duration(seconds: 5));
+      await item.save();
+
+      await SyncQueueManager.instance.recoverInterruptedItems();
+
+      expect(item.errorCategory, SyncErrorCategories.quota);
+      expect(item.nextRetryAt, isNull);
+      expect(SyncQueueManager.instance.canRetryAutomatically(item), isFalse);
     });
 
     test('resetToPending resets failed item back to pending', () async {
@@ -737,6 +806,151 @@ void main() {
       expect(item.status, 'pending');
       expect(item.retryCount, 0);
       expect(item.lastError, isNull);
+      expect(jsonDecode(item.attemptHistoryJson), hasLength(1));
+    });
+
+    test('legacy and conflict failures require review and cannot be retried',
+        () async {
+      final id = await SyncQueueManager.instance.enqueue(
+        operationType: 'createInvoice',
+        payload: {'clientId': 'c1', 'invoiceId': 'legacy'},
+      );
+      await SyncQueueManager.instance.markFailed(
+          id, 'Legacy financial operation requires review before upload.');
+
+      final reset = await SyncQueueManager.instance.resetToPending(id);
+      final item = syncQueueBox.get(id)!;
+      expect(reset, isFalse);
+      expect(item.status, 'failed');
+      expect(item.errorCategory, SyncErrorCategories.legacy);
+      expect(item.nextRetryAt, isNull);
+    });
+
+    test('per-operation retry does not reset another failed operation',
+        () async {
+      final first = await SyncQueueManager.instance.enqueue(
+        operationType: 'createInvoice',
+        payload: {'clientId': 'c1', 'invoiceId': 'one'},
+      );
+      final second = await SyncQueueManager.instance.enqueue(
+        operationType: 'createInvoice',
+        payload: {'clientId': 'c2', 'invoiceId': 'two'},
+      );
+      await SyncQueueManager.instance.markFailed(first, 'Network timeout');
+      await SyncQueueManager.instance.markFailed(second, 'Network timeout');
+
+      expect(await SyncQueueManager.instance.resetToPending(first), isTrue);
+      expect(syncQueueBox.get(first)!.status, 'pending');
+      expect(syncQueueBox.get(second)!.status, 'failed');
+    });
+
+    test('diagnostics retain invoice and party identity from local after-image',
+        () async {
+      final id = await SyncQueueManager.instance.enqueue(
+        operationType: 'editInvoice',
+        payload: {
+          'clientId': 'client-7',
+          'invoiceId': 'invoice-9',
+          'localWrites': [
+            {
+              'box': HiveBoxNames.invoices,
+              'key': 'invoice-9',
+              'data': {
+                'id': 'invoice-9',
+                'invoiceNumber': 1254,
+                'clientId': 'client-7',
+                'clientName': 'أحمد محمد',
+                'totalSum': 1500,
+                'products': [],
+              }
+            }
+          ],
+          'cloudWrites': [
+            {'path': 'invoices/invoice-9'}
+          ],
+        },
+      );
+      final details = SyncOperationDiagnostics.fromItem(syncQueueBox.get(id)!);
+      expect(details.invoiceId, 'invoice-9');
+      expect(details.invoiceNumber, '1254');
+      expect(details.partyId, 'client-7');
+      expect(details.partyName, 'أحمد محمد');
+      expect(details.amount, 1500);
+      expect(details.resourceKeys, contains('clients/client-7'));
+      expect(details.resourceKeys, contains('invoice/invoice-9'));
+    });
+
+    test('resource matching blocks related operations but not other parties',
+        () {
+      const first = SyncOperationDiagnostics(
+        operationId: 'one',
+        operationType: 'createInvoice',
+        resourceKeys: ['clients/c1', 'products/p1'],
+      );
+      const related = SyncOperationDiagnostics(
+        operationId: 'two',
+        operationType: 'editInvoice',
+        resourceKeys: ['clients/c1'],
+      );
+      const independent = SyncOperationDiagnostics(
+        operationId: 'three',
+        operationType: 'createInvoice',
+        resourceKeys: ['clients/c2', 'products/p2'],
+      );
+      expect(SyncOperationDiagnostics.sharesResources(first, related), isTrue);
+      expect(SyncOperationDiagnostics.sharesResources(first, independent),
+          isFalse);
+    });
+
+    test('party diagnostics distinguish customer and supplier creation', () {
+      final customer = SyncOperationDiagnostics.fromPayload(
+        'customer-operation',
+        'createClient',
+        {
+          'financialFormat': 2,
+          'localWrites': [
+            {
+              'box': HiveBoxNames.clients,
+              'data': {'id': 'c1', 'clientName': 'عميل جديد'}
+            }
+          ],
+          'cloudWrites': [
+            {'path': 'clients/c1'}
+          ],
+        },
+      );
+      final supplier = SyncOperationDiagnostics.fromPayload(
+        'supplier-operation',
+        'createSupplier',
+        {
+          'financialFormat': 2,
+          'localWrites': [
+            {
+              'box': HiveBoxNames.suppliers,
+              'data': {'id': 's1', 'supplierName': 'مورد جديد'}
+            }
+          ],
+          'cloudWrites': [
+            {'path': 'suppliers/s1'}
+          ],
+        },
+      );
+
+      expect(customer.partyType, 'client');
+      expect(customer.partyId, 'c1');
+      expect(customer.partyName, 'عميل جديد');
+      expect(supplier.partyType, 'supplier');
+      expect(supplier.partyId, 's1');
+      expect(supplier.partyName, 'مورد جديد');
+    });
+
+    test('legacy financial diagnostics remain a global safety barrier', () {
+      final legacy = SyncOperationDiagnostics.fromPayload(
+        'legacy',
+        'createInvoice',
+        {'clientId': 'c1', 'invoiceId': 'old-invoice'},
+      );
+      expect(legacy.resourceKeys, contains('*'));
     });
 
     test('getPending orders items by createdAt ascending', () async {

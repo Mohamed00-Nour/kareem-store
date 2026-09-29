@@ -43,15 +43,20 @@ class ExpenseRepository {
     final snap = await _fs.collection('expenses').get();
     final Map<String, ExpenseLocal> map = {};
     for (final doc in snap.docs) {
-      map[doc.id] = ExpenseLocal.fromFirestore(doc.id, doc.data());
+      final data = doc.data();
+      if (data['deleted'] != true) {
+        map[doc.id] = ExpenseLocal.fromFirestore(doc.id, data);
+      }
     }
     await expensesBox.clear();
     await expensesBox.putAll(map);
-    await appMetaBox.put(HiveMetaKeys.lastExpenseSyncAt, DateTime.now().toIso8601String());
+    await appMetaBox.put(
+        HiveMetaKeys.lastExpenseSyncAt, DateTime.now().toIso8601String());
   }
 
   Future<void> deltaSync() async {
-    final lastSyncStr = appMetaBox.get(HiveMetaKeys.lastExpenseSyncAt) as String?;
+    final lastSyncStr =
+        appMetaBox.get(HiveMetaKeys.lastExpenseSyncAt) as String?;
     if (lastSyncStr == null) {
       await fullSync();
       return;
@@ -70,6 +75,7 @@ class ExpenseRepository {
         await expensesBox.put(doc.id, ExpenseLocal.fromFirestore(doc.id, data));
       }
     }
-    await appMetaBox.put(HiveMetaKeys.lastExpenseSyncAt, DateTime.now().toIso8601String());
+    await appMetaBox.put(
+        HiveMetaKeys.lastExpenseSyncAt, DateTime.now().toIso8601String());
   }
 }

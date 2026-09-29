@@ -21,7 +21,8 @@ class BalanceHistoryLocal extends HiveObject {
   double balanceBefore;
 
   @HiveField(5, defaultValue: '')
-  String type; // 'sale', 'sale_payment', 'return', 'return_payment', 'addition', 'deduction', 'opening'
+  String
+      type; // 'sale', 'sale_payment', 'return', 'return_payment', 'addition', 'deduction', 'opening'
 
   @HiveField(6, defaultValue: '')
   String invoiceId;
@@ -58,20 +59,18 @@ class BalanceHistoryLocal extends HiveObject {
     String parentType,
     Map<String, dynamic> data,
   ) {
-    DateTime parsedTime;
-    final ts = data['timestamp'];
-    final date = data['date'];
-    if (ts is Timestamp) {
-      parsedTime = ts.toDate();
-    } else if (date is Timestamp) {
-      parsedTime = date.toDate();
-    } else if (date is DateTime) {
-      parsedTime = date;
-    } else {
-      parsedTime = DateTime.now();
-    }
+    final rawDate = data['timestamp'] ?? data['date'];
+    final parsedTime = rawDate is Timestamp
+        ? rawDate.toDate()
+        : rawDate is DateTime
+            ? rawDate
+            : rawDate is int
+                ? DateTime.fromMillisecondsSinceEpoch(rawDate)
+                : DateTime.tryParse(rawDate?.toString() ?? '') ??
+                    DateTime(1970);
 
-    final rawEntered = data['enteredBalance'] ?? data['amount'] ?? data['value'];
+    final rawEntered =
+        data['enteredBalance'] ?? data['amount'] ?? data['value'];
     double entered = 0.0;
     if (rawEntered is num) {
       entered = rawEntered.toDouble();

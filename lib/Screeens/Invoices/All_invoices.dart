@@ -1,15 +1,14 @@
+import '../../local_db/hive_init.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:intl/intl.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../../Services/invoice_special_service.dart';
 import '../../Services/sales_invoice_actions_service.dart';
 import '../../repositories/invoice_repository.dart';
 import '../../local_db/models/invoice_local.dart';
-import '../../sync/sync_queue_manager.dart';
 import 'InvoiceDetailPage.dart';
 
 class InvoiceListPage extends StatefulWidget {
@@ -33,7 +32,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   bool _isFetching = true;
   DateTime? _selectedMonth;
   String _userRole = 'user'; // Default to user role
-  StreamSubscription<QuerySnapshot>? _invoicesSubscription;
+  StreamSubscription? _invoicesSubscription;
 
   @override
   void initState() {
@@ -55,7 +54,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     } else {
       locals = InvoiceRepository.instance.getAllSales();
     }
-    if (locals.isNotEmpty && mounted) {
+    if (mounted) {
       setState(() {
         _invoices.clear();
         _invoices.addAll(locals.map((inv) => inv.toMap()));
@@ -85,77 +84,14 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
   }
 
   void _listenToInvoices() {
-    // Cancel any previous subscription in case it's re-initialized
     _invoicesSubscription?.cancel();
-    _invoicesSubscription = FirebaseFirestore.instance
-        .collection(widget.collection)
-        .orderBy('date', descending: true)
-        .snapshots()
-        .listen((querySnapshot) {
-      final docs = querySnapshot.docs.map((doc) {
-        final data = Map<String, dynamic>.from(doc.data() as Map);
-        data['id'] = doc.id;
-        return data;
-      }).toList();
-      _updateInvoicesFromRemote(docs);
-    }, onError: (e) {
-      print('Error listening to invoices: $e');
-      if (mounted) {
-        _loadFromLocalCache();
-        setState(() {
-          _isFetching = false;
-        });
-      }
-    });
+    final box = widget.collection == 'returnInvoices'
+        ? returnInvoicesBox
+        : widget.collection == 'buying invoices'
+            ? buyingInvoicesBox
+            : invoicesBox;
+    _invoicesSubscription = box.watch().listen((_) => _loadFromLocalCache());
   }
-
-  void _updateInvoicesFromRemote(List<Map<String, dynamic>> remoteDocs) {
-    // 1. Start with local cache items (preserves offline/unsynced invoices)
-    final Map<String, Map<String, dynamic>> map = {};
-    List<InvoiceLocal> locals;
-    if (widget.collection == 'returnInvoices') {
-      locals = InvoiceRepository.instance.getAllReturns();
-    } else if (widget.collection == 'buying invoices') {
-      locals = InvoiceRepository.instance.getAllBuying();
-    } else {
-      locals = InvoiceRepository.instance.getAllSales();
-    }
-    for (final loc in locals) {
-      map[loc.id] = loc.toMap();
-    }
-
-    final pendingSpecialIds = SyncQueueManager.instance.unfinishedEntityIds(
-      operationType: 'updateInvoiceSpecial',
-      idKey: 'invoiceId',
-    );
-
-    // 2. Overlay remote docs and update Hive local cache. A pending local star
-    // change wins until its queued Firestore update has completed.
-    for (final doc in remoteDocs) {
-      final id = doc['id']?.toString() ?? '';
-      if (id.isNotEmpty) {
-        if (pendingSpecialIds.contains(id) && map.containsKey(id)) continue;
-        map[id] = doc;
-        if (widget.collection == 'returnInvoices') {
-          InvoiceRepository.instance.upsertReturnLocal(id, doc);
-        } else if (widget.collection == 'buying invoices') {
-          InvoiceRepository.instance.upsertBuyingLocal(id, doc);
-        } else {
-          InvoiceRepository.instance.upsertSaleLocal(id, doc);
-        }
-      }
-    }
-
-    if (mounted) {
-      setState(() {
-        _invoices.clear();
-        _invoices.addAll(map.values);
-        _filterInvoices();
-        _isFetching = false;
-      });
-    }
-  }
-
 
   DateTime _parseInvoiceDate(dynamic raw) {
     if (raw is Timestamp) return raw.toDate();
@@ -164,18 +100,31 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
     return DateTime.now();
   }
 
+  String _invoiceDescription(Map<String, dynamic> invoice) {
+    return (invoice['notes'] ??
+            invoice['description'] ??
+            invoice['invoiceDescription'] ??
+            '')
+        .toString()
+        .trim();
+  }
+
   void _filterInvoices() {
     final query = _searchController.text.toLowerCase();
     setState(() {
       _filteredInvoices.clear();
       final filtered = _invoices.where((invoice) {
-        final clientName = (invoice['clientName'] ?? '').toString().toLowerCase();
+        final clientName =
+            (invoice['clientName'] ?? '').toString().toLowerCase();
         final invoiceNumber = (invoice['invoiceNumber'] ?? '').toString();
+        final description = _invoiceDescription(invoice).toLowerCase();
         final invoiceDate = _parseInvoiceDate(invoice['date']);
         final isInSelectedMonth = _selectedMonth == null ||
             (invoiceDate.year == _selectedMonth!.year &&
                 invoiceDate.month == _selectedMonth!.month);
-        return (clientName.contains(query) || invoiceNumber.contains(query)) &&
+        return (clientName.contains(query) ||
+                invoiceNumber.contains(query) ||
+                description.contains(query)) &&
             isInSelectedMonth;
       }).toList();
 
@@ -214,8 +163,18 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
 
     // List of Arabic month names
     List<String> arabicMonths = [
-      'يناير', 'فبراير', 'مارس', 'أبريل', 'مايو', 'يونيو',
-      'يوليو', 'أغسطس', 'سبتمبر', 'أكتوبر', 'نوفمبر', 'ديسمبر'
+      'يناير',
+      'فبراير',
+      'مارس',
+      'أبريل',
+      'مايو',
+      'يونيو',
+      'يوليو',
+      'أغسطس',
+      'سبتمبر',
+      'أكتوبر',
+      'نوفمبر',
+      'ديسمبر'
     ];
 
     return showDialog<DateTime>(
@@ -224,7 +183,8 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
         return StatefulBuilder(
           builder: (context, setState) {
             return AlertDialog(
-              title: Text('اختر الشهر والسنة', style: TextStyle(fontSize: 20.sp)),
+              title:
+                  Text('اختر الشهر والسنة', style: TextStyle(fontSize: 20.sp)),
               content: Row(
                 mainAxisAlignment: MainAxisAlignment.spaceEvenly,
                 children: [
@@ -267,7 +227,8 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                 ),
                 TextButton(
                   onPressed: () {
-                    Navigator.of(context).pop(DateTime(selectedYear, selectedMonth));
+                    Navigator.of(context)
+                        .pop(DateTime(selectedYear, selectedMonth));
                   },
                   child: Text('حفظ'),
                 ),
@@ -418,6 +379,7 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
               itemCount: _filteredInvoices.length,
               itemBuilder: (context, index) {
                 final invoice = _filteredInvoices[index];
+                final description = _invoiceDescription(invoice);
                 final special = InvoiceSpecialService.isSpecial(invoice);
                 return Card(
                   color: special
@@ -425,15 +387,37 @@ class _InvoiceListPageState extends State<InvoiceListPage> {
                       : Colors.orange.withOpacity(0.8),
                   elevation: 2,
                   child: ListTile(
+                    isThreeLine: description.isNotEmpty,
                     leading: special
                         ? Icon(Icons.star, color: Colors.amber.shade800)
                         : null,
                     title: Center(
                         child: Text('فاتورة #${invoice['invoiceNumber']}')),
-                    subtitle: Center(
-                        child: Text('العميل: ${invoice['clientName']}')),
+                    subtitle: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        Text(
+                          'العميل: ${invoice['clientName']}',
+                          textAlign: TextAlign.center,
+                        ),
+                        if (description.isNotEmpty) ...[
+                          SizedBox(height: 4.h),
+                          Text(
+                            'البيان: $description',
+                            textAlign: TextAlign.center,
+                            maxLines: 2,
+                            overflow: TextOverflow.ellipsis,
+                            style: TextStyle(
+                              fontSize: 12.sp,
+                              color: Colors.black87,
+                            ),
+                          ),
+                        ],
+                      ],
+                    ),
                     trailing: IconButton(
-                      icon: Icon(Icons.delete, color: Colors.black.withOpacity(0.7)),
+                      icon: Icon(Icons.delete,
+                          color: Colors.black.withOpacity(0.7)),
                       onPressed: () => _handleDeleteAction(index),
                     ),
                     onTap: () => _navigateToInvoiceDetail(invoice),

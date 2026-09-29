@@ -10,16 +10,15 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Screeens/AddProductPage.dart';
 import '../Services/invoice_number_utils.dart';
-import '../Services/invoice_stock_service.dart';
+import '../Services/supplier_operation_service.dart';
+import '../Services/supplier_payment_service.dart';
+import '../Services/supplier_ledger_presentation.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/supplier_statement_pdf_service.dart';
-import '../local_db/models/balance_history_local.dart';
 import '../repositories/balance_history_repository.dart';
-import '../repositories/box_repository.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/supplier_repository.dart';
 import '../sync/connectivity_service.dart';
-import '../sync/sync_queue_manager.dart';
 import 'SupplierBalanceHistoryPage.dart';
 
 class SupplierInvoicesPage extends StatefulWidget {
@@ -209,44 +208,22 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     }
 
     try {
-      // 1. Get current balance from local Hive immediately
       final supplierLocal =
           SupplierRepository.instance.getById(widget.supplierId);
-      final double currentBalance =
-          BalanceHistoryRepository.instance.calculateSupplierBalance(
-        widget.supplierId,
-        fallback: supplierLocal?.balance ?? _currentSupplierBalance ?? 0.0,
-      );
       final String supplierName =
           supplierLocal?.name ?? _supplierName ?? widget.supplierId;
-
-      final double newBalance = isAddition
-          ? currentBalance + enteredBalance
-          : currentBalance - enteredBalance;
-
-      final historyId = DateTime.now().millisecondsSinceEpoch.toString();
-
-      // 2. Save to local Hive database immediately (<1ms)
-      await SupplierRepository.instance
-          .updateLocalBalance(widget.supplierId, newBalance);
-
-      await BalanceHistoryRepository.instance.upsertLocal(
-        BalanceHistoryLocal(
-          id: historyId,
-          parentId: widget.supplierId,
-          parentType: 'supplier',
-          enteredBalance: enteredBalance,
-          balanceBefore: currentBalance,
-          type: isAddition ? 'addition' : 'voucher',
-          direction: isAddition ? '\u0644\u0647' : '\u0639\u0644\u064a\u0647',
-          notes: notesText,
-          timestamp: DateTime.now(),
-        ),
+      final voucherNumber =
+          await SupplierPaymentService.instance.reserveVoucherNumber();
+      final saved = await SupplierPaymentService.instance.save(
+        supplierId: widget.supplierId,
+        supplierName: supplierName,
+        direction: isAddition ? 'له' : 'عليه',
+        amount: enteredBalance,
+        description: notesText,
+        date: DateTime.now(),
+        paymentMethod: isAddition ? 'آجل' : 'نقداً',
+        voucherNumber: voucherNumber,
       );
-
-      if (!isAddition) {
-        await BoxRepository.instance.decrement(enteredBalance);
-      }
 
       _balanceController.clear();
       _addBalanceController.clear();
@@ -254,24 +231,13 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
 
       if (mounted) {
         setState(() {
-          _currentSupplierBalance = newBalance;
+          _currentSupplierBalance = saved.newBalance;
         });
         ScaffoldMessenger.of(context).showSnackBar(
           const SnackBar(content: Text('تم حفظ الرصيد بنجاح')),
         );
       }
 
-      // 3. Sync to Firestore asynchronously in background (non-blocking)
-      await _syncSupplierBalanceToFirestoreInBackground(
-        supplierId: widget.supplierId,
-        supplierName: supplierName,
-        newBalance: newBalance,
-        currentBalance: currentBalance,
-        enteredBalance: enteredBalance,
-        isAddition: isAddition,
-        notesText: notesText,
-        historyId: historyId,
-      );
       _loadFromHive();
     } catch (e) {
       if (mounted) {
@@ -280,44 +246,6 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
         );
       }
     }
-  }
-
-  Future<void> _syncSupplierBalanceToFirestoreInBackground({
-    required String supplierId,
-    required String supplierName,
-    required double newBalance,
-    required double currentBalance,
-    required double enteredBalance,
-    required bool isAddition,
-    required String notesText,
-    required String historyId,
-  }) async {
-    final logEntry = <String, dynamic>{
-      'enteredBalance': enteredBalance,
-      'balanceBefore': currentBalance,
-      'type': isAddition ? 'addition' : 'voucher',
-      'direction': isAddition ? '\u0644\u0647' : '\u0639\u0644\u064a\u0647',
-      'notes': notesText,
-      'timestamp': DateTime.now().toIso8601String(),
-    };
-
-    try {
-      // Use one queued, idempotent write path online and offline. This avoids
-      // partially saving the supplier, voucher, history, or cash-box change.
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'adjustSupplierBalance',
-        payload: {
-          'supplierId': supplierId,
-          'supplierName': supplierName,
-          'amount': enteredBalance,
-          'isAddition': isAddition,
-          'logEntry': logEntry,
-          'newBalance': newBalance,
-          'historyId': historyId,
-        },
-      );
-      ConnectivityService.instance.forceSync();
-    } catch (_) {}
   }
 
   void _showPermissionDeniedDialog() {
@@ -382,107 +310,11 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     if (confirmDelete != true) return;
 
     try {
-      // 1. Get invoice data from local Hive or Firestore
-      Map<String, dynamic>? invoiceData;
       final localInv = InvoiceRepository.instance.getBuyingById(invoiceId);
-      if (localInv != null) {
-        invoiceData = localInv.toMap();
+      if (localInv == null) {
+        throw StateError('يجب تحميل الفاتورة محلياً قبل حذفها');
       }
-
-      if (invoiceData == null) {
-        final invoiceDoc = await FirebaseFirestore.instance
-            .collection('suppliers')
-            .doc(widget.supplierId)
-            .collection('buying invoices')
-            .doc(invoiceId)
-            .get();
-
-        if (invoiceDoc.exists) {
-          invoiceData = invoiceDoc.data();
-        } else {
-          final rootDoc = await FirebaseFirestore.instance
-              .collection('buying invoices')
-              .doc(invoiceId)
-              .get();
-          if (rootDoc.exists) {
-            invoiceData = rootDoc.data();
-          }
-        }
-      }
-
-      final products =
-          List<Map<String, dynamic>>.from(invoiceData?['products'] ?? []);
-      final paidAmount = invoiceNum(invoiceData?['paidAmount']);
-      final totalSum = invoiceNum(invoiceData?['totalSum']);
-      final invoiceNumber = invoiceData?['invoiceNumber']?.toString();
-      final rootInvoiceId = invoiceData?['invoiceId']?.toString() ?? invoiceId;
-
-      // 2. Decrement stock in local Hive (purchase invoice added stock, deleting it removes that stock)
-      if (products.isNotEmpty) {
-        await InvoiceStockService.applyStockChanges(
-          lines: products,
-          restore: false,
-          changeDate: DateTime.now(),
-          changeTypeWhenDecrease: 'decrease',
-        );
-      }
-
-      // 3. Delete invoice locally from Hive
-      await InvoiceRepository.instance.deleteBuyingLocal(invoiceId);
-      if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
-        await InvoiceRepository.instance.deleteBuyingLocal(rootInvoiceId);
-      }
-
-      // 4. Delete balance history entries locally from Hive
-      await BalanceHistoryRepository.instance.deleteByInvoiceId(
-        'supplier',
-        widget.supplierId,
-        invoiceId,
-        invoiceNumber: invoiceNumber,
-      );
-      if (rootInvoiceId.isNotEmpty && rootInvoiceId != invoiceId) {
-        await BalanceHistoryRepository.instance.deleteByInvoiceId(
-          'supplier',
-          widget.supplierId,
-          rootInvoiceId,
-          invoiceNumber: invoiceNumber,
-        );
-      }
-
-      // 5. Adjust Cash Box locally if there was a payment (paid cash is returned to box)
-      if (paidAmount > 0) {
-        await BoxRepository.instance.increment(paidAmount);
-      }
-
-      // 6. Update supplier balance locally in Hive
-      final localSup = SupplierRepository.instance.getById(widget.supplierId) ??
-          SupplierRepository.instance.findByName(_supplierName ?? '');
-      if (localSup != null) {
-        final recalculated =
-            BalanceHistoryRepository.instance.calculateSupplierBalance(
-          localSup.id,
-          fallback: localSup.balance - (totalSum - paidAmount),
-        );
-        await SupplierRepository.instance.updateLocalBalance(
-          localSup.id,
-          recalculated,
-        );
-      }
-
-      // 7. Enqueue background deletion to SyncQueue
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'deleteBuyingInvoice',
-        payload: {
-          'supplierId': widget.supplierId,
-          'invoiceId': rootInvoiceId,
-          'supplierSubDocId': invoiceId,
-          'products': products,
-          'totalSum': totalSum,
-          'paidAmount': paidAmount,
-        },
-      );
-
-      // 8. Trigger sync
+      await SupplierOperationService.deleteBuyingInvoice(localInv.id);
       ConnectivityService.instance.forceSync();
 
       if (!mounted) return;
@@ -959,6 +791,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     final formattedTime =
         date != null ? intl.DateFormat('hh:mm a').format(date) : '';
     final voucherNumber = data['voucherNumber']?.toString() ?? '';
+    final direction = data['direction']?.toString();
 
     String label;
     IconData icon;
@@ -977,6 +810,17 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
         sign = '-';
         break;
       case 'voucher':
+        final isIncrease =
+            SupplierLedgerPresentation.voucherIncreasesBalance(direction);
+        label = SupplierLedgerPresentation.voucherLabel(direction);
+        icon = isIncrease ? Icons.add_circle_outline : Icons.payments_outlined;
+        badgeColor =
+            isIncrease ? Colors.orange.shade700 : Colors.green.shade700;
+        cardColor = isIncrease ? Colors.orange.shade50 : Colors.green.shade50;
+        amountColor =
+            isIncrease ? Colors.orange.shade800 : Colors.green.shade800;
+        sign = SupplierLedgerPresentation.voucherSign(direction);
+        break;
       case 'deduction':
         label = 'سداد نقدي للمورد';
         icon = Icons.payments_outlined;
