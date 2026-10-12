@@ -1,5 +1,5 @@
 {
-  "generated_at": "2026-10-12T12:17:39.964793+00:00",
+  "generated_at": "2026-10-12T17:52:48.329941+00:00",
   "nodes": {
     "lib_repositories_balance_history_repository_balancehistoryrepository": {
       "code_fingerprint": "5d9907153bd40040327aaba29a8a811151ac3b2074368c7a781890df30e8ec7e",
@@ -12,7 +12,7 @@
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 0.997697751,
+      "score": 0.992347193,
       "source_file": "lib/repositories/balance_history_repository.dart",
       "status": "tentative",
       "uses": 1
@@ -28,7 +28,7 @@
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 0.997697751,
+      "score": 0.992347193,
       "source_file": "lib/repositories/data_sync_service.dart",
       "status": "tentative",
       "uses": 1
@@ -44,7 +44,7 @@
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 0.997697751,
+      "score": 0.992347193,
       "source_file": "lib/repositories/invoice_repository.dart",
       "status": "tentative",
       "uses": 1
@@ -60,7 +60,7 @@
           "q": "Why does editing a buying invoice cause a cloud-conflict and block later synchronization on multiple devices?"
         }
       ],
-      "score": 0.996095989,
+      "score": 0.990754021,
       "source_file": "lib/Services/buying_invoice_update_service.dart",
       "status": "tentative",
       "uses": 1
@@ -68,34 +68,60 @@
     "lib_services_customer_balance_store_customerbalancestore": {
       "code_fingerprint": "ae48c81d3bec38809e30b780e74bf0fe5071269e8c1f2812be010ae2bbabb2cc",
       "label": "CustomerBalanceStore",
-      "last": "2026-10-12T11:50:48.423868+00:00",
+      "last": "2026-10-12T12:23:49.487290+00:00",
       "provenance": [
+        {
+          "date": "2026-10-12T12:23:49.487290+00:00",
+          "outcome": "useful",
+          "q": "If device A creates a client, makes three invoices and edits one invoice, what happens on devices A and B? Test it and summarize."
+        },
         {
           "date": "2026-10-12T11:50:48.423868+00:00",
           "outcome": "useful",
           "q": "device A invoice 220 has previous balance 0 and owed 220, but device B shows previous -220 and owed 0"
         }
       ],
-      "score": 0.999569138,
+      "score": 1.988943931,
       "source_file": "lib/Services/customer_balance_store.dart",
+      "status": "preferred",
+      "uses": 2
+    },
+    "lib_services_customer_operation_service_customeroperationservice": {
+      "code_fingerprint": "f7343057f157c053b18f7f1026b55d94910c1e7647e7ce06c7af065f42036005",
+      "label": "CustomerOperationService",
+      "last": "2026-10-12T12:23:49.487290+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T12:23:49.487290+00:00",
+          "outcome": "useful",
+          "q": "If device A creates a client, makes three invoices and edits one invoice, what happens on devices A and B? Test it and summarize."
+        }
+      ],
+      "score": 0.994735387,
+      "source_file": "lib/Services/customer_operation_service.dart",
       "status": "tentative",
       "uses": 1
     },
     "lib_services_invoice_footer_data_invoicefooterdata": {
       "code_fingerprint": "d3866df0e65617c776118f134c99bd348964002a1a37bbbaacba697c9bd63b64",
       "label": "InvoiceFooterData",
-      "last": "2026-10-12T11:50:48.423868+00:00",
+      "last": "2026-10-12T12:23:49.487290+00:00",
       "provenance": [
+        {
+          "date": "2026-10-12T12:23:49.487290+00:00",
+          "outcome": "useful",
+          "q": "If device A creates a client, makes three invoices and edits one invoice, what happens on devices A and B? Test it and summarize."
+        },
         {
           "date": "2026-10-12T11:50:48.423868+00:00",
           "outcome": "useful",
           "q": "device A invoice 220 has previous balance 0 and owed 220, but device B shows previous -220 and owed 0"
         }
       ],
-      "score": 0.999569138,
+      "score": 1.988943931,
       "source_file": "lib/Services/invoice_footer_data.dart",
-      "status": "tentative",
-      "uses": 1
+      "status": "preferred",
+      "uses": 2
     },
     "lib_services_supplier_balance_store_supplierbalancestore": {
       "code_fingerprint": "a13f2add650df4035c94ed58cb4d28bfeda1bef7b7d864c23d05a8728f7ec256",
@@ -108,7 +134,7 @@
           "q": "device A invoice 220 has previous balance 0 and owed 220, but device B shows previous -220 and owed 0"
         }
       ],
-      "score": 0.999569138,
+      "score": 0.994208544,
       "source_file": "lib/Services/supplier_balance_store.dart",
       "status": "tentative",
       "uses": 1
@@ -124,7 +150,7 @@
           "q": "Why does editing a buying invoice cause a cloud-conflict and block later synchronization on multiple devices?"
         }
       ],
-      "score": 0.996095989,
+      "score": 0.990754021,
       "source_file": "lib/Services/supplier_operation_service.dart",
       "status": "tentative",
       "uses": 1
@@ -132,18 +158,23 @@
     "lib_sync_batch_sync_engine_batchsyncengine": {
       "code_fingerprint": "2570801dbcd52ffd39855795c581c67c96c9039628160e2ddba4e688221760a3",
       "label": "BatchSyncEngine",
-      "last": "2026-10-12T08:13:52.479527+00:00",
+      "last": "2026-10-12T12:23:49.487290+00:00",
       "provenance": [
+        {
+          "date": "2026-10-12T12:23:49.487290+00:00",
+          "outcome": "useful",
+          "q": "If device A creates a client, makes three invoices and edits one invoice, what happens on devices A and B? Test it and summarize."
+        },
         {
           "date": "2026-10-12T08:13:52.479527+00:00",
           "outcome": "useful",
           "q": "Why does editing a buying invoice cause a cloud-conflict and block later synchronization on multiple devices?"
         }
       ],
-      "score": 0.996095989,
+      "score": 1.985489409,
       "source_file": "lib/sync/batch_sync_engine.dart",
-      "status": "tentative",
-      "uses": 1
+      "status": "preferred",
+      "uses": 2
     },
     "lib_sync_cloud_snapshot_guard_cloudsnapshotguard": {
       "code_fingerprint": "f2f511cf02bc82de000e5c334b0af381489ffa918eda2ac9f7cf2fea151def09",
@@ -161,7 +192,7 @@
           "q": "fix missing sales invoices and customer statements after another device successfully uploads"
         }
       ],
-      "score": 1.997576298,
+      "score": 1.986863486,
       "source_file": "lib/sync/cloud_snapshot_guard.dart",
       "status": "preferred",
       "uses": 2
@@ -182,7 +213,7 @@
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 1.995704911,
+      "score": 1.985002136,
       "source_file": "lib/sync/connectivity_service.dart",
       "status": "preferred",
       "uses": 2
@@ -190,24 +221,34 @@
     "lib_sync_financial_cloud_store_financialclouduploader": {
       "code_fingerprint": "641b18565ccce2126ca72d2c9592395fd07b8087a4fbbe533644371ca408a49d",
       "label": "FinancialCloudUploader",
-      "last": "2026-10-12T08:13:52.479527+00:00",
+      "last": "2026-10-12T12:23:49.487290+00:00",
       "provenance": [
+        {
+          "date": "2026-10-12T12:23:49.487290+00:00",
+          "outcome": "useful",
+          "q": "If device A creates a client, makes three invoices and edits one invoice, what happens on devices A and B? Test it and summarize."
+        },
         {
           "date": "2026-10-12T08:13:52.479527+00:00",
           "outcome": "useful",
           "q": "Why does editing a buying invoice cause a cloud-conflict and block later synchronization on multiple devices?"
         }
       ],
-      "score": 0.996095989,
+      "score": 1.985489409,
       "source_file": "lib/sync/financial_cloud_store.dart",
-      "status": "tentative",
-      "uses": 1
+      "status": "preferred",
+      "uses": 2
     },
     "lib_sync_realtime_sync_service_realtimesyncservice": {
       "code_fingerprint": "754ed3a5c41e2452f24d5dddac7fcd78b812a5214c98718a0970b7aa224b5869",
       "label": "RealtimeSyncService",
-      "last": "2026-10-12T11:50:48.423868+00:00",
+      "last": "2026-10-12T12:23:49.487290+00:00",
       "provenance": [
+        {
+          "date": "2026-10-12T12:23:49.487290+00:00",
+          "outcome": "useful",
+          "q": "If device A creates a client, makes three invoices and edits one invoice, what happens on devices A and B? Test it and summarize."
+        },
         {
           "date": "2026-10-12T11:50:48.423868+00:00",
           "outcome": "useful",
@@ -224,10 +265,10 @@
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 2.995274049,
+      "score": 3.973946067,
       "source_file": "lib/sync/realtime_sync_service.dart",
       "status": "preferred",
-      "uses": 3
+      "uses": 4
     },
     "lib_sync_ui_sync_dashboard_screen_syncdashboardscreen": {
       "code_fingerprint": "7828c5814169a284cfa734c94e386acaeb03cf7a9b6d9aa9e0697441a0b143b9",
@@ -240,7 +281,7 @@
           "q": "fix missing sales invoices and customer statements after another device successfully uploads"
         }
       ],
-      "score": 0.99800716,
+      "score": 0.992654943,
       "source_file": "lib/sync/ui/sync_dashboard_screen.dart",
       "status": "tentative",
       "uses": 1

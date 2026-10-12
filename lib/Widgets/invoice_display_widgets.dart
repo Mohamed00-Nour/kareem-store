@@ -178,8 +178,10 @@ class InvoiceProductsTable extends StatelessWidget {
 /// Footer: الرصيد السابق، إجمالي، المدفوع، المتبقي (balance after invoice).
 class InvoiceTotalsFooter extends StatelessWidget {
   final Map<String, dynamic> invoice;
+  final String? remainingLabel;
 
-  const InvoiceTotalsFooter({super.key, required this.invoice});
+  const InvoiceTotalsFooter(
+      {super.key, required this.invoice, this.remainingLabel});
 
   @override
   Widget build(BuildContext context) {
@@ -188,7 +190,8 @@ class InvoiceTotalsFooter extends StatelessWidget {
         previous: data.previous,
         total: data.total,
         paid: data.paid,
-        remainingLabel: data.supplier ? 'المتبقي للمورد' : 'المتبقي عليكم',
+        remainingLabel: remainingLabel ??
+            (data.supplier ? 'المتبقي للمورد' : 'المتبقي عليكم'),
         remaining: data.remaining,
         discount: data.discount);
   }

@@ -1,18 +1,15 @@
 import 'dart:io';
 import 'dart:ui' as ui;
 
-import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/rendering.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:path_provider/path_provider.dart';
 import 'package:share_plus/share_plus.dart';
 
-import '../repositories/supplier_repository.dart';
+import '../Services/supplier_invoice_running_balance_service.dart';
 import '../Screeens/AddProductPage.dart';
 import '../Widgets/invoice_display_widgets.dart';
-import '../Services/invoice_number_utils.dart';
 
 class BuyingInvoiceDetailPage extends StatefulWidget {
   final Map<String, dynamic> invoice;
@@ -26,34 +23,6 @@ class BuyingInvoiceDetailPage extends StatefulWidget {
 
 class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
   final GlobalKey _globalKey = GlobalKey();
-  double? _currentSupplierBalance;
-  bool _isLoadingBalance = true;
-
-  @override
-  void initState() {
-    super.initState();
-    _fetchSupplierBalance();
-  }
-
-  Future<void> _fetchSupplierBalance() async {
-    final supplierName = widget.invoice['supplierName']?.toString() ?? '';
-    final supplierId = widget.invoice['supplierId']?.toString() ?? '';
-    double? totalBalance;
-    if (supplierId.isNotEmpty) {
-      totalBalance = SupplierRepository.instance.getById(supplierId)?.balance;
-    }
-    if (totalBalance == null && supplierName.isNotEmpty) {
-      totalBalance =
-          SupplierRepository.instance.findByName(supplierName)?.balance;
-    }
-
-    if (mounted) {
-      setState(() {
-        _currentSupplierBalance = totalBalance ?? 0.0;
-        _isLoadingBalance = false;
-      });
-    }
-  }
 
   Future<void> _captureAndShareScreenshot() async {
     try {
@@ -79,11 +48,8 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
 
   @override
   Widget build(BuildContext context) {
-    // Inject current supplier balance if resolved
-    final invoiceData = Map<String, dynamic>.from(widget.invoice);
-    if (_currentSupplierBalance != null) {
-      invoiceData['currentSupplierBalance'] = _currentSupplierBalance;
-    }
+    final invoiceData =
+        SupplierInvoiceRunningBalanceService.buildPayload(widget.invoice);
 
     final products = invoiceData['products'] as List<dynamic>? ?? [];
     final when = InvoiceDateParts.fromDynamic(invoiceData['date']);
@@ -238,7 +204,10 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
                       products: products,
                       kind: InvoiceDisplayKind.purchase,
                     ),
-                    InvoiceTotalsFooter(invoice: invoiceData),
+                    InvoiceTotalsFooter(
+                      invoice: invoiceData,
+                      remainingLabel: 'المتبقي عليكم',
+                    ),
                   ],
                 ),
               ),
@@ -252,8 +221,7 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
                   ),
                   backgroundColor: Colors.black.withOpacity(0.7),
                 ),
-                onPressed:
-                    _isLoadingBalance ? null : _captureAndShareScreenshot,
+                onPressed: _captureAndShareScreenshot,
                 child: Text(
                   'إرسال الفاتورة',
                   style: TextStyle(

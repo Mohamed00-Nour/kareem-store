@@ -5,6 +5,8 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive/hive.dart';
 import 'package:kareem_store/Services/supplier_balance_store.dart';
 import 'package:kareem_store/Services/supplier_operation_service.dart';
+import 'package:kareem_store/Services/supplier_invoice_running_balance_service.dart';
+import 'package:kareem_store/Services/invoice_footer_data.dart';
 import 'package:kareem_store/Services/invoice_print_service.dart';
 import 'package:kareem_store/local_db/hive_init.dart';
 import 'package:kareem_store/local_db/models/balance_history_local.dart';
@@ -196,6 +198,121 @@ void main() {
   tearDownAll(() async {
     await Hive.close();
     await directory.delete(recursive: true);
+  });
+
+  test(
+      'purchase detail uses chronological supplier footer after payments and edits',
+      () async {
+    final supplierId = await SupplierOperationService.createSupplier(
+        name: 'Footer supplier', openingBalance: 40);
+    final first = {
+      ...purchase(),
+      'supplierId': supplierId,
+      'supplierName': 'Footer supplier',
+      'date': DateTime.now().add(const Duration(days: 1)),
+      'invoiceDiscount': 10.0,
+    };
+    final second = {
+      ...purchase(total: 200, paid: 50),
+      'id': 'purchase-2',
+      'supplierId': supplierId,
+      'supplierName': 'Footer supplier',
+      'date': DateTime.now().add(const Duration(days: 3)),
+    };
+    await SupplierOperationService.saveBuyingInvoice(first);
+    await SupplierOperationService.savePayment(
+      supplierId: supplierId,
+      direction: 'عليه',
+      amount: 10,
+      description: 'Between invoices',
+      date: DateTime.now().add(const Duration(days: 2)),
+      paymentMethod: 'cash',
+      voucherNumber: 1,
+    );
+    await SupplierOperationService.saveBuyingInvoice(second);
+    await SupplierOperationService.savePayment(
+      supplierId: supplierId,
+      direction: 'عليه',
+      amount: 30,
+      description: 'After invoices',
+      date: DateTime.now().add(const Duration(days: 4)),
+      paymentMethod: 'cash',
+      voucherNumber: 2,
+    );
+    expect(SupplierBalanceStore.balance(supplierId), 230);
+    final initial = InvoiceFooterData.fromInvoice(
+        SupplierInvoiceRunningBalanceService.buildPayload(second));
+    expect(initial.previous, 110);
+    expect(initial.remaining, 260);
+    // An earlier edit must also update the later invoice's previous balance.
+    await SupplierOperationService.saveBuyingInvoice(
+        {...first, 'totalSum': 150.0},
+        editing: true);
+    final firstFooter = InvoiceFooterData.fromInvoice(
+        SupplierInvoiceRunningBalanceService.buildPayload(first));
+    final secondFooter = InvoiceFooterData.fromInvoice(
+        SupplierInvoiceRunningBalanceService.buildPayload(second));
+    expect(firstFooter.previous, 40);
+    expect(firstFooter.total, 150);
+    expect(firstFooter.discount, 10);
+    expect(firstFooter.remaining, 170);
+    expect(secondFooter.previous, 160);
+    expect(secondFooter.total, 200);
+    expect(secondFooter.paid, 50);
+    expect(secondFooter.remaining, 310);
+    expect(SupplierBalanceStore.balance(supplierId), 280);
+    // Equal display numbers must not select the other invoice.
+    expect(firstFooter.total, isNot(secondFooter.total));
+    final nameOnly = SupplierInvoiceRunningBalanceService.buildPayload({
+      ...second,
+      'supplierId': '',
+      'previousBalance': -999.0,
+      'currentSupplierBalance': 999.0,
+    });
+    expect(InvoiceFooterData.fromInvoice(nameOnly).rows, secondFooter.rows);
+  });
+
+  test('supplier footer calculation includes returns and signed vouchers', () {
+    final purchaseInvoice = {
+      'supplierName': 'Fixture supplier',
+      'date': DateTime(2026, 10, 12, 13),
+      'totalSum': 100.0,
+      'paidAmount': 20.0,
+    };
+    final returned = {
+      'supplierName': 'Fixture supplier',
+      'date': DateTime(2026, 10, 12, 11),
+      'totalSum': 20.0,
+      'paidAmount': 5.0,
+    };
+    SupplierInvoiceRunningBalanceService.apply(
+      invoices: [purchaseInvoice],
+      returns: [returned],
+      payments: [
+        {
+          'timestamp': DateTime(2026, 10, 12, 9),
+          'type': 'opening',
+          'enteredBalance': 50.0,
+          'direction': 'له',
+        },
+        {
+          'timestamp': DateTime(2026, 10, 12, 10),
+          'type': 'voucher',
+          'enteredBalance': 10.0,
+          'direction': 'عليه',
+        },
+        {
+          'timestamp': DateTime(2026, 10, 12, 12),
+          'type': 'voucher',
+          'enteredBalance': 30.0,
+          'direction': 'له',
+        },
+      ],
+    );
+    expect(InvoiceFooterData.fromInvoice(returned).previous, 40);
+    expect(InvoiceFooterData.fromInvoice(returned).remaining, 25);
+    expect(InvoiceFooterData.fromInvoice(purchaseInvoice).previous, 55);
+    expect(InvoiceFooterData.fromInvoice(purchaseInvoice).remaining, 135);
   });
 
   test('offline purchase updates payable, stock and cash before upload',

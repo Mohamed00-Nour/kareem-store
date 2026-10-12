@@ -14,7 +14,9 @@ import '../Services/supplier_operation_service.dart';
 import '../Services/supplier_payment_service.dart';
 import '../Services/supplier_ledger_presentation.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
+import '../Services/supplier_invoice_running_balance_service.dart';
 import '../Services/supplier_statement_pdf_service.dart';
+import '../Widgets/invoice_display_widgets.dart';
 import '../repositories/balance_history_repository.dart';
 import '../repositories/invoice_repository.dart';
 import '../repositories/supplier_repository.dart';
@@ -694,42 +696,11 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
           _SupplierInvoiceEntry(doc: d, kind: _SupplierEntryKind.payment)),
     ];
 
-    // Sort ascending by date to compute chronological running balances
-    merged.sort((a, b) => _entryDate(a).compareTo(_entryDate(b)));
-
-    var running = 0.0;
-    for (final entry in merged) {
-      final data = entry.data;
-      data['_computedPrevBalance'] = running;
-
-      if (entry.kind == _SupplierEntryKind.invoice) {
-        final total = invoiceNum(data['totalSum']);
-        final paid = invoiceNum(data['paidAmount']);
-        running += (total - paid);
-      } else if (entry.kind == _SupplierEntryKind.returnInvoice) {
-        final total = invoiceNum(data['totalSum']);
-        final paid = invoiceNum(data['paidAmount']);
-        running -= (total - paid);
-      } else if (entry.kind == _SupplierEntryKind.payment) {
-        final type = data['type']?.toString() ?? '';
-        if (type == 'buying_payment' || type == 'return_payment') continue;
-
-        final entered = invoiceNum(
-            data['enteredBalance'] ?? data['amount'] ?? data['value']);
-        if (type == 'addition' || type == 'buying') {
-          running += entered;
-        } else if (type == 'deduction' || type == 'return') {
-          running -= entered;
-        } else if (type == 'opening' || type == 'voucher') {
-          final direction = data['direction']?.toString().trim() ?? '';
-          final isIncrease = type == 'opening'
-              ? direction != '\u0639\u0644\u064a\u0647'
-              : direction == '\u0644\u0647';
-          running += isIncrease ? entered : -entered;
-        }
-      }
-      data['_computedRemainingOwed'] = running;
-    }
+    SupplierInvoiceRunningBalanceService.apply(
+      invoices: _invoices.map((doc) => doc.data).toList(),
+      returns: _returnInvoices.map((doc) => doc.data).toList(),
+      payments: _payments.map((doc) => doc.data).toList(),
+    );
 
     // Sort descending (newest first) for UI display
     merged.sort((a, b) => _entryDate(b).compareTo(_entryDate(a)));
@@ -1045,10 +1016,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     final formattedDate = invoiceDate.toString().split(' ')[0];
     final formattedTime = intl.DateFormat('hh:mm a').format(invoiceDate);
 
-    final previousBalance = invoiceDynamicPreviousBalance(invoiceData);
-    final remainingOwed = invoiceSupplierRemainingOwed(invoiceData);
     final totalSum = invoiceNum(invoiceData['totalSum']);
-    final discount = invoiceResolveDiscount(invoiceData);
 
     final invoiceId = invoice.id;
     final isExpanded = _expandedInvoiceIds.contains(invoiceId);
@@ -1165,70 +1133,9 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
               _buildInvoiceProductsTable(
                 List<dynamic>.from(invoiceData['products'] ?? []),
               ),
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 10.0),
-                child: Row(
-                  mainAxisAlignment: MainAxisAlignment.end,
-                  children: [
-                    Column(
-                      crossAxisAlignment: CrossAxisAlignment.end,
-                      children: [
-                        Row(
-                          children: [
-                            Text(
-                              'الرصيد السابق: ${invoiceAmount(previousBalance)}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                            SizedBox(width: 20.w),
-                            Text(
-                              'إجمالي الفاتورة: ${invoiceAmount(totalSum)}',
-                              style: const TextStyle(
-                                fontSize: 14,
-                                fontWeight: FontWeight.bold,
-                              ),
-                            ),
-                          ],
-                        ),
-                        if (discount > 0)
-                          Text(
-                            'خصم الفاتورة: ${invoiceAmount(discount)}',
-                            style: const TextStyle(
-                              fontSize: 14,
-                              fontWeight: FontWeight.bold,
-                              color: Colors.red,
-                            ),
-                          ),
-                        Text(
-                          'المدفوع: ${invoiceAmount(invoiceData['paidAmount'])}',
-                          style: const TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.green,
-                          ),
-                        ),
-                        Text(
-                          'المتبقي من الفاتورة: ${invoiceAmount(totalSum - invoiceNum(invoiceData['paidAmount']))}',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.orange,
-                          ),
-                        ),
-                        Text(
-                          'المتبقي عليكم: ${invoiceAmount(remainingOwed)}',
-                          style: const TextStyle(
-                            fontSize: 14,
-                            fontWeight: FontWeight.bold,
-                            color: Colors.redAccent,
-                          ),
-                        ),
-                      ],
-                    ),
-                  ],
-                ),
+              InvoiceTotalsFooter(
+                invoice: invoiceData,
+                remainingLabel: 'المتبقي عليكم',
               ),
             ],
           ],
