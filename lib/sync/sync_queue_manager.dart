@@ -5,6 +5,7 @@ import 'package:uuid/uuid.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/sync_queue_item.dart';
 import 'sync_operation_diagnostics.dart';
+import 'buying_invoice_sync_guard.dart';
 
 /// Manages all pending offline write operations.
 ///
@@ -244,6 +245,17 @@ class SyncQueueManager {
           changed = true;
         }
       }
+      if (canRetryBuyingInvoiceCopyConflict(item)) {
+        // Older builds stranded these edits as review-only conflicts. The
+        // uploader now repairs the copy while retaining the main invoice guard.
+        item.status = 'pending';
+        item.retryCount = 0;
+        item.lastError = null;
+        item.errorCategory = null;
+        item.errorCode = null;
+        item.nextRetryAt = null;
+        changed = true;
+      }
       if (changed) await item.save();
     }
     final interrupted = syncQueueBox.values
@@ -276,7 +288,10 @@ class SyncQueueManager {
   }
 
   bool canRetry(SyncQueueItem item) {
-    if (canRebaseLatestInvoiceDelete(item)) return true;
+    if (canRebaseLatestInvoiceDelete(item) ||
+        canRetryBuyingInvoiceCopyConflict(item)) {
+      return true;
+    }
     final category = item.errorCategory ??
         (item.status == 'failed'
             ? SyncFailureClassifier.inferCategory(item.lastError)
@@ -285,12 +300,30 @@ class SyncQueueManager {
   }
 
   bool canRetryAutomatically(SyncQueueItem item) {
-    if (canRebaseLatestInvoiceDelete(item)) return true;
+    if (canRebaseLatestInvoiceDelete(item) ||
+        canRetryBuyingInvoiceCopyConflict(item)) {
+      return true;
+    }
     final category = item.errorCategory ??
         (item.status == 'failed'
             ? SyncFailureClassifier.inferCategory(item.lastError)
             : null);
     return SyncErrorCategories.canRetryAutomatically(category);
+  }
+
+  bool canRetryBuyingInvoiceCopyConflict(SyncQueueItem item) {
+    if (item.status != 'failed' || item.operationType != 'editBuyingInvoice') {
+      return false;
+    }
+    final category = item.errorCategory ??
+        SyncFailureClassifier.inferCategory(item.lastError);
+    if (category != SyncErrorCategories.conflict) return false;
+    try {
+      return isRetryableBuyingInvoiceCopyConflict(
+          decodePayload(item), item.lastError);
+    } catch (_) {
+      return false;
+    }
   }
 
   /// Version 2 invoice deletions are safe to retry after a conflict because

@@ -18,7 +18,9 @@ import 'package:kareem_store/local_db/models/sync_queue_item.dart';
 import 'package:kareem_store/repositories/balance_history_repository.dart';
 import 'package:kareem_store/repositories/supplier_repository.dart';
 import 'package:kareem_store/repositories/product_repository.dart';
+import 'package:kareem_store/repositories/invoice_repository.dart';
 import 'package:kareem_store/sync/batch_sync_engine.dart';
+import 'package:kareem_store/sync/cloud_snapshot_guard.dart';
 import 'package:kareem_store/sync/sync_queue_manager.dart';
 import 'package:kareem_store/sync/financial_cloud_store.dart';
 
@@ -118,6 +120,20 @@ void main() {
       };
 
   Future<void> drain() => BatchSyncEngine.forTesting(cloud).processQueue();
+
+  Future<void> downloadPurchaseOnAnotherDevice(String? copyOperation) async {
+    const root = 'buying invoices/purchase-1';
+    const copy = 'suppliers/supplier-1/buying invoices/purchase-1';
+    await appMetaBox.delete(CloudSnapshotGuard.operationKey(root));
+    await appMetaBox.delete(CloudSnapshotGuard.versionKey(root));
+    await appMetaBox.delete(CloudSnapshotGuard.operationKey(copy));
+    if (copyOperation != null) {
+      await appMetaBox.put(
+          CloudSnapshotGuard.operationKey(copy), copyOperation);
+    }
+    await InvoiceRepository.instance
+        .mergeCloudBuying('purchase-1', cloud.documents[root]!);
+  }
 
   setUpAll(() async {
     directory = await Directory.systemTemp.createTemp('supplier_offline_');
@@ -363,6 +379,176 @@ void main() {
     expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], 50);
     expect(cloud.documents['products/product-1']!['quantity'], 10);
     expect(cloud.documents['box/mainBox']!['value'], 1000);
+  });
+
+  for (final copyOperation in <String?>[null, 'stale-copy-operation']) {
+    test(
+        'purchase edit uses the main invoice with copy metadata $copyOperation',
+        () async {
+      await SupplierOperationService.saveBuyingInvoice(purchase());
+      await drain();
+      await downloadPurchaseOnAnotherDevice(copyOperation);
+
+      await SupplierOperationService.saveBuyingInvoice(
+          purchase(total: 180, paid: 30, quantity: 3),
+          editing: true);
+      await drain();
+      await drain();
+
+      expect(syncQueueBox.isEmpty, isTrue);
+      expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], 200);
+      expect(cloud.documents['products/product-1']!['quantity'], 13);
+      expect(cloud.documents['box/mainBox']!['value'], 970);
+      expect(cloud.documents['suppliers/supplier-1/buying invoices/purchase-1'],
+          cloud.documents['buying invoices/purchase-1']);
+    });
+  }
+
+  test('previously failed purchase copy conflict recovers the stored operation',
+      () async {
+    await SupplierOperationService.saveBuyingInvoice(purchase());
+    await drain();
+    await downloadPurchaseOnAnotherDevice(null);
+    await SupplierOperationService.saveBuyingInvoice(
+        purchase(total: 180, paid: 30, quantity: 3),
+        editing: true);
+    final item = syncQueueBox.values.single;
+    final payloadBeforeRetry = item.payloadJson;
+    await SyncQueueManager.instance.markFailed(
+        item.operationId,
+        StateError('Concurrent change to '
+            'suppliers/supplier-1/buying invoices/purchase-1; '
+            'review before retrying'));
+    item.retryCount = 5;
+    await item.save();
+
+    await drain();
+    await drain();
+
+    expect(syncQueueBox.isEmpty, isTrue);
+    expect(item.payloadJson, payloadBeforeRetry);
+    expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], 200);
+    expect(cloud.documents['products/product-1']!['quantity'], 13);
+    expect(cloud.documents['box/mainBox']!['value'], 970);
+  });
+
+  test('purchase edit still rejects a changed main invoice', () async {
+    await SupplierOperationService.saveBuyingInvoice(purchase());
+    await drain();
+    await downloadPurchaseOnAnotherDevice(null);
+    await SupplierOperationService.saveBuyingInvoice(
+        purchase(total: 180, paid: 30, quantity: 3),
+        editing: true);
+    cloud.documents['buying invoices/purchase-1']!['_operationId'] =
+        'another-device-edit';
+
+    await drain();
+    await drain();
+
+    final item = syncQueueBox.values.single;
+    expect(item.status, 'failed');
+    expect(item.lastError, contains('Concurrent change to buying invoices/'));
+    expect(SyncQueueManager.instance.canRetryAutomatically(item), isFalse);
+    expect(item.retryCount, 1);
+    expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], 130);
+    expect(cloud.documents['products/product-1']!['quantity'], 12);
+    expect(cloud.documents['box/mainBox']!['value'], 980);
+  });
+
+  test('purchase edit rejects changed financial fields on the main invoice',
+      () async {
+    await SupplierOperationService.saveBuyingInvoice(purchase());
+    await drain();
+    await downloadPurchaseOnAnotherDevice(null);
+    await SupplierOperationService.saveBuyingInvoice(
+        purchase(total: 180, paid: 30, quantity: 3),
+        editing: true);
+    cloud.documents['buying invoices/purchase-1']!['totalSum'] = 150.0;
+
+    await drain();
+
+    final item = syncQueueBox.values.single;
+    expect(item.status, 'failed');
+    expect(item.lastError,
+        contains('Invoice lines or customer changed: buying invoices/'));
+    expect(cloud.documents['buying invoices/purchase-1']!['totalSum'], 150);
+    expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], 130);
+    expect(cloud.documents['products/product-1']!['quantity'], 12);
+    expect(cloud.documents['box/mainBox']!['value'], 980);
+  });
+
+  test('purchase edit restores a missing supplier copy from the main invoice',
+      () async {
+    await SupplierOperationService.saveBuyingInvoice(purchase());
+    await drain();
+    cloud.documents.remove('suppliers/supplier-1/buying invoices/purchase-1');
+    await SupplierOperationService.saveBuyingInvoice(
+        purchase(total: 180, paid: 30, quantity: 3),
+        editing: true);
+    await drain();
+
+    expect(syncQueueBox.isEmpty, isTrue);
+    expect(cloud.documents['suppliers/supplier-1/buying invoices/purchase-1'],
+        cloud.documents['buying invoices/purchase-1']);
+    expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], 200);
+  });
+
+  test('independent paid purchase continues after a different invoice conflict',
+      () async {
+    await SupplierOperationService.saveBuyingInvoice(purchase());
+    await drain();
+    await SupplierOperationService.saveBuyingInvoice(
+        purchase(total: 180, paid: 30, quantity: 3),
+        editing: true);
+    final blockedId = syncQueueBox.values.single.operationId;
+    cloud.documents['buying invoices/purchase-1']!['_operationId'] =
+        'another-device-edit';
+
+    await suppliersBox.put(
+        'supplier-2',
+        SupplierLocal(
+            id: 'supplier-2',
+            name: 'Second supplier',
+            balance: 0,
+            updatedAt: DateTime(2026, 9, 1)));
+    await productsBox.put(
+        'product-2',
+        ProductLocal(
+            id: 'product-2',
+            name: 'Second product',
+            quantity: 10,
+            costPrice: 5,
+            updatedAt: DateTime(2026, 9, 1)));
+    await SupplierBalanceStore.preserveExistingBalances();
+    cloud.documents['suppliers/supplier-2'] =
+        SupplierOperationService.supplierMap('supplier-2');
+    cloud.documents['products/product-2'] =
+        productsBox.get('product-2')!.toMap();
+    await SupplierOperationService.saveBuyingInvoice({
+      ...purchase(total: 60, paid: 10, quantity: 1),
+      'id': 'purchase-2',
+      'supplierId': 'supplier-2',
+      'products': [
+        {
+          'id': 'product-2',
+          'product': 'Second product',
+          'amount': 1.0,
+          'cost': 60.0,
+          'totalCost': 60.0,
+          'newCostPrice': 60.0
+        }
+      ],
+    });
+
+    await drain();
+
+    expect(syncQueueBox.length, 1);
+    expect(syncQueueBox.get(blockedId)!.status, 'failed');
+    expect(cloud.documents['buying invoices/purchase-1']!['totalSum'], 100);
+    expect(cloud.documents['buying invoices/purchase-2']!['totalSum'], 60);
+    expect(cloud.documents['suppliers/supplier-2']!['totalBalance'], 50);
+    expect(cloud.documents['products/product-2']!['quantity'], 11);
+    expect(cloud.documents['box/mainBox']!['value'], 970);
   });
 
   test('purchase deletion rebases safely when another device edited it',

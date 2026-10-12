@@ -1,6 +1,7 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 
 import '../local_db/hive_init.dart';
+import '../local_db/hive_safe_value.dart';
 import '../sync/cloud_snapshot_guard.dart';
 import '../sync/firestore_read_diagnostics.dart';
 import '../sync/local_operation_journal.dart';
@@ -32,12 +33,7 @@ class SupplierVoucherRepository {
         if (data == null || data['_deleted'] == true) {
           await appMetaBox.delete(_key(id));
         } else {
-          final local = Map<String, dynamic>.from(data);
-          for (final field in ['date', 'timestamp']) {
-            if (local[field] is Timestamp) {
-              local[field] = (local[field] as Timestamp).toDate();
-            }
-          }
+          final local = hiveSafeMap(data);
           local['id'] = id;
           await appMetaBox.put(_key(id), local);
           await CloudSnapshotGuard.record(path, data);

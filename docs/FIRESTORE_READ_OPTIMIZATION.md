@@ -26,6 +26,59 @@ Ordinary screens read Hive. Firestore is used by the synchronization layer for i
 
 The timestamp deltas complement rather than replace the financial receipt protocol. The receipt marker, transaction reads, conflict checks, local journal, snapshot guards, post-upload refresh, and balance ledger remain intact.
 
+### Download checkpoint recovery (2026-10-12)
+
+Financial baselines and receipt point reads now require `Source.server`, reject
+cached or uncommitted snapshots, and verify document versions and party events
+before advancing the receipt sequence. The listener ignores cache snapshots and
+processes metadata-only server confirmations; sequence gaps remain retryable.
+Import failures schedule a listener restart even when the upload queue is empty.
+
+The first launch after this update performs one complete server baseline even
+when an old receipt checkpoint exists. A persisted `financialBaselineVersion`
+prevents repeating that recovery on ordinary launches. The dashboard's **Sync
+now** explicitly requests the same complete repair, so it can recover invoices
+and statement rows previously skipped, including legacy rows without receipts.
+These recovery passes read the historical financial dataset; ordinary edits and
+connectivity checks still use incremental downloads.
+
+Cloud paths protected by pending local edits receive durable deferred-path
+reminders. They are imported after the local operation settles, including after
+a restart, while unrelated receipts can continue. Recovery merges records and
+imports immutable events; it does not reset accepted opening balances or clear
+the local queue. Regression coverage is in `test/realtime_sync_service_test.dart`.
+
+Balance hydration now runs before the larger product/invoice downloads. Party
+profiles are merged together with verified financial events, and their
+`financialVersion` detects missing ledger events on an incremental receiver.
+The current receipt event is loaded before its invoice becomes visible. A full
+party-event query is needed only when the local ledger plus that receipt cannot
+cover the published financial version.
+
+`financialBaselineProgress` persists completed bootstrap steps and the original
+server head, so an interruption resumes the unfinished collections without
+re-reading completed steps or losing concurrent uploads. Baseline version 2
+runs this recovery for the previous build. Collection-group permission/index
+failures fall back to server reads under each party; permission checks remain
+enforced. Network failures remain errors. `financialDownloadError` survives
+unrelated background refreshes, and the dashboard exposes its details and shows
+an incomplete download instead of reporting that all data is synchronized.
+
+Customer/supplier voucher snapshots now recursively convert Firestore timestamps
+before storing untyped metadata. Legacy timestamp operation tags are not treated
+as UUID operation guards; financial-state guards remain in place. This prevents
+historical records from blocking completion of the baseline.
+
+Device B's copied cache confirmed the reported 220 sale: cloud balance 220,
+accepted balance 0, no imported financial events, and an unfinished bootstrap.
+After the update, the same cache showed accepted/mirrored balance 220, previous
+balance 0, total 220, paid 0 and remaining owed 220. No phone data was cleared.
+The full automated suite passes 177 tests. Device verification also uncovered
+the historical Timestamp serialization failure covered by the added tests.
+The final build completed device B's recovery: baseline version 2, receipt
+sequence 132, no pending bootstrap or financial download error, 2,352 persisted
+history rows, and the same verified 220 balance/footer values.
+
 ## Active read inventory
 
 | Trigger | Query and bound | Current behavior |

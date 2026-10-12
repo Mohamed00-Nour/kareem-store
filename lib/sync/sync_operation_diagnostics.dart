@@ -178,6 +178,7 @@ class SyncOperationDiagnostics {
   final String? partyType;
   final double? amount;
   final List<String> resourceKeys;
+  final bool cashIsAdditive;
 
   const SyncOperationDiagnostics({
     required this.operationId,
@@ -189,15 +190,19 @@ class SyncOperationDiagnostics {
     this.partyType,
     this.amount,
     this.resourceKeys = const [],
+    this.cashIsAdditive = false,
   });
 
   factory SyncOperationDiagnostics.fromItem(SyncQueueItem item) {
     final stored = item.diagnosticsJson;
     if (stored != null && stored.isNotEmpty) {
       try {
-        return SyncOperationDiagnostics.fromMap(
-          Map<String, dynamic>.from(jsonDecode(stored) as Map),
-        );
+        final map = Map<String, dynamic>.from(jsonDecode(stored) as Map);
+        // Rebuild old cached metadata so queued operations receive the updated
+        // cash dependency rule without changing their immutable payloads.
+        if (map.containsKey('cashIsAdditive')) {
+          return SyncOperationDiagnostics.fromMap(map);
+        }
       } catch (_) {
         // Fall through and rebuild metadata from the immutable payload.
       }
@@ -313,6 +318,7 @@ class SyncOperationDiagnostics {
       partyType: partyId == null ? null : (isSupplier ? 'supplier' : 'client'),
       amount: amount,
       resourceKeys: resources.toList()..sort(),
+      cashIsAdditive: _cashIsAdditive(operationId, payload),
     );
   }
 
@@ -329,6 +335,7 @@ class SyncOperationDiagnostics {
         resourceKeys: (map['resourceKeys'] as List? ?? const [])
             .map((value) => value.toString())
             .toList(),
+        cashIsAdditive: map['cashIsAdditive'] == true,
       );
 
   Map<String, dynamic> toMap() => {
@@ -341,6 +348,7 @@ class SyncOperationDiagnostics {
         if (partyType != null) 'partyType': partyType,
         if (amount != null) 'amount': amount,
         'resourceKeys': resourceKeys,
+        'cashIsAdditive': cashIsAdditive,
       };
 
   String toJson() => jsonEncode(toMap());
@@ -351,7 +359,41 @@ class SyncOperationDiagnostics {
       return true;
     }
     final keys = first.resourceKeys.toSet();
-    return second.resourceKeys.any(keys.contains);
+    return second.resourceKeys.any((key) =>
+        keys.contains(key) &&
+        !(key == 'box/mainBox' &&
+            first.cashIsAdditive &&
+            second.cashIsAdditive));
+  }
+
+  static bool _cashIsAdditive(
+      String operationId, Map<String, dynamic> payload) {
+    final writes = payload['cloudWrites'];
+    if (payload['financialFormat'] != 2 || writes is! List) return false;
+    var hasIncrement = false;
+    for (final write in writes) {
+      if (write is! Map) continue;
+      final path = write['path']?.toString() ?? '';
+      if (resourceKeyForPath(path) != 'box/mainBox') continue;
+      if (path == 'box/mainBox/changes/$operationId') continue;
+      if (path != 'box/mainBox') return false;
+      final data = write['data'];
+      final increments = write['increments'];
+      if (data is! Map ||
+          data.isNotEmpty ||
+          increments is! Map ||
+          increments.length != 1 ||
+          increments['value'] is! num ||
+          write['deleted'] == true ||
+          write['mustBeAbsent'] == true ||
+          write.containsKey('expectedOperationId') ||
+          write.containsKey('expectedFinancialState') ||
+          write.containsKey('expectedFields')) {
+        return false;
+      }
+      hasIncrement = true;
+    }
+    return hasIncrement;
   }
 
   static String? resourceKeyForPath(String path) {

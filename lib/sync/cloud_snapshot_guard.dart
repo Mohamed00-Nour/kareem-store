@@ -98,8 +98,14 @@ class CloudSnapshotGuard {
 
   static Future<void> record(String path, Map<String, dynamic> data) async {
     await appMetaBox.put(versionKey(path), (data['_version'] as num?) ?? 0);
-    if (data['_operationId'] != null)
-      await appMetaBox.put(operationKey(path), data['_operationId']);
+    final operationId = data['_operationId'];
+    if (operationId is String) {
+      await appMetaBox.put(operationKey(path), operationId);
+    } else {
+      // Legacy timestamp tags are not operation IDs. Financial-state guards
+      // still protect edits; do not persist an unsupported Firestore value.
+      await appMetaBox.delete(operationKey(path));
+    }
   }
 
   static Future<void> acknowledge(Map<String, dynamic> receipt) async {

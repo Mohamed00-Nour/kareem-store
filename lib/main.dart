@@ -24,7 +24,7 @@ Future<void> main() async {
     await initHive(); // Initialize local Hive database first
     debugPrint('Startup Hive complete: ${startupTimer.elapsedMilliseconds} ms');
     // Recover durable uploads interrupted by a previous app shutdown before any
-    // startup service can make the first queue-processing attempt.
+    // startup service can make the first queue-processsing attempt.
     startupStage = 'recovering interrupted local saves';
     await LocalOperationJournal.recover();
     debugPrint(

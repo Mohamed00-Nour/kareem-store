@@ -1,5 +1,6 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../local_db/hive_init.dart';
+import '../local_db/hive_safe_value.dart';
 import '../sync/cloud_snapshot_guard.dart';
 import '../sync/firestore_read_diagnostics.dart';
 import '../sync/local_operation_journal.dart';
@@ -13,10 +14,8 @@ class CustomerVoucherRepository {
           await appMetaBox.delete('customerVoucher:' + id);
         } else {
           await appMetaBox.put('customerVoucher:' + id, {
-            ...data,
+            ...hiveSafeMap(data),
             'id': id,
-            if (data['date'] is Timestamp)
-              'date': (data['date'] as Timestamp).toDate()
           });
         }
         if (data != null) await CloudSnapshotGuard.record(path, data);

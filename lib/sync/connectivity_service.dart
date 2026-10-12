@@ -17,6 +17,7 @@ class ConnectivityService {
   // When forceSync is called while a check is running, this flag ensures the
   // sync is retried immediately after the current check completes.
   bool _pendingForce = false;
+  bool _pendingDownloadRepair = false;
 
   /// True when the last check passed.
   bool get isOnline => _isOnline;
@@ -44,7 +45,8 @@ class ConnectivityService {
     // Periodic check — every 5 s when there are pending items, otherwise every 30 s.
     // This ensures a freshly enqueued item is always picked up quickly.
     _periodicTimer = Timer.periodic(const Duration(seconds: 5), (_) {
-      if (SyncQueueManager.instance.hasUnfinished) {
+      if (SyncQueueManager.instance.hasUnfinished ||
+          RealtimeSyncService.instance.hasDeferredPaths) {
         _checkAndSync();
       }
     });
@@ -103,6 +105,12 @@ class ConnectivityService {
           if (SyncQueueManager.instance.hasUnfinished) {
             await BatchSyncEngine.instance.processQueue();
           }
+          if (_pendingDownloadRepair) {
+            _pendingDownloadRepair = false;
+            await RealtimeSyncService.instance.refreshFromServer(repair: true);
+          } else if (RealtimeSyncService.instance.hasDeferredPaths) {
+            await RealtimeSyncService.instance.retryDeferredPaths();
+          }
         } else {
           _setOnline(false);
         }
@@ -125,7 +133,10 @@ class ConnectivityService {
   /// Manually trigger a sync attempt (e.g. after adding an invoice or "Sync Now" button).
   /// If a check is already running, the sync is guaranteed to execute once the
   /// current check finishes (no silent drop).
-  Future<void> forceSync({bool resetRetryableFailures = true}) async {
+  Future<void> forceSync(
+      {bool resetRetryableFailures = true,
+      bool repairDownloads = false}) async {
+    _pendingDownloadRepair = _pendingDownloadRepair || repairDownloads;
     if (resetRetryableFailures) {
       await SyncQueueManager.instance.resetFailedItems();
     }

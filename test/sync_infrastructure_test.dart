@@ -948,6 +948,93 @@ void main() {
           isFalse);
     });
 
+    test('independent cash increments do not create a queue dependency', () {
+      SyncOperationDiagnostics paidOperation(String id) =>
+          SyncOperationDiagnostics.fromPayload(id, 'createBuyingInvoice', {
+            'financialFormat': 2,
+            'invoiceId': id,
+            'supplierId': 'supplier-$id',
+            'cloudWrites': [
+              {'path': 'buying invoices/$id', 'data': {}, 'increments': {}},
+              {
+                'path': 'box/mainBox',
+                'data': {},
+                'increments': {'value': -10}
+              },
+              {
+                'path': 'box/mainBox/changes/$id',
+                'data': {'value': 10}
+              },
+            ],
+          });
+      final first = paidOperation('one');
+      final second = paidOperation('two');
+
+      expect(first.cashIsAdditive, isTrue);
+      expect(second.cashIsAdditive, isTrue);
+      expect(SyncOperationDiagnostics.sharesResources(first, second), isFalse);
+      expect(SyncOperationDiagnostics.fromMap(first.toMap()).cashIsAdditive,
+          isTrue);
+    });
+
+    test('cash assignments and guarded increments retain queue dependencies',
+        () {
+      SyncOperationDiagnostics cashOperation(
+              String id, Map<String, dynamic> write) =>
+          SyncOperationDiagnostics.fromPayload(id, 'updateBox', {
+            'financialFormat': 2,
+            'cloudWrites': [write],
+          });
+      final additive = cashOperation('one', {
+        'path': 'box/mainBox',
+        'data': {},
+        'increments': {'value': 10},
+      });
+      final assignment = cashOperation('two', {
+        'path': 'box/mainBox',
+        'data': {'value': 100},
+        'increments': {},
+      });
+      final guarded = cashOperation('three', {
+        'path': 'box/mainBox',
+        'data': {},
+        'increments': {'value': 10},
+        'expectedOperationId': 'previous',
+      });
+
+      expect(additive.cashIsAdditive, isTrue);
+      expect(assignment.cashIsAdditive, isFalse);
+      expect(guarded.cashIsAdditive, isFalse);
+      expect(SyncOperationDiagnostics.sharesResources(additive, assignment),
+          isTrue);
+      expect(
+          SyncOperationDiagnostics.sharesResources(additive, guarded), isTrue);
+    });
+
+    test('old queued diagnostics are rebuilt for additive cash writes',
+        () async {
+      final id = await SyncQueueManager.instance.enqueue(
+        operationType: 'updateBox',
+        payload: {
+          'financialFormat': 2,
+          'cloudWrites': [
+            {
+              'path': 'box/mainBox',
+              'data': {},
+              'increments': {'value': 10}
+            },
+          ],
+        },
+      );
+      final item = syncQueueBox.get(id)!;
+      final oldDiagnostics = jsonDecode(item.diagnosticsJson!) as Map;
+      oldDiagnostics.remove('cashIsAdditive');
+      item.diagnosticsJson = jsonEncode(oldDiagnostics);
+      await item.save();
+
+      expect(SyncOperationDiagnostics.fromItem(item).cashIsAdditive, isTrue);
+    });
+
     test('party diagnostics distinguish customer and supplier creation', () {
       final customer = SyncOperationDiagnostics.fromPayload(
         'customer-operation',

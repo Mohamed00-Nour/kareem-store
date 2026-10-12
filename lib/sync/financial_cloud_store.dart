@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import '../Services/invoice_number_utils.dart';
 import 'firestore_read_diagnostics.dart';
+import 'buying_invoice_sync_guard.dart';
 
 abstract class FinancialTransaction {
   Future<Map<String, dynamic>?> read(String path);
@@ -174,6 +175,24 @@ class FinancialCloudUploader {
           payload['supplierDeltas'] as Map? ?? const {});
       final preloaded = <String, Map<String, dynamic>?>{};
       final operationType = payload['operationType']?.toString() ?? '';
+      final guardedEditId = guardedBuyingInvoiceEditId(payload);
+      if (guardedEditId != null) {
+        // The main invoice still validates the original financial state and
+        // operation ID inside this transaction. Copies have no independent
+        // financial effect; repair them atomically, including old queued edits
+        // whose devices never downloaded the copy's operation metadata.
+        for (final write in writes) {
+          if (!isBuyingInvoiceCopyPath(
+              write['path'] as String, guardedEditId)) {
+            continue;
+          }
+          write
+            ..remove('expectedOperationId')
+            ..remove('expectedFinancialState')
+            ..remove('expectedFields')
+            ..['mustBeAbsent'] = false;
+        }
+      }
       if (operationType == 'deleteBuyingInvoice' &&
           payload['financialFormat'] == 2) {
         final invoiceId = payload['invoiceId']?.toString().trim() ?? '';
@@ -277,7 +296,11 @@ class FinancialCloudUploader {
               invoiceNum(data[entry.key]) + invoiceNum(entry.value);
         }
         data['_deleted'] = write['deleted'] == true;
-        data['_version'] = invoiceNum(old?['_version']).toInt() + 1;
+        final versionSource = guardedEditId != null &&
+                isBuyingInvoiceCopyPath(path, guardedEditId)
+            ? before['buying invoices/$guardedEditId']
+            : old;
+        data['_version'] = invoiceNum(versionSource?['_version']).toInt() + 1;
         data['_operationId'] = operationId;
         after[path] = data;
         versions[path] = data['_version'] as int;

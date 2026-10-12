@@ -60,9 +60,9 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
   Future<void> _forceSync() async {
     setState(() => _isSyncing = true);
     try {
-      await ConnectivityService.instance.forceSync();
       await DataSyncService.instance
           .syncOnStartup(includeRealtimeCollections: false);
+      await ConnectivityService.instance.forceSync(repairDownloads: true);
     } finally {
       if (mounted) {
         setState(() => _isSyncing = false);
@@ -79,6 +79,23 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
     }
     return 'تعذر تحديث البيانات السحابية مؤقتاً. يمكنك متابعة العمل من البيانات المحلية.';
   }
+
+  Future<void> _showDownloadError(Object error) => showDialog<void>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+            title: const Text('تفاصيل تحميل البيانات'),
+            content:
+                SingleChildScrollView(child: SelectableText(error.toString())),
+            actions: [
+              TextButton(
+                  onPressed: () =>
+                      Clipboard.setData(ClipboardData(text: error.toString())),
+                  child: const Text('نسخ الخطأ')),
+              TextButton(
+                  onPressed: () => Navigator.pop(dialogContext),
+                  child: const Text('إغلاق')),
+            ],
+          ));
 
   Future<void> _retryItem(SyncQueueItem item) async {
     final started =
@@ -371,24 +388,32 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
               children: [
                 ValueListenableBuilder(
                     valueListenable: appMetaBox.listenable(),
-                    builder: (context, box, _) =>
-                        box.get('cloudRefreshError') == null
-                            ? const SizedBox.shrink()
-                            : Padding(
-                                padding: const EdgeInsets.all(8),
-                                child: Text(
-                                    _cloudRefreshMessage(
-                                        box.get('cloudRefreshError')),
-                                    style: const TextStyle(
-                                        color: Colors.redAccent)))),
+                    builder: (context, box, _) {
+                      final error = box.get('financialDownloadError') ??
+                          box.get('cloudRefreshError');
+                      return Column(children: [
+                        if (error != null)
+                          InkWell(
+                              onTap: () => _showDownloadError(error),
+                              child: Padding(
+                                  padding: const EdgeInsets.all(8),
+                                  child: Text(
+                                      '${_cloudRefreshMessage(error)}\nاضغط لعرض تفاصيل الخطأ',
+                                      style: const TextStyle(
+                                          color: Colors.redAccent)))),
+                        _StatusCard(
+                          isOnline: isOnline,
+                          pendingCount: pending,
+                          totalCount: totalCount,
+                          hasSyncingItems: hasSyncing,
+                          isSyncing: _isSyncing || isBatchRunning,
+                          downloadError: box.get('financialDownloadError'),
+                          downloadingBaseline:
+                              box.containsKey('financialBaselineProgress'),
+                        ),
+                      ]);
+                    }),
                 // ── Status Card ────────────────────────────────────────────
-                _StatusCard(
-                  isOnline: isOnline,
-                  pendingCount: pending,
-                  totalCount: totalCount,
-                  hasSyncingItems: hasSyncing,
-                  isSyncing: _isSyncing || isBatchRunning,
-                ),
                 SizedBox(height: 16.h),
 
                 // ── Sync Now Button ────────────────────────────────────────
@@ -487,6 +512,8 @@ class _StatusCard extends StatelessWidget {
   final int totalCount;
   final bool hasSyncingItems;
   final bool isSyncing;
+  final Object? downloadError;
+  final bool downloadingBaseline;
 
   const _StatusCard({
     required this.isOnline,
@@ -494,6 +521,8 @@ class _StatusCard extends StatelessWidget {
     required this.totalCount,
     required this.hasSyncingItems,
     required this.isSyncing,
+    this.downloadError,
+    this.downloadingBaseline = false,
   });
 
   @override
@@ -508,6 +537,17 @@ class _StatusCard extends StatelessWidget {
       icon = Icons.sync;
       title = 'جارٍ المزامنة...';
       subtitle = 'يتم رفع البيانات إلى الخادم';
+    } else if (downloadError != null) {
+      bg = Colors.red.shade800;
+      icon = Icons.cloud_off_outlined;
+      title = 'تحميل البيانات غير مكتمل';
+      subtitle =
+          'تعذر تحميل الأرصدة أو البيانات. افتح تفاصيل الخطأ وأعد المحاولة.';
+    } else if (downloadingBaseline) {
+      bg = Colors.blue.shade800;
+      icon = Icons.cloud_download_outlined;
+      title = 'جارٍ تحميل البيانات';
+      subtitle = 'يتم تحميل الأرصدة والفواتير من الخادم';
     } else if (!isOnline && totalCount > 0) {
       bg = Colors.orange.shade800;
       icon = Icons.cloud_off;
