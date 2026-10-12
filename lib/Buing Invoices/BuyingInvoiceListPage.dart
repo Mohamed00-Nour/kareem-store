@@ -1,9 +1,12 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../Services/supplier_operation_service.dart';
+import '../local_db/hive_init.dart';
 import '../repositories/invoice_repository.dart';
 import '../sync/connectivity_service.dart';
 import 'BuyingInvoiceDetailPage.dart';
@@ -19,6 +22,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
   final List<Map<String, dynamic>> _invoices = [];
   final List<Map<String, dynamic>> _filteredInvoices = [];
   final TextEditingController _searchController = TextEditingController();
+  StreamSubscription? _invoicesSubscription;
   bool _isFetching = true;
   DateTime? _selectedMonth;
   String _userRole = 'user'; // Default to user role
@@ -28,6 +32,8 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     super.initState();
     // Initialize with current month
     _selectedMonth = DateTime.now();
+    _invoicesSubscription =
+        buyingInvoicesBox.watch().listen((_) => _loadFromLocalCache());
     _loadUserRole();
     _loadFromLocalCache();
     _backgroundSyncInvoices();
@@ -48,6 +54,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
 
   @override
   void dispose() {
+    _invoicesSubscription?.cancel();
     _searchController.dispose();
     super.dispose();
   }
@@ -220,15 +227,15 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     );
   }
 
-  void _handleDeleteAction(int index) {
+  void _handleDeleteAction(Map<String, dynamic> invoice) {
     if (_userRole == 'admin') {
-      _showDeleteConfirmationDialog(index);
+      _showDeleteConfirmationDialog(invoice);
     } else {
       _showPermissionDeniedDialog();
     }
   }
 
-  void _showDeleteConfirmationDialog(int index) {
+  void _showDeleteConfirmationDialog(Map<String, dynamic> invoice) {
     showDialog(
       context: context,
       builder: (BuildContext context) {
@@ -245,7 +252,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
             TextButton(
               onPressed: () {
                 Navigator.of(context).pop();
-                _deleteInvoice(index);
+                _deleteInvoice(invoice);
               },
               child: Text('حذف'),
             ),
@@ -275,13 +282,9 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     );
   }
 
-  void _deleteInvoice(int index) async {
-    final removedInvoice = _filteredInvoices.removeAt(index);
-    final invoiceId = removedInvoice['id']?.toString() ??
-        removedInvoice['invoiceId']?.toString() ??
-        '';
-
-    setState(() {});
+  void _deleteInvoice(Map<String, dynamic> invoice) async {
+    final invoiceId =
+        invoice['id']?.toString() ?? invoice['invoiceId']?.toString() ?? '';
 
     try {
       if (invoiceId.isEmpty) throw StateError('معرف الفاتورة غير موجود');
@@ -298,9 +301,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     } catch (e) {
       print('Error deleting invoice: $e');
       if (!mounted) return;
-      setState(() {
-        _filteredInvoices.insert(index, removedInvoice);
-      });
+      _loadFromLocalCache();
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(
           content: Text('حدث خطأ أثناء حذف الفاتورة: $e'),
@@ -353,7 +354,7 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
                     trailing: IconButton(
                       icon: Icon(Icons.delete,
                           color: Colors.black.withOpacity(0.7)),
-                      onPressed: () => _handleDeleteAction(index),
+                      onPressed: () => _handleDeleteAction(invoice),
                     ),
                     onTap: () => _navigateToInvoiceDetail(invoice),
                   ),

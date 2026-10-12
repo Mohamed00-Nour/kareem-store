@@ -4,7 +4,10 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:intl/intl.dart';
 import '../repositories/payment_breakdown_repository.dart';
+import '../repositories/invoice_repository.dart';
+import '../local_db/hive_init.dart';
 import '../local_db/models/payment_breakdown_local.dart';
+import '../Widgets/payment_breakdown_mismatch_hint.dart';
 
 class PaymentsReportPage extends StatefulWidget {
   const PaymentsReportPage({super.key});
@@ -24,27 +27,44 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
   double _totalInstapay = 0.0;
   double _totalBankTransfer = 0.0;
   double _grandTotal = 0.0;
-  StreamSubscription? _paymentsBoxSubscription;
+  final List<StreamSubscription> _dataSubscriptions = [];
   Timer? _reloadDebounce;
 
   @override
   void initState() {
     super.initState();
-    _paymentsBoxSubscription =
-        PaymentBreakdownRepository.instance.box.watch().listen((_) {
-      _reloadDebounce?.cancel();
-      _reloadDebounce = Timer(const Duration(milliseconds: 40), () {
-        if (mounted) _loadData();
-      });
-    });
+    for (final box in [
+      PaymentBreakdownRepository.instance.box,
+      invoicesBox,
+      returnInvoicesBox,
+    ]) {
+      _dataSubscriptions.add(box.watch().listen((_) => _scheduleReload()));
+    }
     _applyFilter('اليوم');
   }
 
   @override
   void dispose() {
     _reloadDebounce?.cancel();
-    _paymentsBoxSubscription?.cancel();
+    for (final subscription in _dataSubscriptions) {
+      subscription.cancel();
+    }
     super.dispose();
+  }
+
+  void _scheduleReload() {
+    _reloadDebounce?.cancel();
+    _reloadDebounce = Timer(const Duration(milliseconds: 40), () {
+      if (mounted) _loadData();
+    });
+  }
+
+  double? _invoicePaidAmount(PaymentBreakdownLocal entry) {
+    final invoiceId = entry.invoiceId.trim();
+    if (invoiceId.isEmpty) return null;
+    final invoice = InvoiceRepository.instance.getSaleById(invoiceId) ??
+        InvoiceRepository.instance.getReturnById(invoiceId);
+    return invoice?.paidAmount;
   }
 
   void _applyFilter(String filter) {
@@ -159,8 +179,13 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
       return value != null && value >= 0 ? value : null;
     }
 
-    final updated = await showDialog<PaymentBreakdownLocal>(
+    final navigator = Navigator.of(context, rootNavigator: true);
+    final dialogRoute = DialogRoute<PaymentBreakdownLocal>(
       context: context,
+      themes: InheritedTheme.capture(from: context, to: navigator.context),
+      barrierColor: DialogTheme.of(context).barrierColor ??
+          Theme.of(context).dialogTheme.barrierColor ??
+          Colors.black54,
       builder: (dialogContext) {
         String? error;
         return StatefulBuilder(
@@ -181,8 +206,17 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
                   border: const OutlineInputBorder(),
                   isDense: true,
                 ),
+                onChanged: (_) => setDialogState(() {}),
               );
             }
+
+            final paidAmount = _invoicePaidAmount(entry);
+            final amounts = [
+              parseAmount(walletCtrl),
+              parseAmount(cashCtrl),
+              parseAmount(instapayCtrl),
+              parseAmount(bankCtrl),
+            ];
 
             return Directionality(
               textDirection: ui.TextDirection.rtl,
@@ -232,6 +266,14 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
                             ),
                           ],
                         ),
+                        if (paidAmount != null &&
+                            amounts.every((amount) => amount != null))
+                          PaymentBreakdownMismatchHint(
+                            paidAmount: paidAmount,
+                            breakdownTotal: amounts
+                                .whereType<double>()
+                                .fold(0.0, (sum, amount) => sum + amount),
+                          ),
                         SizedBox(height: 10.h),
                         TextField(
                           controller: notesCtrl,
@@ -310,6 +352,9 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
       },
     );
 
+    final updated = await navigator.push(dialogRoute);
+    // Keep the field controllers alive until the closing animation finishes.
+    await dialogRoute.completed;
     clientCtrl.dispose();
     walletCtrl.dispose();
     cashCtrl.dispose();
@@ -501,6 +546,7 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
                             entry.cash +
                             entry.instapay +
                             entry.bankTransfer;
+                        final paidAmount = _invoicePaidAmount(entry);
 
                         return Card(
                           margin: EdgeInsets.only(bottom: 8.h),
@@ -582,6 +628,11 @@ class _PaymentsReportPageState extends State<PaymentsReportPage> {
                                       ),
                                   ],
                                 ),
+                                if (paidAmount != null)
+                                  PaymentBreakdownMismatchHint(
+                                    paidAmount: paidAmount,
+                                    breakdownTotal: total,
+                                  ),
                                 if (entry.notes.isNotEmpty) ...[
                                   SizedBox(height: 4.h),
                                   Text(

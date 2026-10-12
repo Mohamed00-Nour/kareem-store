@@ -1023,7 +1023,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   void _saveData({
     String? clientName,
     double? paidAmount,
-    String paymentMethod = 'نقداً',
+    required String paymentMethod,
     String notes = '',
     double invoiceDiscount = 0.0,
     bool discountIsPercent = true,
@@ -2434,7 +2434,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     final result = await showInvoiceCheckoutSheet(
       context: context,
       isEditing: _isEditing,
-      paymentMethod: _isEditing ? _editingPaymentMethod : 'نقداً',
+      paymentMethod: _isEditing ? _editingPaymentMethod : '',
       invoiceDiscount: _isEditing ? _editingInvoiceDiscountAmount : 0.0,
       clientName: _clientNameController.text,
       clientBalance: _clientBalance,

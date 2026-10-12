@@ -1,6 +1,70 @@
 {
-  "generated_at": "2026-10-12T17:52:48.329941+00:00",
+  "generated_at": "2026-10-12T18:37:56.967040+00:00",
   "nodes": {
+    "lib_buing_invoices_buyinginvoicedetailpage_buyinginvoicedetailpage": {
+      "code_fingerprint": "113db2a4d634a4e812d11998d42c8ee7289bf6cbf606fcf6dd467caf54ac74ff",
+      "label": "BuyingInvoiceDetailPage",
+      "last": "2026-10-12T18:01:44.887671+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T18:01:44.887671+00:00",
+          "outcome": "useful",
+          "q": "Make the purchase invoice footer opened from BuyingInvoiceListPage match the purchase invoice footer on the supplier page."
+        }
+      ],
+      "score": 0.999419316,
+      "source_file": "lib/Buing Invoices/BuyingInvoiceDetailPage.dart",
+      "status": "tentative",
+      "uses": 1
+    },
+    "lib_buing_invoices_buyinginvoicelistpage_buyinginvoicelistpage": {
+      "code_fingerprint": "e57cebb0a97ad2f64c9e9a7efafe5ac3f2a3ee9975ba328fb4095ff0704c8832",
+      "label": "BuyingInvoiceListPage",
+      "last": "2026-10-12T18:15:55.220583+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T18:15:55.220583+00:00",
+          "outcome": "useful",
+          "q": "BuyingInvoiceListPage does not refresh until the app restarts; make it stream."
+        }
+      ],
+      "score": 0.999646604,
+      "source_file": "lib/Buing Invoices/BuyingInvoiceListPage.dart",
+      "status": "tentative",
+      "uses": 1
+    },
+    "lib_local_db_models_payment_breakdown_local_paymentbreakdownlocal": {
+      "code_fingerprint": "7dba5255ebff1a3044934089300bb87fc9c04895038f93f8f63288f35eb01a1a",
+      "label": "PaymentBreakdownLocal",
+      "last": "2026-10-12T18:36:38.210348+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T18:36:38.210348+00:00",
+          "outcome": "useful",
+          "q": "Add a hint when paid amount does not match the payment distribution total in checkout and PaymentsReportPage."
+        }
+      ],
+      "score": 0.999978939,
+      "source_file": "lib/local_db/models/payment_breakdown_local.dart",
+      "status": "tentative",
+      "uses": 1
+    },
+    "lib_reports_paymentsreportpage_paymentsreportpage": {
+      "code_fingerprint": "843e738c22f5f17619eb2afa17883f85642a514b159a91fcfe7e629375b37bc6",
+      "label": "PaymentsReportPage",
+      "last": "2026-10-12T18:36:38.210348+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T18:36:38.210348+00:00",
+          "outcome": "useful",
+          "q": "Add a hint when paid amount does not match the payment distribution total in checkout and PaymentsReportPage."
+        }
+      ],
+      "score": 0.999978939,
+      "source_file": "lib/reports/PaymentsReportPage.dart",
+      "status": "tentative",
+      "uses": 1
+    },
     "lib_repositories_balance_history_repository_balancehistoryrepository": {
       "code_fingerprint": "5d9907153bd40040327aaba29a8a811151ac3b2074368c7a781890df30e8ec7e",
       "label": "BalanceHistoryRepository",
@@ -12,7 +76,7 @@
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 0.992347193,
+      "score": 0.991628659,
       "source_file": "lib/repositories/balance_history_repository.dart",
       "status": "tentative",
       "uses": 1
@@ -28,7 +92,7 @@
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 0.992347193,
+      "score": 0.991628659,
       "source_file": "lib/repositories/data_sync_service.dart",
       "status": "tentative",
       "uses": 1
@@ -36,16 +100,74 @@
     "lib_repositories_invoice_repository_invoicerepository": {
       "code_fingerprint": "9e5c74bd09bf955a0a06b9b67909c1da414c7c4fe2a332e2a258bfa14abfc8fa",
       "label": "InvoiceRepository",
-      "last": "2026-10-12T09:54:00.859728+00:00",
+      "last": "2026-10-12T18:15:55.220583+00:00",
       "provenance": [
+        {
+          "date": "2026-10-12T18:15:55.220583+00:00",
+          "outcome": "useful",
+          "q": "BuyingInvoiceListPage does not refresh until the app restarts; make it stream."
+        },
         {
           "date": "2026-10-12T09:54:00.859728+00:00",
           "outcome": "useful",
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 0.992347193,
+      "score": 1.991275263,
       "source_file": "lib/repositories/invoice_repository.dart",
+      "status": "preferred",
+      "uses": 2
+    },
+    "lib_repositories_payment_breakdown_repository_paymentbreakdownrepository": {
+      "code_fingerprint": "7cac994387d65a93c5fd4294328200968a5eecd037f336219243525065fb2095",
+      "label": "PaymentBreakdownRepository",
+      "last": "2026-10-12T18:36:38.210348+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T18:36:38.210348+00:00",
+          "outcome": "useful",
+          "q": "Add a hint when paid amount does not match the payment distribution total in checkout and PaymentsReportPage."
+        }
+      ],
+      "score": 0.999978939,
+      "source_file": "lib/repositories/payment_breakdown_repository.dart",
+      "status": "tentative",
+      "uses": 1
+    },
+    "lib_screeens_decreaseproductcomponents_invoice_checkout_sheet": {
+      "code_fingerprint": "5fab04331aa4ae95d2f789b2af30598aa1e4093769e730e7d60bd791df136442",
+      "label": "invoice_checkout_sheet.dart",
+      "last": "2026-10-12T18:36:38.210348+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T18:36:38.210348+00:00",
+          "outcome": "useful",
+          "q": "Add a hint when paid amount does not match the payment distribution total in checkout and PaymentsReportPage."
+        },
+        {
+          "date": "2026-10-12T18:21:39.328353+00:00",
+          "outcome": "useful",
+          "q": "Make sales invoice checkout payment method start unselected and prevent saving until a method is selected."
+        }
+      ],
+      "score": 1.999717535,
+      "source_file": "lib/Screeens/DecreaseProductComponents/invoice_checkout_sheet.dart",
+      "status": "preferred",
+      "uses": 2
+    },
+    "lib_screeens_decreaseproductpage_decreaseproductpage": {
+      "code_fingerprint": "22847ea663b590db6a7dfbfe1eab0f6253ab6bc853b2f4abc940368805e6205b",
+      "label": "DecreaseProductPage",
+      "last": "2026-10-12T18:21:39.328353+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T18:21:39.328353+00:00",
+          "outcome": "useful",
+          "q": "Make sales invoice checkout payment method start unselected and prevent saving until a method is selected."
+        }
+      ],
+      "score": 0.999738596,
+      "source_file": "lib/Screeens/DecreaseProductPage.dart",
       "status": "tentative",
       "uses": 1
     },
@@ -60,7 +182,7 @@
           "q": "Why does editing a buying invoice cause a cloud-conflict and block later synchronization on multiple devices?"
         }
       ],
-      "score": 0.990754021,
+      "score": 0.99003664,
       "source_file": "lib/Services/buying_invoice_update_service.dart",
       "status": "tentative",
       "uses": 1
@@ -81,7 +203,7 @@
           "q": "device A invoice 220 has previous balance 0 and owed 220, but device B shows previous -220 and owed 0"
         }
       ],
-      "score": 1.988943931,
+      "score": 1.987503785,
       "source_file": "lib/Services/customer_balance_store.dart",
       "status": "preferred",
       "uses": 2
@@ -97,7 +219,7 @@
           "q": "If device A creates a client, makes three invoices and edits one invoice, what happens on devices A and B? Test it and summarize."
         }
       ],
-      "score": 0.994735387,
+      "score": 0.994015123,
       "source_file": "lib/Services/customer_operation_service.dart",
       "status": "tentative",
       "uses": 1
@@ -118,7 +240,7 @@
           "q": "device A invoice 220 has previous balance 0 and owed 220, but device B shows previous -220 and owed 0"
         }
       ],
-      "score": 1.988943931,
+      "score": 1.987503785,
       "source_file": "lib/Services/invoice_footer_data.dart",
       "status": "preferred",
       "uses": 2
@@ -134,7 +256,7 @@
           "q": "device A invoice 220 has previous balance 0 and owed 220, but device B shows previous -220 and owed 0"
         }
       ],
-      "score": 0.994208544,
+      "score": 0.993488662,
       "source_file": "lib/Services/supplier_balance_store.dart",
       "status": "tentative",
       "uses": 1
@@ -150,8 +272,24 @@
           "q": "Why does editing a buying invoice cause a cloud-conflict and block later synchronization on multiple devices?"
         }
       ],
-      "score": 0.990754021,
+      "score": 0.99003664,
       "source_file": "lib/Services/supplier_operation_service.dart",
+      "status": "tentative",
+      "uses": 1
+    },
+    "lib_suppliers_supplierinvoicespage_supplierinvoicespage": {
+      "code_fingerprint": "570afa7c167981e500e26c2c228ccb385682cedd397e11dd039a6c687707771f",
+      "label": "SupplierInvoicesPage",
+      "last": "2026-10-12T18:01:44.887671+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T18:01:44.887671+00:00",
+          "outcome": "useful",
+          "q": "Make the purchase invoice footer opened from BuyingInvoiceListPage match the purchase invoice footer on the supplier page."
+        }
+      ],
+      "score": 0.999419316,
+      "source_file": "lib/suppliers/SupplierInvoicesPage.dart",
       "status": "tentative",
       "uses": 1
     },
@@ -171,7 +309,7 @@
           "q": "Why does editing a buying invoice cause a cloud-conflict and block later synchronization on multiple devices?"
         }
       ],
-      "score": 1.985489409,
+      "score": 1.984051764,
       "source_file": "lib/sync/batch_sync_engine.dart",
       "status": "preferred",
       "uses": 2
@@ -192,7 +330,7 @@
           "q": "fix missing sales invoices and customer statements after another device successfully uploads"
         }
       ],
-      "score": 1.986863486,
+      "score": 1.985424847,
       "source_file": "lib/sync/cloud_snapshot_guard.dart",
       "status": "preferred",
       "uses": 2
@@ -213,7 +351,7 @@
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 1.985002136,
+      "score": 1.983564844,
       "source_file": "lib/sync/connectivity_service.dart",
       "status": "preferred",
       "uses": 2
@@ -234,7 +372,7 @@
           "q": "Why does editing a buying invoice cause a cloud-conflict and block later synchronization on multiple devices?"
         }
       ],
-      "score": 1.985489409,
+      "score": 1.984051764,
       "source_file": "lib/sync/financial_cloud_store.dart",
       "status": "preferred",
       "uses": 2
@@ -265,7 +403,7 @@
           "q": "if device A create an invoice and sync it successfully sometimes device B can't find the invoices or the customer statement"
         }
       ],
-      "score": 3.973946067,
+      "score": 3.971068629,
       "source_file": "lib/sync/realtime_sync_service.dart",
       "status": "preferred",
       "uses": 4
@@ -281,8 +419,24 @@
           "q": "fix missing sales invoices and customer statements after another device successfully uploads"
         }
       ],
-      "score": 0.992654943,
+      "score": 0.991936185,
       "source_file": "lib/sync/ui/sync_dashboard_screen.dart",
+      "status": "tentative",
+      "uses": 1
+    },
+    "lib_widgets_invoice_display_widgets_invoicetotalsfooter": {
+      "code_fingerprint": "f1bef2b4df982a8ce39b73052e1b90d47db1861f7a7720db61324b43272cb01a",
+      "label": "InvoiceTotalsFooter",
+      "last": "2026-10-12T18:01:44.887671+00:00",
+      "provenance": [
+        {
+          "date": "2026-10-12T18:01:44.887671+00:00",
+          "outcome": "useful",
+          "q": "Make the purchase invoice footer opened from BuyingInvoiceListPage match the purchase invoice footer on the supplier page."
+        }
+      ],
+      "score": 0.999419316,
+      "source_file": "lib/Widgets/invoice_display_widgets.dart",
       "status": "tentative",
       "uses": 1
     }

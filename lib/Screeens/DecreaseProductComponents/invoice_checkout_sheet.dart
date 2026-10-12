@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import '../../Services/invoice_number_utils.dart';
+import '../../Widgets/payment_breakdown_mismatch_hint.dart';
 
 class CheckoutSelectionResult {
   final String clientName;
@@ -34,6 +35,9 @@ String? validateInvoiceCheckoutPayment({
   required String paymentMethod,
   required bool isReturnInvoice,
 }) {
+  if (paymentMethod.trim().isEmpty) {
+    return 'يرجى اختيار طريقة الدفع';
+  }
   const tolerance = 0.001;
   final isCash = paymentMethod == 'نقداً';
   final isDeferredSale = !isReturnInvoice && paymentMethod == 'آجل';
@@ -181,7 +185,11 @@ class _InvoiceCheckoutSheetContentState
   @override
   void initState() {
     super.initState();
-    paymentMethod = widget.isEditing ? widget.paymentMethod : 'نقداً';
+    paymentMethod = widget.isEditing
+        ? widget.paymentMethod
+        : widget.isReturnInvoice || widget.isQuote
+            ? 'نقداً'
+            : '';
     invoiceDiscount = widget.isEditing ? widget.invoiceDiscount : 0.0;
     discountIsPercent = !widget.isEditing;
     checkoutClient = widget.clientName;
@@ -275,7 +283,8 @@ class _InvoiceCheckoutSheetContentState
 
           if (checkoutClient.trim().isNotEmpty &&
               checkoutClientBalance == null &&
-              !loadingCheckoutClientBalance) {
+              !loadingCheckoutClientBalance &&
+              !checkoutClientNotFound) {
             WidgetsBinding.instance.addPostFrameCallback((_) {
               loadCheckoutClientBalance(checkoutClient);
             });
@@ -975,6 +984,13 @@ class _InvoiceCheckoutSheetContentState
                               ],
                             ),
                           ),
+                          if (!hasInvalidBreakdown &&
+                              (paidCtrl.text.trim().isEmpty ||
+                                  invoiceTryParseAmount(paidCtrl.text) != null))
+                            PaymentBreakdownMismatchHint(
+                              paidAmount: paid,
+                              breakdownTotal: breakdownTotal,
+                            ),
                         ],
                       ),
                     ),
@@ -1000,7 +1016,8 @@ class _InvoiceCheckoutSheetContentState
                                 borderRadius: BorderRadius.circular(8.r)),
                             padding: EdgeInsets.symmetric(vertical: 12.h),
                           ),
-                          onPressed: widget.isSaving
+                          onPressed: widget.isSaving ||
+                                  paymentMethod.trim().isEmpty
                               ? null
                               : () async {
                                   if (checkoutClient.trim().isEmpty) {
