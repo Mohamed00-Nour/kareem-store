@@ -285,6 +285,14 @@ class SyncOperationDiagnostics {
       resources.add('products/$productId');
     }
     if (operationType == 'updateBox') resources.add('box/mainBox');
+    if (const {
+      'createPaymentBreakdown',
+      'upsertPaymentBreakdown',
+      'deletePaymentBreakdown',
+    }.contains(operationType)) {
+      final paymentId = _firstText([payload['id']]);
+      if (paymentId != null) resources.add('payment_breakdowns/$paymentId');
+    }
     if (payload['financialFormat'] != 2 &&
         const {
           'createClient',

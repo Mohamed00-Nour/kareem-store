@@ -4,6 +4,7 @@ import '../local_db/hive_init.dart';
 import '../local_db/models/balance_history_local.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/product_repository.dart';
+import '../repositories/payment_breakdown_repository.dart';
 import '../sync/local_operation_journal.dart';
 import '../sync/cloud_snapshot_guard.dart';
 import '../sync/financial_cloud_store.dart';
@@ -267,6 +268,7 @@ class CustomerOperationService {
         plan.cloud('clients/$clientId/$collection/$clientSubDocId',
             deleted: true);
       plan.removeInvoiceHistory(clientId, invoiceId, isReturn);
+      plan.removeInvoicePaymentBreakdowns(invoiceId);
       final deltas = <String, double>{};
       for (final line in _lines(data)) {
         final product = _product(line);
@@ -511,6 +513,19 @@ class _Plan {
         'type': entry.value >= 0 ? 'increase' : 'decrease',
         'invoiceNumber': number
       });
+    }
+  }
+
+  void removeInvoicePaymentBreakdowns(String invoiceId) {
+    final ids = <String>{
+      'invoice_$invoiceId',
+      for (final entry in PaymentBreakdownRepository.instance.box.values)
+        if (entry.invoiceId.trim() == invoiceId) entry.id,
+    };
+    for (final paymentId in ids) {
+      local(HiveBoxNames.paymentBreakdowns, paymentId, null);
+      cloud('payment_breakdowns/$paymentId',
+          data: {'invoiceId': invoiceId, 'deleted': true}, deleted: true);
     }
   }
 

@@ -15,6 +15,8 @@ import 'package:kareem_store/Services/invoice_footer_data.dart';
 import 'package:kareem_store/Services/supplier_operation_service.dart';
 import 'package:kareem_store/Services/supplier_balance_store.dart';
 import 'package:kareem_store/repositories/client_repository.dart';
+import 'package:kareem_store/repositories/payment_breakdown_repository.dart';
+import 'package:kareem_store/local_db/models/payment_breakdown_local.dart';
 import 'package:kareem_store/sync/batch_sync_engine.dart';
 import 'package:kareem_store/local_db/hive_init.dart';
 import 'package:kareem_store/local_db/models/invoice_local.dart';
@@ -581,6 +583,57 @@ void main() {
       }
     });
   }
+
+  test('invoice deletion removes the payment record on both devices', () async {
+    await useDevice('a');
+    final clientId = await CustomerOperationService.createClient(
+        name: 'Payment customer', openingBalance: 0);
+    await CustomerOperationService.saveInvoice({
+      'id': 'paid-sale',
+      'clientId': clientId,
+      'clientName': 'Payment customer',
+      'invoiceNumber': 1,
+      'date': DateTime.now(),
+      'totalSum': 100.0,
+      'paidAmount': 20.0,
+      'products': [],
+    });
+    await uploadScenario();
+    final payment = PaymentBreakdownLocal(
+        id: 'invoice_paid-sale',
+        invoiceId: 'paid-sale',
+        cash: 20,
+        date: DateTime.now(),
+        timestamp: DateTime.now());
+    final original = {...payment.toFirestore(), '_version': 1};
+    cloud.documents['payment_breakdowns/${payment.id}'] = original;
+    await PaymentBreakdownRepository.instance.mergeCloud(payment.id, original);
+    await useDevice('b');
+    await service.refreshFromServer();
+    await PaymentBreakdownRepository.instance.mergeCloud(payment.id, original);
+    expect(PaymentBreakdownRepository.instance.getAll(), hasLength(1));
+    await useDevice('a');
+    await CustomerOperationService.deleteInvoice('paid-sale');
+    expect(PaymentBreakdownRepository.instance.getAll(), isEmpty);
+    await uploadScenario();
+    expect(
+        cloud.documents['payment_breakdowns/${payment.id}']!['_deleted'], true);
+    await useDevice('b');
+    await service.refreshFromServer();
+    expect(invoicesBox.get('paid-sale'), isNull);
+    expect(PaymentBreakdownRepository.instance.box.isEmpty, true);
+    expect(CustomerBalanceStore.balance(clientId), 0);
+    expect(boxCacheBox.get('mainBox')!.value, 0);
+    // Older cached data and unknown legacy document IDs cannot revive it.
+    await PaymentBreakdownRepository.instance.mergeCloud(payment.id, original);
+    await PaymentBreakdownRepository.instance.mergeCloud('legacy-linked', {
+      ...original,
+      '_version': 0,
+    });
+    expect(PaymentBreakdownRepository.instance.box.isEmpty, true);
+    await service.refreshFromServer();
+    expect(PaymentBreakdownRepository.instance.getAll(), isEmpty);
+  });
 
   test('real supplier creation and purchase hydrate a clean receiver balance',
       () async {

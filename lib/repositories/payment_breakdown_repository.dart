@@ -9,13 +9,15 @@ import '../sync/connectivity_service.dart';
 import '../sync/firestore_read_diagnostics.dart';
 import '../sync/firestore_sync_checkpoint.dart';
 import '../sync/sync_queue_manager.dart';
+import '../sync/cloud_snapshot_guard.dart';
+import '../sync/local_operation_journal.dart';
 
 class PaymentBreakdownRepository {
   PaymentBreakdownRepository._internal();
   static final PaymentBreakdownRepository instance =
       PaymentBreakdownRepository._internal();
 
-  static const String boxName = 'paymentBreakdownsBox';
+  static const String boxName = HiveBoxNames.paymentBreakdowns;
 
   Box<PaymentBreakdownLocal>? _box;
 
@@ -39,6 +41,27 @@ class PaymentBreakdownRepository {
   Future<void> upsertLocal(PaymentBreakdownLocal entry) async {
     await box.put(entry.id, entry);
   }
+
+  bool _invoiceDeleted(String invoiceId) =>
+      invoiceId.isNotEmpty &&
+      (appMetaBox.get('deletedCustomerInvoice:invoices:$invoiceId') == true ||
+          appMetaBox.get('deletedCustomerInvoice:returnInvoices:$invoiceId') ==
+              true);
+
+  Future<void> mergeCloud(String id, Map<String, dynamic>? data) =>
+      LocalOperationJournal.exclusive(() async {
+        final path = 'payment_breakdowns/$id';
+        if (!CloudSnapshotGuard.accepts(path, data)) return;
+        if (data == null ||
+            data['deleted'] == true ||
+            data['_deleted'] == true ||
+            _invoiceDeleted(data['invoiceId']?.toString().trim() ?? '')) {
+          await box.delete(id);
+        } else {
+          await upsertLocal(PaymentBreakdownLocal.fromFirestore(id, data));
+        }
+        if (data != null) await CloudSnapshotGuard.record(path, data);
+      });
 
   /// Saves a legacy unlinked breakdown. New invoice flows should use
   /// [saveForInvoice] so editing an invoice updates the same record.
@@ -163,15 +186,17 @@ class PaymentBreakdownRepository {
     final endOfDay = DateTime(end.year, end.month, end.day, 23, 59, 59, 999);
 
     return box.values.where((item) {
-      return item.date
-              .isAfter(startOfDay.subtract(const Duration(seconds: 1))) &&
+      return !_invoiceDeleted(item.invoiceId.trim()) &&
+          item.date.isAfter(startOfDay.subtract(const Duration(seconds: 1))) &&
           item.date.isBefore(endOfDay.add(const Duration(seconds: 1)));
     }).toList();
   }
 
   /// Fetch all entries from local Hive
   List<PaymentBreakdownLocal> getAll() {
-    return box.values.toList();
+    return box.values
+        .where((entry) => !_invoiceDeleted(entry.invoiceId.trim()))
+        .toList();
   }
 
   /// Imports the initial collection once, then only records changed since the
@@ -204,13 +229,7 @@ class PaymentBreakdownRepository {
       );
 
       for (final doc in snap.docs) {
-        final data = doc.data();
-        if (data['deleted'] == true || data['_deleted'] == true) {
-          await box.delete(doc.id);
-        } else {
-          final local = PaymentBreakdownLocal.fromFirestore(doc.id, data);
-          await upsertLocal(local);
-        }
+        await mergeCloud(doc.id, doc.data());
       }
       final previous = DateTime.tryParse(cursor ?? '');
       final checkpoint = FirestoreSyncCheckpoint.newest(

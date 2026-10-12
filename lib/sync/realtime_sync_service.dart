@@ -15,6 +15,7 @@ import '../repositories/product_repository.dart';
 import '../repositories/quote_repository.dart';
 import '../repositories/supplier_repository.dart';
 import '../repositories/supplier_voucher_repository.dart';
+import '../repositories/payment_breakdown_repository.dart';
 import 'financial_cloud_store.dart';
 import 'cloud_snapshot_guard.dart';
 import 'firestore_read_diagnostics.dart';
@@ -504,6 +505,7 @@ class RealtimeSyncService {
       quotesBox.flush(),
       boxCacheBox.flush(),
       balanceHistoryBox.flush(),
+      PaymentBreakdownRepository.instance.box.flush(),
       appMetaBox.flush(),
     ]);
   }
@@ -520,6 +522,7 @@ class RealtimeSyncService {
         'price_quotes',
         'client_vouchers',
         'supplier_vouchers',
+        'payment_breakdowns',
         'suppliers',
         'buying invoices',
         'box',
@@ -565,6 +568,9 @@ class RealtimeSyncService {
         break;
       case 'supplier_vouchers':
         await SupplierVoucherRepository.mergeCloud(parts[1], data);
+        break;
+      case 'payment_breakdowns':
+        await PaymentBreakdownRepository.instance.mergeCloud(parts[1], data);
         break;
       case 'suppliers':
         await SupplierRepository.instance.mergeCloud(parts[1], data,

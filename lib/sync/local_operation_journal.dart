@@ -11,6 +11,7 @@ import '../local_db/models/invoice_local.dart';
 import '../local_db/models/balance_history_local.dart';
 import '../local_db/models/box_local.dart';
 import '../local_db/models/quote_local.dart';
+import '../local_db/models/payment_breakdown_local.dart';
 import 'sync_operation_diagnostics.dart';
 
 /// Write-ahead outbox. Absolute after-images are flushed before an operation
@@ -111,6 +112,9 @@ class LocalOperationJournal {
         case HiveBoxNames.quotes:
           box = quotesBox;
           break;
+        case HiveBoxNames.paymentBreakdowns:
+          box = Hive.box<PaymentBreakdownLocal>(HiveBoxNames.paymentBreakdowns);
+          break;
         case HiveBoxNames.appMeta:
           box = appMetaBox;
           break;
@@ -167,6 +171,10 @@ class LocalOperationJournal {
             break;
           case HiveBoxNames.quotes:
             value = QuoteLocal.fromFirestore(key, data as Map<String, dynamic>);
+            break;
+          case HiveBoxNames.paymentBreakdowns:
+            value = PaymentBreakdownLocal.fromFirestore(
+                key, data as Map<String, dynamic>);
             break;
         }
         await box.put(key, value);

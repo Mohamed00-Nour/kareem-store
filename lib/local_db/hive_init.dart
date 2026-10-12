@@ -29,6 +29,7 @@ class HiveBoxNames {
   static const String box = 'box_cache';
   static const String balanceHistory = 'balance_history_cache';
   static const String departments = 'departments_cache';
+  static const String paymentBreakdowns = 'paymentBreakdownsBox';
 }
 
 /// Keys for the appMeta box.
@@ -115,7 +116,7 @@ Future<void> initHive({String? directory}) async {
   await open<BoxLocal>(HiveBoxNames.box);
   await open<BalanceHistoryLocal>(HiveBoxNames.balanceHistory);
   await open<DepartmentLocal>(HiveBoxNames.departments);
-  await open<PaymentBreakdownLocal>('paymentBreakdownsBox');
+  await open<PaymentBreakdownLocal>(HiveBoxNames.paymentBreakdowns);
   debugPrint('All Hive boxes opened in ${total.elapsedMilliseconds} ms');
 }
 

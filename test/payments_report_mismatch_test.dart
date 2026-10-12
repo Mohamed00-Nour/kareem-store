@@ -10,6 +10,7 @@ import 'package:kareem_store/local_db/models/payment_breakdown_local.dart';
 import 'package:kareem_store/reports/PaymentsReportPage.dart';
 import 'package:kareem_store/repositories/invoice_repository.dart';
 import 'package:kareem_store/repositories/payment_breakdown_repository.dart';
+import 'package:kareem_store/Services/customer_operation_service.dart';
 
 void main() {
   late Directory directory;
@@ -103,6 +104,29 @@ void main() {
         InvoiceRepository.instance.upsertReturnLocal('return', invoice(100)));
     await reload(tester);
     expect(mismatch, findsOneWidget);
+  });
+
+  testWidgets('deleting a sales invoice updates the open payments report',
+      (tester) async {
+    await tester.runAsync(() async {
+      final clientId = await CustomerOperationService.createClient(
+          name: 'Hint customer', openingBalance: 0);
+      await CustomerOperationService.saveInvoice({
+        ...invoice(100),
+        'id': 'sale',
+        'clientId': clientId,
+      });
+      await PaymentBreakdownRepository.instance.upsertLocal(breakdown());
+    });
+    await openReport(tester);
+    expect(find.text('Hint customer'), findsOneWidget);
+    await tester.runAsync(() => CustomerOperationService.deleteInvoice('sale'));
+    await reload(tester);
+    expect(find.text('Hint customer'), findsNothing);
+    expect(
+        find.text('لا توجد عمليات مدفوعات مسجلة لهذه الفترة'), findsOneWidget);
+    expect(PaymentBreakdownRepository.instance.getAll(), isEmpty);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('currency rounding does not flag equal amounts', (tester) async {

@@ -18,6 +18,12 @@ class CloudSnapshotGuard {
                   .keys
                   .any((id) => path == 'suppliers/$id')) return true;
         } else {
+          if (path == 'payment_breakdowns/${data['id']}' &&
+              const {
+                'createPaymentBreakdown',
+                'upsertPaymentBreakdown',
+                'deletePaymentBreakdown',
+              }.contains(item.operationType)) return true;
           final id = data['invoiceId'];
           if (path == 'buying invoices/$id' &&
               [

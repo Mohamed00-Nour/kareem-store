@@ -10,6 +10,7 @@ import 'package:kareem_store/local_db/models/balance_history_local.dart';
 import 'package:kareem_store/local_db/models/box_local.dart';
 import 'package:kareem_store/local_db/models/quote_local.dart';
 import 'package:kareem_store/local_db/models/sync_queue_item.dart';
+import 'package:kareem_store/local_db/models/payment_breakdown_local.dart';
 import 'package:kareem_store/Services/customer_balance_store.dart';
 import 'package:kareem_store/Services/customer_operation_service.dart';
 import 'package:kareem_store/Services/invoice_footer_data.dart';
@@ -27,6 +28,7 @@ import 'package:kareem_store/repositories/client_repository.dart';
 import 'package:kareem_store/repositories/invoice_repository.dart';
 import 'package:kareem_store/repositories/product_repository.dart';
 import 'package:kareem_store/repositories/box_repository.dart';
+import 'package:kareem_store/repositories/payment_breakdown_repository.dart';
 import 'package:kareem_store/sync/local_operation_journal.dart';
 import 'package:kareem_store/sync/cloud_snapshot_guard.dart';
 import 'package:kareem_store/sync/financial_cloud_store.dart';
@@ -102,6 +104,8 @@ void main() {
     await Hive.openBox<QuoteLocal>(HiveBoxNames.quotes);
     await Hive.openBox<SyncQueueItem>(HiveBoxNames.syncQueue);
     await Hive.openBox(HiveBoxNames.appMeta);
+    await Hive.openBox<PaymentBreakdownLocal>(
+        PaymentBreakdownRepository.boxName);
   }
 
   Map<String, dynamic> invoice(
@@ -153,6 +157,7 @@ void main() {
     Hive.registerAdapter(BoxLocalAdapter());
     Hive.registerAdapter(QuoteLocalAdapter());
     Hive.registerAdapter(SyncQueueItemAdapter());
+    Hive.registerAdapter(PaymentBreakdownLocalAdapter());
     await openBoxes();
   });
   setUp(() async {
@@ -165,7 +170,8 @@ void main() {
       boxCacheBox,
       quotesBox,
       syncQueueBox,
-      appMetaBox
+      appMetaBox,
+      PaymentBreakdownRepository.instance.box,
     ]) {
       await box.clear();
     }
@@ -194,6 +200,111 @@ void main() {
   tearDownAll(() async {
     await Hive.close();
     await directory.delete(recursive: true);
+  });
+
+  test(
+      'invoice deletion removes only linked payment records and retries atomically',
+      () async {
+    await CustomerOperationService.saveInvoice(invoice());
+    await drain();
+    for (final id in ['invoice_s', 'old-linked-id', 'other', 'unlinked']) {
+      final entry = PaymentBreakdownLocal(
+        id: id,
+        invoiceId: id == 'other'
+            ? 'another-invoice'
+            : id == 'unlinked'
+                ? ''
+                : 's',
+        invoiceNumber: '1',
+        clientName: 'Test customer',
+        cash: 20,
+        date: date,
+        timestamp: date,
+      );
+      await PaymentBreakdownRepository.instance.upsertLocal(entry);
+      cloud.documents['payment_breakdowns/$id'] = entry.toFirestore();
+    }
+    await CustomerOperationService.deleteInvoice('s');
+    expect(
+        PaymentBreakdownRepository.instance.getAll().map((entry) => entry.id),
+        unorderedEquals(['other', 'unlinked']));
+    expectLocal(50, 10, 100);
+    cloud.failBeforeCommit = true;
+    await drain();
+    expect(cloud.documents['invoices/s']!['_deleted'], false);
+    expect(cloud.documents['payment_breakdowns/invoice_s']!['deleted'],
+        isNot(true));
+    await Hive.close();
+    await openBoxes();
+    expect(PaymentBreakdownRepository.instance.box.containsKey('invoice_s'),
+        false);
+    cloud.failBeforeCommit = false;
+    cloud.loseAcknowledgement = true;
+    await SyncQueueManager.instance.resetFailedItems();
+    await drain();
+    for (final id in ['invoice_s', 'old-linked-id']) {
+      expect(cloud.documents['payment_breakdowns/$id']!['_deleted'], true);
+    }
+    expectCloud(50, 10, 100);
+    await SyncQueueManager.instance.resetFailedItems();
+    await drain();
+    expect(syncQueueBox.isEmpty, true);
+    expectCloud(50, 10, 100);
+    expectLocal(50, 10, 100);
+    expect(cloud.documents['payment_breakdowns/other']!['cash'], 20);
+    expect(cloud.documents['payment_breakdowns/unlinked']!['cash'], 20);
+  });
+
+  test('a stale payment upload cannot recreate a deleted invoice payment',
+      () async {
+    await CustomerOperationService.saveInvoice(invoice());
+    await drain();
+    await CustomerOperationService.deleteInvoice('s');
+    await drain();
+    final stale = PaymentBreakdownLocal(
+        id: 'late-payment',
+        invoiceId: 's',
+        cash: 20,
+        date: date,
+        timestamp: date);
+    await PaymentBreakdownRepository.instance.upsertLocal(stale);
+    await SyncQueueManager.instance.enqueue(
+      operationType: 'upsertPaymentBreakdown',
+      payload: {'id': stale.id, 'data': stale.toFirestore()},
+    );
+    await drain();
+    expect(syncQueueBox.isEmpty, true);
+    expect(PaymentBreakdownRepository.instance.getAll(), isEmpty);
+    expect(
+        cloud.documents['payment_breakdowns/late-payment']!['_deleted'], true);
+    expectCloud(50, 10, 100);
+  });
+
+  test('a payment waits for an unavailable invoice instead of being discarded',
+      () async {
+    final payment = PaymentBreakdownLocal(
+        id: 'future-payment',
+        invoiceId: 'future-sale',
+        cash: 20,
+        date: date,
+        timestamp: date);
+    await PaymentBreakdownRepository.instance.upsertLocal(payment);
+    await SyncQueueManager.instance.enqueue(
+      operationType: 'upsertPaymentBreakdown',
+      payload: {'id': payment.id, 'data': payment.toFirestore()},
+    );
+    await drain();
+    expect(syncQueueBox.values.single.status, 'failed');
+    expect(PaymentBreakdownRepository.instance.getAll(), hasLength(1));
+    expect(cloud.documents['payment_breakdowns/future-payment'], isNull);
+    cloud.documents['invoices/future-sale'] = invoice(id: 'future-sale');
+    await SyncQueueManager.instance.resetFailedItems();
+    await drain();
+    expect(syncQueueBox.isEmpty, true);
+    expect(cloud.documents['payment_breakdowns/future-payment']!['_deleted'],
+        false);
+    expect(PaymentBreakdownRepository.instance.getAll(), hasLength(1));
+    expectCloud(50, 10, 100);
   });
 
   test('legacy financial uploads remain visible and cannot be replayed blindly',

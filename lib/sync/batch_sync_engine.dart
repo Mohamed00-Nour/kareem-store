@@ -3,6 +3,7 @@ import '../repositories/box_repository.dart';
 import '../repositories/quote_repository.dart';
 import '../repositories/customer_voucher_repository.dart';
 import '../repositories/supplier_voucher_repository.dart';
+import '../repositories/payment_breakdown_repository.dart';
 import '../Services/customer_balance_store.dart';
 import '../Services/supplier_balance_store.dart';
 import 'dart:async';
@@ -185,6 +186,9 @@ class BatchSyncEngine {
           break;
         case 'supplier_vouchers':
           await SupplierVoucherRepository.mergeCloud(parts[1], data);
+          break;
+        case 'payment_breakdowns':
+          await PaymentBreakdownRepository.instance.mergeCloud(parts[1], data);
           break;
       }
     }
@@ -447,12 +451,34 @@ class BatchSyncEngine {
     final id = payload['id']?.toString() ?? '';
     if (id.isEmpty) return;
     final data = Map<String, dynamic>.from(payload['data'] as Map? ?? {});
-    data['deleted'] = false;
-    data['updatedAt'] = FieldValue.serverTimestamp();
-    await _fs
-        .collection('payment_breakdowns')
-        .doc(id)
-        .set(data, SetOptions(merge: true));
+    final invoiceId = data['invoiceId']?.toString().trim() ?? '';
+    final result = await (cloudStore ?? FirestoreFinancialCloudStore())
+        .transaction((tx) async {
+      final path = 'payment_breakdowns/$id';
+      final previous = await tx.read(path);
+      Map<String, dynamic>? invoice;
+      if (invoiceId.isNotEmpty) {
+        invoice = await tx.read('invoices/$invoiceId') ??
+            await tx.read('returnInvoices/$invoiceId');
+      }
+      if (invoiceId.isNotEmpty && invoice == null) {
+        throw StateError('Linked invoice is not yet available: $invoiceId');
+      }
+      final deleted = invoice?['_deleted'] == true;
+      tx.write(path, {
+        ...?previous,
+        ...data,
+        'deleted': deleted,
+        '_deleted': deleted,
+        '_version': syncDouble(previous?['_version']).toInt() + 1,
+        'updatedAt': FieldValue.serverTimestamp(),
+      });
+      return {'deleted': deleted};
+    });
+    if (result['deleted'] == true) {
+      await LocalOperationJournal.exclusive(
+          () => PaymentBreakdownRepository.instance.box.delete(id));
+    }
   }
 
   Future<void> _syncDeletePaymentBreakdown(Map<String, dynamic> payload) async {
