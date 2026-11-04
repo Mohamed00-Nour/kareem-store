@@ -114,6 +114,29 @@ class CloudSnapshotGuard {
     }
   }
 
+  /// True when this device already applied [operationId]: it is still in the
+  /// local queue, or its customer/supplier balance event is stored locally
+  /// (created here or downloaded from the server).
+  static bool knowsOperation(String operationId) {
+    if (operationId.isEmpty) return false;
+    if (syncQueueBox.containsKey(operationId)) return true;
+    const prefixes = [
+      'customerBalanceEvent:',
+      'supplierBalanceEvent:',
+      'deferredCustomerEvent:',
+      'deferredSupplierEvent:',
+    ];
+    final suffix = ':$operationId';
+    for (final key in appMetaBox.keys) {
+      if (key is String &&
+          key.endsWith(suffix) &&
+          prefixes.any((prefix) => key.startsWith(prefix))) {
+        return true;
+      }
+    }
+    return false;
+  }
+
   static Future<void> acknowledge(Map<String, dynamic> receipt) async {
     for (final entry in (receipt['versions'] as Map).entries) {
       final key = versionKey(entry.key.toString());

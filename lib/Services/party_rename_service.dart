@@ -1,6 +1,10 @@
 import 'package:cloud_firestore/cloud_firestore.dart';
+import 'package:hive/hive.dart';
 
+import '../local_db/hive_init.dart';
+import '../local_db/models/invoice_local.dart';
 import '../sync/firestore_read_diagnostics.dart';
+import '../sync/local_operation_journal.dart';
 
 class PartyRenameException implements Exception {
   final String message;
@@ -70,6 +74,14 @@ class PartyRenameService {
       await _updateClientNameInCollection(
           'returnInvoices', namesToUpdate, trimmed);
     }
+    await _renameLocally(
+      partyBox: clientsBox,
+      partyId: oldClientId,
+      invoiceBoxes: [invoicesBox, returnInvoicesBox],
+      oldNames: namesToUpdate,
+      newName: trimmed,
+      isSupplier: false,
+    );
   }
 
   static Future<void> renameSupplier({
@@ -121,7 +133,54 @@ class PartyRenameService {
     if (oldName.isNotEmpty) {
       await _updateSupplierNameInBuyingInvoices(oldName, trimmed);
     }
+    await _renameLocally(
+      partyBox: suppliersBox,
+      partyId: supplierId,
+      invoiceBoxes: [buyingInvoicesBox],
+      oldNames: {oldName}..removeWhere((n) => n.isEmpty),
+      newName: trimmed,
+      isSupplier: true,
+    );
   }
+
+  /// Applies a completed Firestore rename to the matching local records, so
+  /// the next invoice edit starts from the same name that is in the cloud.
+  static Future<void> _renameLocally({
+    required Box partyBox,
+    required String partyId,
+    required List<Box<InvoiceLocal>> invoiceBoxes,
+    required Set<String> oldNames,
+    required String newName,
+    required bool isSupplier,
+  }) =>
+      LocalOperationJournal.exclusive(() async {
+        final party = partyBox.get(partyId);
+        if (party != null && party.name != newName) {
+          party.name = newName;
+          await partyBox.put(partyId, party);
+          await partyBox.flush();
+        }
+        if (oldNames.isEmpty) return;
+        for (final box in invoiceBoxes) {
+          final changed = <dynamic, InvoiceLocal>{};
+          for (final key in box.keys) {
+            final invoice = box.get(key);
+            if (invoice == null) continue;
+            final name = isSupplier ? invoice.supplierName : invoice.clientName;
+            if (!oldNames.contains(name)) continue;
+            if (isSupplier) {
+              invoice.supplierName = newName;
+            } else {
+              invoice.clientName = newName;
+            }
+            changed[key] = invoice;
+          }
+          if (changed.isNotEmpty) {
+            await box.putAll(changed);
+            await box.flush();
+          }
+        }
+      });
 
   static Future<void> _migrateClientDocument({
     required String oldClientId,

@@ -88,7 +88,8 @@ class BatchSyncEngine {
       Map<String, dynamic>? financialReceipt;
       if (payload['financialFormat'] == 2) {
         financialReceipt = await FinancialCloudUploader.upload(item.operationId,
-                payload, cloudStore ?? FirestoreFinancialCloudStore())
+                payload, cloudStore ?? FirestoreFinancialCloudStore(),
+                isKnownOperation: CloudSnapshotGuard.knowsOperation)
             .timeout(const Duration(seconds: 35));
         await LocalOperationJournal.exclusive(() async {
           await CloudSnapshotGuard.acknowledge(financialReceipt!);

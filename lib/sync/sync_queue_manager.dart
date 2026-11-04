@@ -256,6 +256,18 @@ class SyncQueueManager {
         item.nextRetryAt = null;
         changed = true;
       }
+      if (canRecheckInvoiceEditConflict(item)) {
+        // Older builds blocked these edits without checking whether the cloud
+        // change was already applied on this device. Re-check each one once;
+        // a real conflict fails again with the newer detailed message.
+        item.status = 'pending';
+        item.retryCount = 0;
+        item.lastError = null;
+        item.errorCategory = null;
+        item.errorCode = null;
+        item.nextRetryAt = null;
+        changed = true;
+      }
       if (changed) await item.save();
     }
     final interrupted = syncQueueBox.values
@@ -321,6 +333,27 @@ class SyncQueueManager {
     try {
       return isRetryableBuyingInvoiceCopyConflict(
           decodePayload(item), item.lastError);
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// True for an invoice edit blocked by an older build. Those error messages
+  /// lack the details added by this build, so each item is re-checked once.
+  bool canRecheckInvoiceEditConflict(SyncQueueItem item) {
+    if (item.status != 'failed' ||
+        !const {'editInvoice', 'editBuyingInvoice'}
+            .contains(item.operationType)) {
+      return false;
+    }
+    final error = item.lastError ?? '';
+    final olderConflict = (error.contains('Concurrent change to ') &&
+            !error.contains('(expected: ')) ||
+        (error.contains('Invoice lines or customer changed: ') &&
+            !error.contains('(field: '));
+    if (!olderConflict) return false;
+    try {
+      return decodePayload(item)['financialFormat'] == 2;
     } catch (_) {
       return false;
     }

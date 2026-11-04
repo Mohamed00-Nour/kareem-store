@@ -158,8 +158,12 @@ class FinancialCloudUploader {
   static const String feedHeadPath =
       'financial_operation_receipts/_change_feed_head';
 
+  /// [isKnownOperation] reports whether this device has already applied a
+  /// cloud operation. It lets an edit continue when the invoice content is
+  /// unchanged and only the stored change stamp differs.
   static Future<Map<String, dynamic>> upload(String operationId,
-      Map<String, dynamic> payload, FinancialCloudStore store) {
+      Map<String, dynamic> payload, FinancialCloudStore store,
+      {bool Function(String operationId)? isKnownOperation}) {
     return store.transaction((tx) async {
       final markerPath = 'financial_operation_receipts/$operationId';
       final existing = await tx.read(markerPath);
@@ -264,16 +268,31 @@ class FinancialCloudUploader {
             (write['increments'] as Map? ?? {}).isNotEmpty &&
             (old == null || old['_deleted'] == true))
           throw StateError('Product missing: ' + path);
-        if (write['expectedFinancialState'] != null &&
-            jsonEncode(financialInvoiceState(old!)) !=
-                jsonEncode(write['expectedFinancialState']))
-          throw StateError('Invoice lines or customer changed: ' +
-              path +
-              '; review before retrying');
+        final expectedState = write['expectedFinancialState'] is Map
+            ? Map<String, dynamic>.from(write['expectedFinancialState'] as Map)
+            : null;
+        if (expectedState != null) {
+          final field = financialStateDifference(
+              financialInvoiceState(old!), expectedState);
+          if (field != null)
+            throw StateError('Invoice lines or customer changed: ' +
+                path +
+                '; review before retrying (field: $field)');
+        }
         if (write.containsKey('expectedOperationId') &&
             (old?['_operationId'] ?? '') != write['expectedOperationId']) {
-          throw StateError(
-              'Concurrent change to $path; review before retrying');
+          // The invoice content was verified above. A different stamp is safe
+          // only when this device has already applied that cloud change.
+          final found = old?['_operationId'];
+          final known = found is String &&
+              found.isNotEmpty &&
+              isKnownOperation?.call(found) == true;
+          if (expectedState == null || !known) {
+            final wanted = write['expectedOperationId']?.toString() ?? '';
+            throw StateError('Concurrent change to $path; review before '
+                'retrying (expected: ${wanted.isEmpty ? 'none' : wanted}, '
+                'found: ${found ?? 'none'})');
+          }
         }
         final expected = write['expectedFields'] as Map?;
         if (expected != null && old != null) {
@@ -291,6 +310,9 @@ class FinancialCloudUploader {
           ...?old,
           ...?write['data'] as Map<String, dynamic>?
         };
+        if (expectedState != null && old != null) {
+          _keepRenamedPartyNames(data, old, expectedState);
+        }
         for (final entry in (write['increments'] as Map? ?? {}).entries) {
           data[entry.key.toString()] =
               invoiceNum(data[entry.key]) + invoiceNum(entry.value);
@@ -383,6 +405,27 @@ class FinancialCloudUploader {
       });
       return receipt;
     });
+  }
+
+  /// A rename updates invoice names in Firestore directly. When an edit was
+  /// planned from the old local name of the same party, keep the newer cloud
+  /// name instead of writing the old one back.
+  static void _keepRenamedPartyNames(Map<String, dynamic> data,
+      Map<String, dynamic> cloud, Map<String, dynamic> expected) {
+    for (final keys in const [
+      ['clientId', 'clientName'],
+      ['supplierId', 'supplierName'],
+    ]) {
+      final id = cloud[keys[0]]?.toString() ?? '';
+      final cloudName = cloud[keys[1]]?.toString() ?? '';
+      final expectedName = expected[keys[1]]?.toString() ?? '';
+      if (id.isNotEmpty &&
+          id == (expected[keys[0]]?.toString() ?? '') &&
+          cloudName != expectedName &&
+          (data[keys[1]]?.toString() ?? '') == expectedName) {
+        data[keys[1]] = cloud[keys[1]];
+      }
+    }
   }
 
   /// A delete is the user's intent for the invoice currently stored in the
@@ -703,6 +746,27 @@ class FinancialCloudUploader {
       });
     }
   }
+}
+
+/// Returns the first financial field that differs, or null when both states
+/// match. A party name is only compared when its ID is missing, because a
+/// rename changes the display name without changing the party.
+String? financialStateDifference(
+    Map<String, dynamic> actual, Map<String, dynamic> expected) {
+  bool sameParty(String idKey) {
+    final id = actual[idKey]?.toString() ?? '';
+    return id.isNotEmpty && id == (expected[idKey]?.toString() ?? '');
+  }
+
+  final ignored = <String>{
+    if (sameParty('clientId')) 'clientName',
+    if (sameParty('supplierId')) 'supplierName',
+  };
+  for (final key in <String>{...actual.keys, ...expected.keys}) {
+    if (ignored.contains(key)) continue;
+    if (jsonEncode(actual[key]) != jsonEncode(expected[key])) return key;
+  }
+  return null;
 }
 
 /// Normalized financial fields used to reject edits based on stale legacy data.

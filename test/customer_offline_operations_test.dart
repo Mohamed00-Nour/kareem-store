@@ -255,6 +255,78 @@ void main() {
     expect(cloud.documents['payment_breakdowns/unlinked']!['cash'], 20);
   });
 
+  test('an edit with a stale local stamp uploads when the cloud change is known',
+      () async {
+    await CustomerOperationService.saveInvoice(invoice());
+    await drain();
+    await CustomerOperationService.saveInvoice(invoice(total: 120),
+        editing: true);
+    await drain();
+    // Reproduces invoice 791: the content matches, but the local stamp no
+    // longer names the edit this device itself uploaded a moment earlier.
+    await appMetaBox.put(
+        CloudSnapshotGuard.operationKey('invoices/s'), 'stale-stamp');
+    await CustomerOperationService.saveInvoice(invoice(total: 150),
+        editing: true);
+    await drain();
+
+    expect(syncQueueBox.isEmpty, isTrue);
+    expect(cloud.documents['invoices/s']!['totalSum'], 150);
+    expectCloud(180, 8, 120);
+    expectLocal(180, 8, 120);
+  });
+
+  test('an edit still stops when another device changed the invoice stamp',
+      () async {
+    await CustomerOperationService.saveInvoice(invoice());
+    await drain();
+    await CustomerOperationService.saveInvoice(invoice(total: 120),
+        editing: true);
+    cloud.documents['invoices/s']!['_operationId'] = 'another-device-edit';
+    await drain();
+
+    final item = syncQueueBox.values.single;
+    expect(item.status, 'failed');
+    expect(item.lastError, contains('Concurrent change to invoices/s'));
+    expect(item.lastError, contains('found: another-device-edit'));
+    expect(SyncQueueManager.instance.canRetryAutomatically(item), isFalse);
+    expectCloud(130, 8, 120);
+  });
+
+  test('a renamed customer does not block an edit or restore the old name',
+      () async {
+    await CustomerOperationService.saveInvoice(invoice());
+    await drain();
+    // PartyRenameService changes invoice names in Firestore directly.
+    cloud.documents['invoices/s']!['clientName'] = 'Renamed customer';
+    await CustomerOperationService.saveInvoice(invoice(total: 120),
+        editing: true);
+    await drain();
+
+    expect(syncQueueBox.isEmpty, isTrue);
+    expect(cloud.documents['invoices/s']!['clientName'], 'Renamed customer');
+    expect(cloud.documents['invoices/s']!['totalSum'], 120);
+    expectCloud(150, 8, 120);
+  });
+
+  test('an invoice edit blocked by an older build is re-checked once',
+      () async {
+    await CustomerOperationService.saveInvoice(invoice());
+    await drain();
+    await CustomerOperationService.saveInvoice(invoice(total: 120),
+        editing: true);
+    final item = syncQueueBox.values.single;
+    await SyncQueueManager.instance.markFailed(item.operationId,
+        StateError('Concurrent change to invoices/s; review before retrying'));
+    expect(SyncQueueManager.instance.canRetryAutomatically(item), isFalse);
+
+    await drain();
+
+    expect(syncQueueBox.isEmpty, isTrue);
+    expect(cloud.documents['invoices/s']!['totalSum'], 120);
+    expectCloud(150, 8, 120);
+  });
+
   test('a stale payment upload cannot recreate a deleted invoice payment',
       () async {
     await CustomerOperationService.saveInvoice(invoice());
