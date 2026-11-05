@@ -973,7 +973,47 @@ class _AddProductPageState extends State<AddProductPage> {
   // ─────────────────────────────────────────────
   // Product bottom sheet (buying)
   // ─────────────────────────────────────────────
-  void _showProductSheet({int? editIndex, Product? newProduct}) {
+  /// Index of the invoice line that already holds [product], or -1.
+  int _existingLineIndex(Product product) {
+    return _addedProducts.indexWhere((p) {
+      final lineId = p['productId']?.toString() ?? p['id']?.toString() ?? '';
+      if (product.id.isNotEmpty && lineId.isNotEmpty) {
+        return lineId == product.id;
+      }
+      return p['product'] == product.name;
+    });
+  }
+
+  Future<bool> _confirmAddDuplicate() async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('تنبيه'),
+          content: const Text('هذا المنتج تم إضافته بالفعل! هل تريد إضافته مرة أخرى؟'),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('لا'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: const Text('نعم'),
+            ),
+          ],
+        ),
+      ),
+    );
+    return ok == true;
+  }
+
+  Future<void> _showProductSheet({int? editIndex, Product? newProduct}) async {
+    if (editIndex == null &&
+        newProduct != null &&
+        _existingLineIndex(newProduct) != -1) {
+      if (!await _confirmAddDuplicate() || !mounted) return;
+    }
     final Product product = editIndex != null
         ? (() {
             final item = _addedProducts[editIndex];
@@ -1503,10 +1543,25 @@ class _AddProductPageState extends State<AddProductPage> {
                               if (editIndex != null) {
                                 _addedProducts[editIndex] = entry;
                               } else {
-                                int idx = _addedProducts.indexWhere(
-                                    (p) => p['product'] == product.name);
+                                final idx = _existingLineIndex(product);
                                 if (idx != -1) {
-                                  final lineId = _addedProducts[idx]['lineId'];
+                                  // Same product added again: add the new
+                                  // quantity to the existing line (5 + 5 = 10).
+                                  final old = _addedProducts[idx];
+                                  final oldQty = invoiceNum(old['amount']);
+                                  final oldCost = invoiceNum(old['cost']);
+                                  final totalQty = oldQty + qty;
+                                  final totalCost =
+                                      oldQty * oldCost + qty * newCost;
+                                  final avgCost = totalQty > 0
+                                      ? totalCost / totalQty
+                                      : newCost;
+                                  entry['amount'] = totalQty;
+                                  entry['cost'] = avgCost;
+                                  entry['newCostPrice'] = avgCost;
+                                  entry['totalCost'] = totalCost;
+                                  entry['expiryDate'] ??= old['expiryDate'];
+                                  final lineId = old['lineId'];
                                   if (lineId != null) entry['lineId'] = lineId;
                                   _addedProducts[idx] = entry;
                                 } else {
