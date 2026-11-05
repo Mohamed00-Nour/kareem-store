@@ -1088,6 +1088,28 @@ class _InvoiceCheckoutSheetContentState
                                     return;
                                   }
 
+                                  // New sales invoice: an entered payment
+                                  // distribution must be approved as the
+                                  // paid amount ("اعتماده كمدفوع") first.
+                                  final distributed =
+                                      wallet + cash + instapay + bankTransfer;
+                                  final mustApproveBreakdown =
+                                      !widget.isEditing &&
+                                          !widget.isReturnInvoice &&
+                                          !widget.isQuote;
+                                  if (mustApproveBreakdown &&
+                                      distributed > 0.005 &&
+                                      (paidAmount - distributed).abs() >
+                                          0.005) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      const SnackBar(
+                                        content: Text(
+                                            'اضغط "اعتماده كمدفوع" لاعتماد إجمالي التوزيع قبل حفظ الفاتورة'),
+                                      ),
+                                    );
+                                    return;
+                                  }
+
                                   Navigator.pop(
                                       context,
                                       CheckoutSelectionResult(

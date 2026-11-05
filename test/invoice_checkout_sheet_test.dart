@@ -365,4 +365,72 @@ void main() {
     expect(find.textContaining('الفرق: 20 ج.م'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'new sales invoice is not saved until the distribution total is approved',
+      (tester) async {
+    CheckoutSelectionResult? result;
+    await tester.pumpWidget(
+      ScreenUtilInit(
+        designSize: const Size(360, 690),
+        builder: (_, __) => MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showInvoiceCheckoutSheet(
+                    context: context,
+                    isEditing: false,
+                    paymentMethod: '',
+                    invoiceDiscount: 0,
+                    clientName: 'عميل اختبار',
+                    clientBalance: 0,
+                    notes: '',
+                    originalPaidAmount: 0,
+                    totalSum: 500,
+                    clients: const ['عميل اختبار'],
+                    isReturnInvoice: false,
+                    isQuote: false,
+                    isSaving: false,
+                    clientExists: (_) async => true,
+                    fetchClientBalance: (_) async => 0,
+                  );
+                },
+                child: const Text('open checkout'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open checkout'));
+    await tester.pumpAndSettle();
+    final method = find.widgetWithText(ChoiceChip, 'آجل');
+    await tester.ensureVisible(method);
+    await tester.tap(method);
+    await tester.enterText(
+      find.byKey(const Key('invoice-breakdown-cash-field')),
+      '200',
+    );
+    await tester.pump();
+
+    final continueButton =
+        find.byKey(const Key('invoice-checkout-continue-button'));
+    await tester.ensureVisible(continueButton);
+    await tester.tap(continueButton);
+    await tester.pumpAndSettle();
+    expect(result, isNull);
+    expect(find.textContaining('اعتماده كمدفوع'), findsWidgets);
+
+    final applyButton = find.byKey(const Key('apply-payment-breakdown-total'));
+    await tester.ensureVisible(applyButton);
+    await tester.tap(applyButton);
+    await tester.pump();
+    await tester.ensureVisible(continueButton);
+    await tester.tap(continueButton);
+    await tester.pumpAndSettle();
+    expect(result?.paidAmount, 200);
+    expect(tester.takeException(), isNull);
+  });
 }
