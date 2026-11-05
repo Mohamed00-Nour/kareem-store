@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../../Services/invoice_number_utils.dart';
 import '../../Services/invoice_print_ui.dart';
 import '../../Services/invoice_special_service.dart';
 import '../../Services/sales_invoice_actions_service.dart';
@@ -171,7 +172,11 @@ class _InvoiceDetailPageState extends State<InvoiceDetailPage> {
     final changed = await Navigator.push<bool>(
       context,
       MaterialPageRoute(
-        builder: (_) => DecreaseProductPage(invoiceToEdit: editPayload),
+        builder: (_) => DecreaseProductPage(
+          isReturnInvoice: invoiceIsReturn(editPayload) ||
+              editPayload['_sourceCollection'] == 'returnInvoices',
+          invoiceToEdit: editPayload,
+        ),
       ),
     );
     if (changed == true && mounted) {

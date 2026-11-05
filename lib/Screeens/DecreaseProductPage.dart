@@ -71,13 +71,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       return _isEditing ? 'تعديل عرض سعر' : 'عرض سعر';
     }
     if (_isEditing && _editingInvoiceNumber != null) {
-      return 'تعديل فاتورة #$_editingInvoiceNumber';
+      return widget.isReturnInvoice
+          ? 'تعديل فاتورة مرتجع #$_editingInvoiceNumber'
+          : 'تعديل فاتورة #$_editingInvoiceNumber';
     }
     return widget.isReturnInvoice ? 'فواتير المرتجع' : 'المبيعات';
   }
 
+  // Return invoices are edited in place too, so this must not exclude them.
   bool get _isEditing =>
-      !widget.isReturnInvoice &&
       _editingRootInvoiceId != null &&
       _editingRootInvoiceId!.isNotEmpty;
 
@@ -1167,6 +1169,10 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
           sourceCollection: _editingSourceCollection,
         );
       } else if (widget.isReturnInvoice) {
+        // Never turn an edit into a second, new return invoice.
+        if (_isEditing || widget.invoiceToEdit != null) {
+          throw StateError('تعذر تعديل فاتورة المرتجع: بيانات الفاتورة الأصلية غير متوفرة');
+        }
         _lastInvoice = await ReturnInvoiceSaveService.save(
           clientName: effectiveClient,
           selectedDate: _selectedDate,
