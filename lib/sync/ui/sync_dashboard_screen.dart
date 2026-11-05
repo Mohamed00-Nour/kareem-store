@@ -301,6 +301,10 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
       'deleteBuyingInvoice': 'حذف فاتورة مشتريات',
       'createClient': 'إنشاء عميل',
       'createSupplier': 'إنشاء مورد',
+      'renameClient': 'تغيير اسم عميل',
+      'renameClientInvoices': 'تغيير اسم عميل',
+      'renameSupplier': 'تغيير اسم مورد',
+      'renameSupplierInvoices': 'تغيير اسم مورد',
       'updateBox': 'تعديل الصندوق',
     };
     return labels[type] ?? type;

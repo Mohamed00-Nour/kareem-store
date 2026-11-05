@@ -8,6 +8,7 @@ import '../local_db/models/supplier_local.dart';
 import '../repositories/balance_history_repository.dart';
 import '../repositories/supplier_repository.dart';
 import '../sync/connectivity_service.dart';
+import '../utils/entity_name_normalizer.dart';
 import 'DeletedSuppliersPage.dart';
 import 'SupplierInvoicesPage.dart';
 
@@ -24,6 +25,7 @@ class _SupplierInfoCard extends StatelessWidget {
   final String phone;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final bool duplicateName;
 
   const _SupplierInfoCard({
     required this.name,
@@ -31,6 +33,7 @@ class _SupplierInfoCard extends StatelessWidget {
     required this.phone,
     required this.onTap,
     required this.onLongPress,
+    this.duplicateName = false,
   });
 
   @override
@@ -70,6 +73,15 @@ class _SupplierInfoCard extends StatelessWidget {
                   fontWeight: FontWeight.bold,
                 ),
               ),
+              if (duplicateName)
+                Text(
+                  'اسم مكرر',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red.shade900,
+                  ),
+                ),
               const SizedBox(height: 8),
               Text(
                 'الرصيد',
@@ -436,7 +448,7 @@ class _SupplierListPageState extends State<SupplierListPage> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('تم تغيير اسم المورد إلى "$newName"')),
       );
-      setState(() {});
+      _loadFromHive();
     } on PartyRenameException catch (e) {
       if (!mounted) return;
       Navigator.of(context).pop();
@@ -544,6 +556,11 @@ class _SupplierListPageState extends State<SupplierListPage> {
                 if (visibleSuppliers.isEmpty) {
                   return const Center(child: Text('لا يوجد موردين'));
                 }
+                // Two devices can rename suppliers to the same name offline.
+                final duplicateNames = duplicatePartyNameKeys(_suppliers
+                    .where((s) =>
+                        _deletedSuppliersBox?.containsKey(s.id) != true)
+                    .map((s) => s.name));
 
                 return GridView.builder(
                   padding: const EdgeInsets.all(10),
@@ -568,6 +585,8 @@ class _SupplierListPageState extends State<SupplierListPage> {
                       name: name,
                       balance: balance,
                       phone: phone,
+                      duplicateName:
+                          duplicateNames.contains(partyNameKey(name)),
                       onTap: () async {
                         await Navigator.push(
                           context,

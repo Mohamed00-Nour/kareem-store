@@ -13,6 +13,7 @@ import 'sync/sync_queue_manager.dart';
 import 'Services/printer_settings_service.dart';
 import 'Services/customer_balance_store.dart';
 import 'Services/supplier_balance_store.dart';
+import 'Services/party_name_mirror.dart';
 import 'sync/local_operation_journal.dart';
 
 Future<void> main() async {
@@ -32,6 +33,9 @@ Future<void> main() async {
     startupStage = 'restoring customer balance mirrors';
     await CustomerBalanceStore.preserveExistingBalances();
     await SupplierBalanceStore.preserveExistingBalances();
+    // Show each customer's/supplier's current name on local invoices,
+    // including names left stale by older app versions. Display only.
+    await PartyNameMirror.reconcileAll();
     debugPrint(
         'Startup balances complete: ${startupTimer.elapsedMilliseconds} ms');
     startupStage = 'recovering interrupted uploads';

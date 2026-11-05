@@ -47,7 +47,14 @@ class QuoteExecutionService {
       return DateTime.now();
     }();
 
-    var client = ClientRepository.instance.findByName(clientName);
+    // Prefer the customer ID saved on the quote. Looking up only by name would
+    // miss a customer renamed after the quote was made and create a second
+    // customer, moving the sale to the wrong balance.
+    final quoteClientId = quoteData['clientId']?.toString().trim() ?? '';
+    var client = quoteClientId.isEmpty
+        ? null
+        : ClientRepository.instance.getById(quoteClientId);
+    client ??= ClientRepository.instance.findByName(clientName);
     client ??= await QuickEntityCreationService.instance
         .createClient(name: clientName);
     final clientId = client.id;
@@ -71,7 +78,7 @@ class QuoteExecutionService {
       'id': invoiceDocId,
       'invoiceId': invoiceDocId,
       'invoiceNumber': newInvoiceNumber,
-      'clientName': clientName,
+      'clientName': client.name,
       'clientId': clientId,
       'date': date,
       'totalSum': totalSumFinal,

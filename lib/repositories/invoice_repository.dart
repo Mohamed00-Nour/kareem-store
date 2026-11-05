@@ -2,6 +2,7 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive/hive.dart';
 import '../local_db/hive_init.dart';
 import '../local_db/models/invoice_local.dart';
+import '../Services/party_name_mirror.dart';
 import '../sync/cloud_snapshot_guard.dart';
 import '../sync/cloud_refresh_gate.dart';
 import '../sync/firestore_read_diagnostics.dart';
@@ -47,8 +48,22 @@ class InvoiceRepository {
   InvoiceLocal? getSaleById(String id) => invoicesBox.get(id);
 
   Future<void> upsertSaleLocal(String id, Map<String, dynamic> data) async {
-    await invoicesBox.put(
-        id, InvoiceLocal.fromFirestore(id, data, defaultType: 'sale'));
+    await invoicesBox.put(id,
+        _withCurrentPartyName(InvoiceLocal.fromFirestore(id, data, defaultType: 'sale')));
+  }
+
+  /// Cloud invoices keep the party name they were saved with. Show the name
+  /// from the customer/supplier record instead (matched by ID) so a rename
+  /// appears on every invoice. Financial fields are unchanged.
+  static InvoiceLocal _withCurrentPartyName(InvoiceLocal invoice) {
+    final current = PartyNameMirror.currentNameFor(invoice);
+    if (current == null) return invoice;
+    if (invoice.supplierId.trim().isNotEmpty) {
+      invoice.supplierName = current;
+    } else {
+      invoice.clientName = current;
+    }
+    return invoice;
   }
 
   Future<void> deleteSaleLocal(String id) async {
@@ -84,7 +99,9 @@ class InvoiceRepository {
 
   Future<void> upsertReturnLocal(String id, Map<String, dynamic> data) async {
     await returnInvoicesBox.put(
-        id, InvoiceLocal.fromFirestore(id, data, defaultType: 'return'));
+        id,
+        _withCurrentPartyName(
+            InvoiceLocal.fromFirestore(id, data, defaultType: 'return')));
   }
 
   Future<void> deleteReturnLocal(String id) async {
@@ -121,7 +138,9 @@ class InvoiceRepository {
 
   Future<void> upsertBuyingLocal(String id, Map<String, dynamic> data) async {
     await buyingInvoicesBox.put(
-        id, InvoiceLocal.fromFirestore(id, data, defaultType: 'buying'));
+        id,
+        _withCurrentPartyName(
+            InvoiceLocal.fromFirestore(id, data, defaultType: 'buying')));
   }
 
   Future<void> deleteBuyingLocal(String id) async {
@@ -156,7 +175,8 @@ class InvoiceRepository {
   ) async {
     await buyingReturnInvoicesBox.put(
       id,
-      InvoiceLocal.fromFirestore(id, data, defaultType: 'buying_return'),
+      _withCurrentPartyName(
+          InvoiceLocal.fromFirestore(id, data, defaultType: 'buying_return')),
     );
   }
 

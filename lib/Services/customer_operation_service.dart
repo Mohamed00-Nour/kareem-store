@@ -8,8 +8,10 @@ import '../repositories/payment_breakdown_repository.dart';
 import '../sync/local_operation_journal.dart';
 import '../sync/cloud_snapshot_guard.dart';
 import '../sync/financial_cloud_store.dart';
+import '../utils/entity_name_normalizer.dart';
 import 'customer_balance_store.dart';
 import 'invoice_number_utils.dart';
+import 'party_name_mirror.dart';
 
 /// The sole local financial write path for customer operations. Plans contain
 /// recoverable Hive after-images and one atomic, idempotent cloud transaction.
@@ -111,6 +113,86 @@ class CustomerOperationService {
       });
     });
     return clientId;
+  }
+
+  /// Largest number of legacy invoices renamed by one queued operation, kept
+  /// well below the atomic upload limit.
+  static const renameInvoiceChunk = 300;
+
+  /// Renames a customer offline-first.
+  ///
+  /// Only the customer record is uploaded, plus legacy invoices that have no
+  /// customer ID (they are matched by the old name, as the previous rename
+  /// did). No balance, stock or cash change is planned, so the customer's
+  /// ledger is untouched. Invoices linked by ID keep their cloud data; every
+  /// device shows the new name through [PartyNameMirror].
+  static Future<void> renameClient(String clientId, String newName) async {
+    final client = clientsBox.get(clientId);
+    if (client == null) {
+      throw StateError('Customer is not available locally: $clientId');
+    }
+    final oldName = client.name;
+    if (oldName == newName) return;
+    final oldKey = normalizeEntityName(oldName);
+    var first = true;
+    var more = true;
+    while (more) {
+      more = false;
+      final includeClient = first;
+      await LocalOperationJournal.commit((id) async {
+        if (clientsBox.get(clientId) == null) {
+          throw StateError('Customer is not available locally: $clientId');
+        }
+        final plan = _Plan(
+            id,
+            includeClient ? 'renameClient' : 'renameClientInvoices',
+            'تغيير اسم عميل');
+        if (includeClient) {
+          plan.local(HiveBoxNames.clients, clientId,
+              {...clientMap(clientId), 'clientName': newName, 'name': newName});
+          plan.cloud('clients/$clientId',
+              data: {
+                'clientName': newName,
+                'name': newName,
+                'updatedAt': DateTime.now(),
+              },
+              mustExist: true);
+        }
+        var count = 0;
+        for (final isReturn in const [false, true]) {
+          final box = isReturn ? returnInvoicesBox : invoicesBox;
+          for (final key in box.keys.toList()) {
+            final invoice = box.get(key);
+            if (invoice == null ||
+                invoice.clientId.trim().isNotEmpty ||
+                normalizeEntityName(invoice.clientName) != oldKey) {
+              continue;
+            }
+            if (count >= renameInvoiceChunk) {
+              more = true;
+              break;
+            }
+            plan.local(
+                isReturn ? HiveBoxNames.returnInvoices : HiveBoxNames.invoices,
+                key.toString(),
+                {...invoice.toMap(), 'clientName': newName});
+            plan.cloud(
+                '${isReturn ? 'returnInvoices' : 'invoices'}/${key.toString()}',
+                data: {'clientName': newName},
+                skipIfMissing: true);
+            count++;
+          }
+        }
+        return plan.finish({
+          'clientId': clientId,
+          'clientName': newName,
+          'previousName': oldName,
+        });
+      });
+      first = false;
+    }
+    await LocalOperationJournal.exclusive(
+        () => PartyNameMirror.applyClientName(clientId, newName));
   }
 
   static Future<Map<String, dynamic>> saveInvoice(Map<String, dynamic> input,
@@ -393,7 +475,9 @@ class _Plan {
       Map<String, dynamic>? increments,
       bool absent = false,
       bool deleted = false,
-      Map<String, dynamic>? expected}) {
+      Map<String, dynamic>? expected,
+      bool mustExist = false,
+      bool skipIfMissing = false}) {
     final write = <String, dynamic>{
       'path': path,
       'data': data ?? {},
@@ -401,6 +485,8 @@ class _Plan {
       'deleted': deleted,
       'mustBeAbsent': absent
     };
+    if (mustExist) write['mustExist'] = true;
+    if (skipIfMissing) write['skipIfMissing'] = true;
     if (expected != null) {
       write['expectedOperationId'] = appMetaBox
           .get(CloudSnapshotGuard.operationKey(path), defaultValue: '');

@@ -7,6 +7,7 @@ import '../sync/firestore_read_diagnostics.dart';
 import '../sync/firestore_sync_checkpoint.dart';
 import '../sync/local_operation_journal.dart';
 import '../Services/supplier_balance_store.dart';
+import '../Services/party_name_mirror.dart';
 import '../utils/entity_name_normalizer.dart';
 
 import 'balance_history_repository.dart';
@@ -169,8 +170,16 @@ class SupplierRepository {
         for (final event in events.entries) {
           await SupplierBalanceStore.importEvent(id, event.key, event.value);
         }
+        final previousName = suppliersBox.get(id)?.name;
         await upsertLocal(id, data);
         await CloudSnapshotGuard.record(path, data);
+        final currentName = suppliersBox.get(id)?.name;
+        if (previousName != null &&
+            currentName != null &&
+            previousName != currentName) {
+          // A rename arrived from another device: show it on local invoices.
+          await PartyNameMirror.applySupplierName(id, currentName);
+        }
       });
 
   /// Upsert a single supplier into local cache.

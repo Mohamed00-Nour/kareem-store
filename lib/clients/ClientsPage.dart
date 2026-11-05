@@ -170,6 +170,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:share_plus/share_plus.dart';
 import '../DeletedClientsPage.dart';
 import '../Services/party_rename_service.dart';
+import '../utils/entity_name_normalizer.dart';
 import '../Widgets/egypt_phone_field.dart';
 import '../Widgets/app_responsive.dart';
 import 'ClientInvoicesPage.dart';
@@ -456,6 +457,7 @@ class _PartyInfoCard extends StatelessWidget {
   final bool isClient;
   final VoidCallback onTap;
   final VoidCallback onLongPress;
+  final bool duplicateName;
 
   const _PartyInfoCard({
     required this.name,
@@ -464,6 +466,7 @@ class _PartyInfoCard extends StatelessWidget {
     required this.isClient,
     required this.onTap,
     required this.onLongPress,
+    this.duplicateName = false,
   });
 
   @override
@@ -503,6 +506,15 @@ class _PartyInfoCard extends StatelessWidget {
                   fontWeight: FontWeight.bold,
                 ),
               ),
+              if (duplicateName)
+                Text(
+                  'اسم مكرر',
+                  style: TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red.shade900,
+                  ),
+                ),
               const SizedBox(height: 8),
               Text(
                 'الرصيد',
@@ -3540,6 +3552,10 @@ class _ClientListPageState extends State<_ClientListPage> {
       final name = (c['clientName'] ?? '').toString().toLowerCase();
       return name.contains(_searchQuery.toLowerCase());
     }).toList();
+    // Two devices can rename customers to the same name while offline.
+    final duplicateNames = duplicatePartyNameKeys(_clients
+        .where((c) => !deletedIds.contains(c['id']?.toString() ?? ''))
+        .map((c) => (c['clientName'] ?? '').toString()));
 
     return Scaffold(
       appBar: AppBar(
@@ -3644,6 +3660,8 @@ class _ClientListPageState extends State<_ClientListPage> {
                         balance: balance,
                         phone: phone,
                         isClient: true,
+                        duplicateName:
+                            duplicateNames.contains(partyNameKey(name)),
                         onTap: () async {
                           await Navigator.push(
                             context,

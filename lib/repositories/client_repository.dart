@@ -5,6 +5,7 @@ import '../utils/entity_name_normalizer.dart';
 
 import 'balance_history_repository.dart';
 import '../Services/customer_balance_store.dart';
+import '../Services/party_name_mirror.dart';
 import '../sync/cloud_snapshot_guard.dart';
 import '../sync/cloud_refresh_gate.dart';
 import '../sync/firestore_read_diagnostics.dart';
@@ -128,8 +129,16 @@ class ClientRepository {
         for (final event in events.entries) {
           await CustomerBalanceStore.importEvent(id, event.key, event.value);
         }
+        final previousName = clientsBox.get(id)?.name;
         await upsertLocal(id, data);
         await CloudSnapshotGuard.record(path, data);
+        final currentName = clientsBox.get(id)?.name;
+        if (previousName != null &&
+            currentName != null &&
+            previousName != currentName) {
+          // A rename arrived from another device: show it on local invoices.
+          await PartyNameMirror.applyClientName(id, currentName);
+        }
       });
 
   /// Fetches client profile changes after the initial compatibility baseline.

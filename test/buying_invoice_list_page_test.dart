@@ -17,7 +17,10 @@ void main() {
   Map<String, dynamic> invoice(int number,
           {String supplierName = 'Match supplier', DateTime? date}) =>
       {
-        'supplierId': 'supplier',
+        // Invoices show their supplier's current name (matched by ID), so
+        // each supplier name in these fixtures has its own supplier ID.
+        'supplierId':
+            supplierName == 'Match supplier' ? 'supplier' : 'other-supplier',
         'supplierName': supplierName,
         'invoiceNumber': number,
         'date': date ?? DateTime.now(),

@@ -24,6 +24,8 @@ import 'package:kareem_store/Widgets/invoice_display_widgets.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:kareem_store/Services/sales_invoice_actions_service.dart';
+import 'package:kareem_store/Services/party_rename_service.dart';
+import 'package:kareem_store/Services/quote_execution_service.dart';
 import 'package:kareem_store/repositories/client_repository.dart';
 import 'package:kareem_store/repositories/invoice_repository.dart';
 import 'package:kareem_store/repositories/product_repository.dart';
@@ -293,20 +295,121 @@ void main() {
     expectCloud(130, 8, 120);
   });
 
-  test('a renamed customer does not block an edit or restore the old name',
+  test('a different customer name on the cloud invoice does not block an edit',
       () async {
     await CustomerOperationService.saveInvoice(invoice());
     await drain();
-    // PartyRenameService changes invoice names in Firestore directly.
+    // Older app versions renamed customers on cloud invoices directly.
     cloud.documents['invoices/s']!['clientName'] = 'Renamed customer';
     await CustomerOperationService.saveInvoice(invoice(total: 120),
         editing: true);
     await drain();
 
     expect(syncQueueBox.isEmpty, isTrue);
-    expect(cloud.documents['invoices/s']!['clientName'], 'Renamed customer');
     expect(cloud.documents['invoices/s']!['totalSum'], 120);
     expectCloud(150, 8, 120);
+    expectLocal(150, 8, 120);
+  });
+
+  test('renaming a customer works offline and never changes balances',
+      () async {
+    await CustomerOperationService.saveInvoice(invoice());
+    await drain();
+    final financialVersion = cloud.documents['clients/c']!['financialVersion'];
+    final invoiceVersion = cloud.documents['invoices/s']!['_version'];
+
+    // Offline: the rename is saved on the device and queued.
+    await CustomerOperationService.renameClient('c', 'Renamed customer');
+    expect(clientsBox.get('c')!.name, 'Renamed customer');
+    expect(invoicesBox.get('s')!.clientName, 'Renamed customer');
+    expect(syncQueueBox.length, 1);
+    expectLocal(130, 8, 120);
+
+    await drain();
+    expect(syncQueueBox.isEmpty, isTrue);
+    expect(cloud.documents['clients/c']!['clientName'], 'Renamed customer');
+    expect(cloud.documents['clients/c']!['name'], 'Renamed customer');
+    expect(cloud.documents['clients/c']!['financialVersion'], financialVersion);
+    // Invoices linked by ID are not rewritten in the cloud.
+    expect(cloud.documents['invoices/s']!['_version'], invoiceVersion);
+    expectCloud(130, 8, 120);
+    expectLocal(130, 8, 120);
+
+    // Editing after the rename still applies exactly one balance change.
+    await CustomerOperationService.saveInvoice(
+        {...invoice(total: 120), 'clientName': 'Renamed customer'},
+        editing: true);
+    await drain();
+    expect(syncQueueBox.isEmpty, isTrue);
+    expectCloud(150, 8, 120);
+    expectLocal(150, 8, 120);
+  });
+
+  test('a rename downloaded from another device updates invoice names only',
+      () async {
+    await CustomerOperationService.saveInvoice(invoice());
+    await drain();
+    final renamed = Map<String, dynamic>.from(cloud.documents['clients/c']!)
+      ..['clientName'] = 'Other device name'
+      ..['name'] = 'Other device name'
+      ..['_version'] = (cloud.documents['clients/c']!['_version'] as num) + 1;
+
+    await ClientRepository.instance.mergeCloud('c', renamed);
+
+    expect(clientsBox.get('c')!.name, 'Other device name');
+    expect(invoicesBox.get('s')!.clientName, 'Other device name');
+    expect(invoicesBox.get('s')!.totalSum, 100);
+    expectLocal(130, 8, 120);
+  });
+
+  test('a legacy invoice without a customer ID is renamed in the cloud too',
+      () async {
+    await CustomerOperationService.saveInvoice(invoice());
+    await drain();
+    final legacy = invoicesBox.get('s')!..clientId = '';
+    await invoicesBox.put('s', legacy);
+    cloud.documents['invoices/s']!['clientId'] = '';
+
+    await CustomerOperationService.renameClient('c', 'Renamed customer');
+    expect(invoicesBox.get('s')!.clientName, 'Renamed customer');
+    await drain();
+
+    expect(syncQueueBox.isEmpty, isTrue);
+    expect(cloud.documents['invoices/s']!['clientName'], 'Renamed customer');
+    expect(cloud.documents['invoices/s']!['totalSum'], 100);
+    expect(cloud.documents['invoices/s']!['paidAmount'], 20);
+    expectCloud(130, 8, 120);
+    expectLocal(130, 8, 120);
+  });
+
+  test('a rename is rejected when another customer has a similar name',
+      () async {
+    await clientsBox.put(
+        'other',
+        ClientLocal(
+            id: 'other', name: 'محمد أكرم', balance: 0, updatedAt: date));
+    await expectLater(
+        PartyRenameService.renameClient(
+            oldClientId: 'c', newName: ' محمد  اكرم '),
+        throwsA(isA<PartyRenameException>()));
+    expect(clientsBox.get('c')!.name, 'Test customer');
+    expect(syncQueueBox.isEmpty, isTrue);
+  });
+
+  test('executing a quote after a rename keeps the same customer', () async {
+    await quotesBox.put('q', QuoteLocal.fromFirestore('q', invoice()));
+    await CustomerOperationService.renameClient('c', 'Renamed customer');
+
+    await QuoteExecutionService.executeQuote(
+        quoteId: 'q',
+        quoteData: quotesBox.get('q')!.toMap(),
+        previousClientBalance: 0);
+
+    expect(clientsBox.length, 1);
+    final sale = invoicesBox.values.single;
+    expect(sale.clientId, 'c');
+    expect(sale.clientName, 'Renamed customer');
+    expectLocal(130, 8, 120);
   });
 
   test('an invoice edit blocked by an older build is re-checked once',

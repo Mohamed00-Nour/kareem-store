@@ -437,6 +437,50 @@ void main() {
         {'purchase-1', 'purchase-2'});
   });
 
+  test('renaming a supplier works offline and never changes balances',
+      () async {
+    await SupplierOperationService.saveBuyingInvoice(purchase());
+    await drain();
+    final financialVersion =
+        cloud.documents['suppliers/supplier-1']!['financialVersion'];
+    final invoiceVersion =
+        cloud.documents['buying invoices/purchase-1']!['_version'];
+    final balanceBefore = SupplierBalanceStore.balance('supplier-1');
+
+    await SupplierOperationService.renameSupplier(
+        'supplier-1', 'Renamed supplier');
+    expect(suppliersBox.get('supplier-1')!.name, 'Renamed supplier');
+    expect(buyingInvoicesBox.get('purchase-1')!.supplierName,
+        'Renamed supplier');
+    expect(SupplierBalanceStore.balance('supplier-1'), balanceBefore);
+    expect(syncQueueBox.length, 1);
+
+    await drain();
+    expect(syncQueueBox.isEmpty, isTrue);
+    final supplier = cloud.documents['suppliers/supplier-1']!;
+    expect(supplier['name'], 'Renamed supplier');
+    expect(supplier['supplierName'], 'Renamed supplier');
+    expect(supplier['totalBalance'], 130);
+    expect(supplier['financialVersion'], financialVersion);
+    expect(cloud.documents['buying invoices/purchase-1']!['_version'],
+        invoiceVersion);
+    expect(cloud.documents['products/product-1']!['quantity'], 12);
+    expect(cloud.documents['box/mainBox']!['value'], 980);
+    expect(SupplierBalanceStore.balance('supplier-1'), balanceBefore);
+
+    // Editing after the rename still applies exactly one balance change.
+    await SupplierOperationService.saveBuyingInvoice({
+      ...purchase(total: 180, paid: 30, quantity: 3),
+      'supplierName': 'Renamed supplier',
+    }, editing: true);
+    await drain();
+    expect(syncQueueBox.isEmpty, isTrue);
+    expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], 200);
+    expect(cloud.documents['products/product-1']!['quantity'], 13);
+    expect(cloud.documents['box/mainBox']!['value'], 970);
+    expect(SupplierBalanceStore.balance('supplier-1'), 200);
+  });
+
   test('restart and lost acknowledgement cannot apply purchase twice',
       () async {
     await SupplierOperationService.saveBuyingInvoice(purchase());

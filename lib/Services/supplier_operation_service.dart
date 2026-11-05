@@ -7,7 +7,10 @@ import '../repositories/supplier_repository.dart';
 import '../sync/cloud_snapshot_guard.dart';
 import '../sync/financial_cloud_store.dart';
 import '../sync/local_operation_journal.dart';
+import '../utils/entity_name_normalizer.dart';
+import 'customer_operation_service.dart';
 import 'invoice_number_utils.dart';
+import 'party_name_mirror.dart';
 import 'supplier_balance_store.dart';
 
 /// Durable local-first operations for purchases and supplier payments.
@@ -96,6 +99,75 @@ class SupplierOperationService {
       });
     });
     return supplierId;
+  }
+
+  /// Renames a supplier offline-first. See
+  /// [CustomerOperationService.renameClient]: only the supplier record and
+  /// legacy purchase invoices without a supplier ID are uploaded, and no
+  /// balance, stock or cash change is planned.
+  static Future<void> renameSupplier(String supplierId, String newName) async {
+    final supplier = suppliersBox.get(supplierId);
+    if (supplier == null) {
+      throw StateError('Supplier is not available locally: $supplierId');
+    }
+    final oldName = supplier.name;
+    if (oldName == newName) return;
+    final oldKey = normalizeEntityName(oldName);
+    var first = true;
+    var more = true;
+    while (more) {
+      more = false;
+      final includeSupplier = first;
+      await LocalOperationJournal.commit((operationId) async {
+        if (suppliersBox.get(supplierId) == null) {
+          throw StateError('Supplier is not available locally: $supplierId');
+        }
+        final plan = _SupplierPlan(
+            operationId,
+            includeSupplier ? 'renameSupplier' : 'renameSupplierInvoices',
+            'تغيير اسم مورد');
+        if (includeSupplier) {
+          plan.local(HiveBoxNames.suppliers, supplierId, {
+            ...supplierMap(supplierId),
+            'name': newName,
+            'supplierName': newName,
+          });
+          plan.cloud('suppliers/$supplierId',
+              data: {
+                'name': newName,
+                'supplierName': newName,
+                'updatedAt': DateTime.now(),
+              },
+              mustExist: true);
+        }
+        var count = 0;
+        for (final key in buyingInvoicesBox.keys.toList()) {
+          final invoice = buyingInvoicesBox.get(key);
+          if (invoice == null ||
+              invoice.supplierId.trim().isNotEmpty ||
+              normalizeEntityName(invoice.supplierName) != oldKey) {
+            continue;
+          }
+          if (count >= CustomerOperationService.renameInvoiceChunk) {
+            more = true;
+            break;
+          }
+          plan.local(HiveBoxNames.buyingInvoices, key.toString(),
+              {...invoice.toMap(), 'supplierName': newName});
+          plan.cloud('buying invoices/${key.toString()}',
+              data: {'supplierName': newName}, skipIfMissing: true);
+          count++;
+        }
+        return plan.finish({
+          'supplierId': supplierId,
+          'supplierName': newName,
+          'previousName': oldName,
+        });
+      });
+      first = false;
+    }
+    await LocalOperationJournal.exclusive(
+        () => PartyNameMirror.applySupplierName(supplierId, newName));
   }
 
   static Future<Map<String, dynamic>> saveBuyingInvoice(
@@ -332,7 +404,9 @@ class _SupplierPlan {
       Map<String, dynamic>? increments,
       bool absent = false,
       bool deleted = false,
-      Map<String, dynamic>? expected}) {
+      Map<String, dynamic>? expected,
+      bool mustExist = false,
+      bool skipIfMissing = false}) {
     final write = <String, dynamic>{
       'path': path,
       'data': data ?? {},
@@ -340,6 +414,8 @@ class _SupplierPlan {
       'deleted': deleted,
       'mustBeAbsent': absent,
     };
+    if (mustExist) write['mustExist'] = true;
+    if (skipIfMissing) write['skipIfMissing'] = true;
     if (expected != null) {
       write['expectedOperationId'] = appMetaBox
           .get(CloudSnapshotGuard.operationKey(path), defaultValue: '');

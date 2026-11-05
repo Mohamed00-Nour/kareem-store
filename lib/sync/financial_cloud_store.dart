@@ -252,6 +252,17 @@ class FinancialCloudUploader {
       for (final write in writes) {
         final path = write['path'] as String;
         final old = before[path];
+        final missing = old == null || old['_deleted'] == true;
+        // Name-only updates (renames) must never create a partial document.
+        if (write['skipIfMissing'] == true && missing) continue;
+        if (write['mustExist'] == true && missing) {
+          final root = path.split('/').first;
+          throw StateError(root == 'suppliers'
+              ? 'Supplier missing: $path'
+              : root == 'clients'
+                  ? 'Customer missing: $path'
+                  : 'Invalid missing record: $path');
+        }
         if (write['mustBeAbsent'] == true &&
             old != null &&
             old['_deleted'] != true) {
@@ -310,9 +321,6 @@ class FinancialCloudUploader {
           ...?old,
           ...?write['data'] as Map<String, dynamic>?
         };
-        if (expectedState != null && old != null) {
-          _keepRenamedPartyNames(data, old, expectedState);
-        }
         for (final entry in (write['increments'] as Map? ?? {}).entries) {
           data[entry.key.toString()] =
               invoiceNum(data[entry.key]) + invoiceNum(entry.value);
@@ -405,27 +413,6 @@ class FinancialCloudUploader {
       });
       return receipt;
     });
-  }
-
-  /// A rename updates invoice names in Firestore directly. When an edit was
-  /// planned from the old local name of the same party, keep the newer cloud
-  /// name instead of writing the old one back.
-  static void _keepRenamedPartyNames(Map<String, dynamic> data,
-      Map<String, dynamic> cloud, Map<String, dynamic> expected) {
-    for (final keys in const [
-      ['clientId', 'clientName'],
-      ['supplierId', 'supplierName'],
-    ]) {
-      final id = cloud[keys[0]]?.toString() ?? '';
-      final cloudName = cloud[keys[1]]?.toString() ?? '';
-      final expectedName = expected[keys[1]]?.toString() ?? '';
-      if (id.isNotEmpty &&
-          id == (expected[keys[0]]?.toString() ?? '') &&
-          cloudName != expectedName &&
-          (data[keys[1]]?.toString() ?? '') == expectedName) {
-        data[keys[1]] = cloud[keys[1]];
-      }
-    }
   }
 
   /// A delete is the user's intent for the invoice currently stored in the
