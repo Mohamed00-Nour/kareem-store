@@ -6,6 +6,7 @@ import '../local_db/hive_init.dart';
 import '../local_db/models/sync_queue_item.dart';
 import 'sync_operation_diagnostics.dart';
 import 'buying_invoice_sync_guard.dart';
+import 'financial_cloud_store.dart';
 
 /// Manages all pending offline write operations.
 ///
@@ -336,6 +337,48 @@ class SyncQueueManager {
     } catch (_) {
       return false;
     }
+  }
+
+  /// True for a sales, return or purchase invoice edit that was rejected
+  /// because another device changed the same invoice first. The user can
+  /// then keep or discard this device's edit.
+  bool canResolveInvoiceEditConflict(SyncQueueItem item) {
+    if (item.status != 'failed' ||
+        !const {'editInvoice', 'editBuyingInvoice'}
+            .contains(item.operationType)) {
+      return false;
+    }
+    final category = item.errorCategory ??
+        SyncFailureClassifier.inferCategory(item.lastError);
+    if (category != SyncErrorCategories.conflict) return false;
+    try {
+      return decodePayload(item)['financialFormat'] == 2;
+    } catch (_) {
+      return false;
+    }
+  }
+
+  /// Records the user's choice for a conflicted invoice edit and queues it
+  /// again. The upload rebuilds its effects from the latest cloud invoice.
+  Future<void> resolveInvoiceEditConflict(String operationId,
+      {required bool keepMine}) async {
+    final item = syncQueueBox.get(operationId);
+    if (item == null || !canResolveInvoiceEditConflict(item)) {
+      throw StateError('This operation has no invoice edit conflict');
+    }
+    final payload = decodePayload(item);
+    payload['conflictResolution'] = keepMine
+        ? FinancialCloudUploader.keepMineResolution
+        : FinancialCloudUploader.discardMineResolution;
+    item.payloadJson = jsonEncode(payload, toEncodable: _toEncodable);
+    item.status = 'pending';
+    item.retryCount = 0;
+    item.lastError = null;
+    item.errorCategory = null;
+    item.errorCode = null;
+    item.nextRetryAt = null;
+    await item.save();
+    await syncQueueBox.flush();
   }
 
   /// True for an invoice edit blocked by an older build. Those error messages

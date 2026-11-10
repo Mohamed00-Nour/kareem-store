@@ -16,6 +16,8 @@ import '../Services/invoice_print_ui.dart';
 import '../Services/whatsapp_invoice_share_service.dart';
 import '../sync/connectivity_service.dart';
 import '../sync/sync_queue_manager.dart';
+import '../sync/invoice_edit_guard.dart';
+import '../sync/invoice_edit_lock.dart';
 import '../repositories/supplier_repository.dart';
 import '../repositories/product_repository.dart';
 import '../repositories/balance_history_repository.dart';
@@ -116,10 +118,31 @@ class _AddProductPageState extends State<AddProductPage> {
     suppliersBox.listenable().addListener(_onSuppliersBoxChanged);
     if (widget.invoiceToEdit != null) {
       _applyInvoiceToEdit(widget.invoiceToEdit!);
+      WidgetsBinding.instance.addPostFrameCallback((_) => _lockForEditing());
     } else {
       _selectedDate = DateTime.now();
       _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
     }
+  }
+
+  InvoiceEditLock? _editLock;
+
+  String get _editingCloudPath => 'buying invoices/$_editingRootInvoiceId';
+
+  /// Blocks this edit when another device is editing the same invoice.
+  Future<void> _lockForEditing() async {
+    if (!_isEditing) return;
+    final lock =
+        await InvoiceEditGuard.lockForEditing(context, _editingCloudPath);
+    if (!mounted) {
+      await lock?.release();
+      return;
+    }
+    if (lock == null) {
+      Navigator.of(context).pop();
+      return;
+    }
+    _editLock = lock;
   }
 
   void _onProductsBoxChanged() {
@@ -144,6 +167,7 @@ class _AddProductPageState extends State<AddProductPage> {
     _suppliersDebounceTimer?.cancel();
     productsBox.listenable().removeListener(_onProductsBoxChanged);
     suppliersBox.listenable().removeListener(_onSuppliersBoxChanged);
+    unawaited(_editLock?.release());
     _dateController.dispose();
     // _productController is managed by Autocomplete's internal state — do not dispose here
     super.dispose();
@@ -332,6 +356,14 @@ class _AddProductPageState extends State<AddProductPage> {
 
     // ── EDIT MODE ──
     if (_isEditing && _originalInvoice != null) {
+      // Online: refuse to save over a newer version from another device.
+      if (!await InvoiceEditGuard.confirmLatestBeforeSave(
+          context, _editingCloudPath)) {
+        if (!mounted) return;
+        setState(() => _isSaving = false);
+        Navigator.of(context).pop();
+        return;
+      }
       try {
         // Resolve supplier ID if not yet known
         String resolvedSupplierId = _editingSupplierId ?? '';

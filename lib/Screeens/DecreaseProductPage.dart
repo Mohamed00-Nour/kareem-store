@@ -29,6 +29,8 @@ import '../Widgets/app_bar_navigation.dart';
 import 'home_page.dart';
 import '../sync/connectivity_service.dart';
 import '../sync/sync_queue_manager.dart';
+import '../sync/invoice_edit_guard.dart';
+import '../sync/invoice_edit_lock.dart';
 import '../repositories/client_repository.dart';
 import '../repositories/product_repository.dart';
 import '../local_db/hive_init.dart';
@@ -115,6 +117,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
   String? _editingRootInvoiceId;
   String? _editingClientSubDocId;
   String _editingSourceCollection = 'invoices';
+  InvoiceEditLock? _editLock;
   Map<String, dynamic>? _originalInvoice;
   dynamic _editingInvoiceNumber;
   String _editingPaymentMethod = 'نقداً';
@@ -741,10 +744,33 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     clientsBox.listenable().addListener(_onClientsBoxChanged);
     if (widget.invoiceToEdit != null) {
       _applyInvoiceToEdit(widget.invoiceToEdit!);
+      if (!widget.isQuote) {
+        WidgetsBinding.instance.addPostFrameCallback((_) => _lockForEditing());
+      }
     } else {
       _selectedDate = DateTime.now();
       _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
     }
+  }
+
+  /// Cloud path of the invoice being edited (sales or return).
+  String get _editingCloudPath =>
+      '$_editingSourceCollection/$_editingRootInvoiceId';
+
+  /// Blocks this edit when another device is editing the same invoice.
+  Future<void> _lockForEditing() async {
+    if (!_isEditing) return;
+    final lock =
+        await InvoiceEditGuard.lockForEditing(context, _editingCloudPath);
+    if (!mounted) {
+      await lock?.release();
+      return;
+    }
+    if (lock == null) {
+      Navigator.of(context).pop();
+      return;
+    }
+    _editLock = lock;
   }
 
   void _onProductsBoxChanged() {
@@ -769,6 +795,7 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
     _clientsDebounceTimer?.cancel();
     productsBox.listenable().removeListener(_onProductsBoxChanged);
     clientsBox.listenable().removeListener(_onClientsBoxChanged);
+    unawaited(_editLock?.release());
     super.dispose();
   }
 
@@ -1150,6 +1177,14 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       } else if (_isEditing &&
           _originalInvoice != null &&
           _editingRootInvoiceId != null) {
+        // Online: refuse to save over a newer version from another device.
+        if (!await InvoiceEditGuard.confirmLatestBeforeSave(
+            context, _editingCloudPath)) {
+          if (!mounted) return;
+          setState(() => _isSaving = false);
+          Navigator.of(context).pop();
+          return;
+        }
         final totalSumBeforeDiscount = _calculateTotalSum();
         // Run in background — updateSalesInvoice writes Hive first then enqueues.
         // UI is unblocked immediately regardless of connectivity.

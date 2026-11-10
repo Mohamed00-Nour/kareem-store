@@ -197,7 +197,27 @@ class FinancialCloudUploader {
             ..['mustBeAbsent'] = false;
         }
       }
-      if (operationType == 'deleteBuyingInvoice' &&
+      final resolution = payload['conflictResolution']?.toString();
+      if (resolution != null &&
+          const {'editInvoice', 'editBuyingInvoice'}.contains(operationType) &&
+          payload['financialFormat'] == 2) {
+        // The user resolved a conflict with an edit made on another device.
+        // Rebuild every effect from the latest cloud invoice in this same
+        // transaction, so stock, balances and cash are never counted twice.
+        final rootPath = editedInvoiceRootPath(payload, writes);
+        final latestInvoice = await tx.read(rootPath);
+        preloaded[rootPath] = latestInvoice;
+        _resolveInvoiceEditConflict(
+          operationId: operationId,
+          payload: payload,
+          writes: writes,
+          customerDeltas: deltas,
+          supplierDeltas: supplierDeltas,
+          rootPath: rootPath,
+          latestInvoice: latestInvoice,
+          keepMine: resolution == keepMineResolution,
+        );
+      } else if (operationType == 'deleteBuyingInvoice' &&
           payload['financialFormat'] == 2) {
         final invoiceId = payload['invoiceId']?.toString().trim() ?? '';
         if (invoiceId.isEmpty) {
@@ -413,6 +433,263 @@ class FinancialCloudUploader {
       });
       return receipt;
     });
+  }
+
+  /// Conflict choice: apply this device's edit on top of the latest invoice.
+  static const keepMineResolution = 'keepMine';
+
+  /// Conflict choice: drop this device's edit and keep the latest invoice.
+  static const discardMineResolution = 'discardMine';
+
+  /// The main invoice document written by an invoice edit operation.
+  static String editedInvoiceRootPath(
+      Map<String, dynamic> payload, List<Map<String, dynamic>> writes) {
+    final invoiceId = payload['invoiceId']?.toString().trim() ?? '';
+    if (invoiceId.isEmpty) throw StateError('Invalid invoice id');
+    final candidates = payload['operationType'] == 'editBuyingInvoice'
+        ? ['buying invoices/$invoiceId']
+        : ['invoices/$invoiceId', 'returnInvoices/$invoiceId'];
+    for (final path in candidates) {
+      if (writes.any((write) => write['path'] == path)) return path;
+    }
+    throw StateError('Invalid invoice edit: main invoice write missing');
+  }
+
+  /// Rewrites a conflicted invoice edit so its effects are measured against
+  /// the newest cloud invoice instead of the stale copy this device edited.
+  ///
+  /// keepMine: the invoice becomes this device's version; stock, balance and
+  /// cash change by (my version − latest version).
+  /// discardMine: nothing changes in the cloud; zero balance events replace
+  /// this device's local events and the touched records are re-downloaded.
+  static void _resolveInvoiceEditConflict({
+    required String operationId,
+    required Map<String, dynamic> payload,
+    required List<Map<String, dynamic>> writes,
+    required Map<String, dynamic> customerDeltas,
+    required Map<String, dynamic> supplierDeltas,
+    required String rootPath,
+    required Map<String, dynamic>? latestInvoice,
+    required bool keepMine,
+  }) {
+    final collection = rootPath.split('/').first;
+    final invoiceId = rootPath.substring(collection.length + 1);
+    final isPurchase = collection == 'buying invoices';
+    final isReturn = collection == 'returnInvoices';
+    final sign = isReturn ? -1.0 : 1.0;
+    final partyKey = isPurchase ? 'supplierId' : 'clientId';
+    final partyDeltas = isPurchase ? supplierDeltas : customerDeltas;
+    final latestActive =
+        latestInvoice != null && latestInvoice['_deleted'] != true;
+
+    List<String> partyPaths(String partyId) => isPurchase
+        ? [
+            'suppliers/$partyId/buying invoices/$invoiceId',
+            'suppliers/$partyId/balanceHistory/${invoiceId}_buying',
+            'suppliers/$partyId/balanceHistory/${invoiceId}_pay',
+          ]
+        : [
+            'clients/$partyId/$collection/$invoiceId',
+            'clients/$partyId/balanceHistory/'
+                '${invoiceId}_${isReturn ? 'return' : 'sale'}',
+            'clients/$partyId/balanceHistory/'
+                '${invoiceId}_${isReturn ? 'return_pay' : 'pay'}',
+          ];
+
+    // Everything this edit touched is re-downloaded after the upload, so the
+    // local copy matches the cloud whichever choice the user made.
+    final refresh = <String>{
+      for (final write in writes) write['path'] as String,
+    };
+    final latestParty =
+        latestActive ? latestInvoice[partyKey]?.toString().trim() ?? '' : '';
+    if (latestParty.isNotEmpty) refresh.addAll(partyPaths(latestParty));
+    // The other device's edit may have changed cash and stock in ways this
+    // device's own writes never touched.
+    refresh.add('box/mainBox');
+    final rootWrite = writes.where((write) => write['path'] == rootPath);
+    for (final invoice in [
+      if (latestActive) latestInvoice,
+      if (rootWrite.isNotEmpty) rootWrite.first['data'] as Map? ?? const {},
+    ]) {
+      for (final raw in invoice['products'] as List? ?? const []) {
+        if (raw is! Map) continue;
+        final productId =
+            (raw['id'] ?? raw['productId'])?.toString().trim() ?? '';
+        if (productId.isNotEmpty) refresh.add('products/$productId');
+      }
+    }
+
+    // Existing parties keep an event (zero for now) so the acknowledged cloud
+    // event replaces this device's stale local balance event.
+    for (final partyId in partyDeltas.keys.toList()) {
+      partyDeltas[partyId] = 0.0;
+    }
+
+    if (!keepMine) {
+      writes.clear();
+      payload['refreshPaths'] = refresh.toList();
+      return;
+    }
+
+    if (!latestActive) {
+      throw StateError('Invoice deleted on another device: $rootPath; '
+          'review before retrying (discard this edit instead)');
+    }
+    final mine = Map<String, dynamic>.from(
+        writes.firstWhere((write) => write['path'] == rootPath)['data'] as Map);
+    final myParty = mine[partyKey]?.toString().trim() ?? '';
+    if (myParty.isEmpty || latestParty.isEmpty) {
+      throw StateError('Invalid party on edited invoice: $rootPath');
+    }
+
+    void putWrite(Map<String, dynamic> write) {
+      final path = write['path'] as String;
+      final index = writes.indexWhere((item) => item['path'] == path);
+      if (index < 0) {
+        writes.add(write);
+      } else {
+        writes[index] = write;
+      }
+    }
+
+    // The user chose this version: drop the stale-copy expectations.
+    for (final write in writes) {
+      write
+        ..remove('expectedOperationId')
+        ..remove('expectedFinancialState')
+        ..remove('expectedFields')
+        ..['mustBeAbsent'] = false;
+    }
+
+    // Stock and cash effects were measured against the stale copy. Keep
+    // product field updates (purchase prices) and recompute the amounts.
+    writes.removeWhere((write) {
+      final path = write['path']?.toString() ?? '';
+      return path == 'box/mainBox' ||
+          path == 'box/mainBox/changes/$operationId' ||
+          (path.startsWith('products/') &&
+              path.endsWith('/changes/$operationId'));
+    });
+    for (final write in writes) {
+      final path = write['path']?.toString() ?? '';
+      if (path.startsWith('products/') && path.split('/').length == 2) {
+        write['increments'] = <String, dynamic>{};
+      }
+    }
+
+    Map<String, double> quantities(Map<String, dynamic> invoice) {
+      final result = <String, double>{};
+      for (final raw in invoice['products'] as List? ?? const []) {
+        if (raw is! Map) continue;
+        final line = Map<String, dynamic>.from(raw);
+        final productId =
+            (line['id'] ?? line['productId'])?.toString().trim() ?? '';
+        if (productId.isEmpty) {
+          throw StateError('Product missing immutable id in invoice $rootPath');
+        }
+        final quantity = invoiceNum(
+          line['amount'] ?? line['quantity'] ?? line['count'] ?? line['qty'],
+        );
+        result[productId] = (result[productId] ?? 0) + quantity;
+      }
+      return result;
+    }
+
+    // A sale takes stock out (a return or purchase puts it back), so moving
+    // from the latest version to mine changes stock by the line difference.
+    final stockSign = isPurchase ? 1.0 : -sign;
+    final mineQty = quantities(mine);
+    final latestQty = quantities(latestInvoice);
+    for (final productId in {...mineQty.keys, ...latestQty.keys}) {
+      final delta = stockSign *
+          ((mineQty[productId] ?? 0) - (latestQty[productId] ?? 0));
+      if (delta == 0) continue;
+      final productPath = 'products/$productId';
+      final index = writes.indexWhere((item) => item['path'] == productPath);
+      if (index < 0) {
+        writes.add({
+          'path': productPath,
+          'data': <String, dynamic>{},
+          'increments': {'quantity': delta},
+          'deleted': false,
+          'mustBeAbsent': false,
+        });
+      } else {
+        writes[index]['increments'] = {'quantity': delta};
+      }
+      putWrite({
+        'path': '$productPath/changes/$operationId',
+        'data': {
+          'date': payload['timestamp'],
+          'amount': delta.abs(),
+          'type': delta >= 0 ? 'increase' : 'decrease',
+          'invoiceNumber': mine['invoiceNumber'],
+        },
+        'increments': <String, dynamic>{},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+    }
+    // A product write left with nothing to change is dropped.
+    writes.removeWhere((write) {
+      final path = write['path']?.toString() ?? '';
+      return path.startsWith('products/') &&
+          path.split('/').length == 2 &&
+          (write['data'] as Map? ?? const {}).isEmpty &&
+          (write['increments'] as Map? ?? const {}).isEmpty;
+    });
+
+    final paidChange = invoiceNum(mine['paidAmount']) -
+        invoiceNum(latestInvoice['paidAmount']);
+    final cashDelta = isPurchase ? -paidChange : sign * paidChange;
+    if (cashDelta != 0) {
+      putWrite({
+        'path': 'box/mainBox',
+        'data': <String, dynamic>{},
+        'increments': {'value': cashDelta},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+      putWrite({
+        'path': 'box/mainBox/changes/$operationId',
+        'data': {
+          'date': payload['timestamp'],
+          'value': cashDelta.abs(),
+          'type': cashDelta >= 0 ? 'addition' : 'subtraction',
+          'name': payload['description'],
+        },
+        'increments': <String, dynamic>{},
+        'deleted': false,
+        'mustBeAbsent': false,
+      });
+    }
+
+    double effect(Map<String, dynamic> invoice) {
+      final unpaid = invoiceNum(invoice['totalSum']) -
+          invoiceNum(invoice['paidAmount']);
+      return isPurchase ? unpaid : sign * unpaid;
+    }
+
+    partyDeltas[latestParty] =
+        invoiceNum(partyDeltas[latestParty]) - effect(latestInvoice);
+    partyDeltas[myParty] = invoiceNum(partyDeltas[myParty]) + effect(mine);
+
+    // The latest version may belong to another party: remove its copies.
+    if (latestParty != myParty) {
+      for (final path in partyPaths(latestParty)) {
+        putWrite({
+          'path': path,
+          'data': <String, dynamic>{},
+          'increments': <String, dynamic>{},
+          'deleted': true,
+          'mustBeAbsent': false,
+        });
+      }
+    }
+
+    refresh.addAll(writes.map((write) => write['path'] as String));
+    payload['refreshPaths'] = refresh.toList();
   }
 
   /// A delete is the user's intent for the invoice currently stored in the

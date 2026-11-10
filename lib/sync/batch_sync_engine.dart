@@ -145,6 +145,10 @@ class BatchSyncEngine {
     final paths = <String>{
       for (final write in payload['cloudWrites'] as List)
         (write as Map)['path'].toString(),
+      // Set by a resolved invoice-edit conflict: records of the latest cloud
+      // version that this device never touched itself.
+      ...(payload['refreshPaths'] as List? ?? const [])
+          .map((path) => path.toString()),
       ...(receipt['versions'] as Map? ?? const {})
           .keys
           .map((path) => path.toString()),

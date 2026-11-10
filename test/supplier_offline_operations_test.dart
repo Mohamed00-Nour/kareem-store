@@ -712,6 +712,103 @@ void main() {
     expect(cloud.documents['box/mainBox']!['value'], 970);
   });
 
+  group('two admins edit the same purchase invoice', () {
+    // Admin A's edit (100/20/2 → 180/30/3) reaches the cloud first.
+    Future<void> anotherAdminEdits() async {
+      final remoteInvoice = {
+        ...purchase(total: 180, paid: 30, quantity: 3),
+        'invoiceId': 'purchase-1',
+        'invoiceType': 'buying',
+        '_deleted': false,
+        '_version':
+            (cloud.documents['buying invoices/purchase-1']!['_version'] as num)
+                    .toInt() +
+                1,
+        '_operationId': 'remote-edit',
+      };
+      cloud.documents['buying invoices/purchase-1'] = remoteInvoice;
+      cloud.documents['suppliers/supplier-1/buying invoices/purchase-1'] =
+          Map<String, dynamic>.from(remoteInvoice);
+      cloud.documents['suppliers/supplier-1'] = {
+        ...cloud.documents['suppliers/supplier-1']!,
+        'balance': 200.0,
+        'totalBalance': 200.0,
+      };
+      cloud.documents['products/product-1'] = {
+        ...cloud.documents['products/product-1']!,
+        'quantity': 13.0,
+      };
+      cloud.documents['box/mainBox'] = {
+        ...cloud.documents['box/mainBox']!,
+        'value': 970.0,
+      };
+      final remoteEvent = {
+        'supplierId': 'supplier-1',
+        'operationId': 'remote-edit',
+        'delta': 70.0,
+        'description': 'Remote purchase edit',
+        'timestamp': DateTime(2026, 9, 29),
+      };
+      cloud.documents['suppliers/supplier-1/financialOperations/remote-edit'] =
+          remoteEvent;
+      // The live receipt feed delivers the other device's balance event.
+      await SupplierBalanceStore.importEvent(
+          'supplier-1', 'remote-edit', remoteEvent);
+    }
+
+    Future<SyncQueueItem> conflictedEdit() async {
+      await SupplierOperationService.saveBuyingInvoice(purchase());
+      await drain();
+      await anotherAdminEdits();
+      // Admin B edits the stale copy: 120/20/4.
+      await SupplierOperationService.saveBuyingInvoice(
+          purchase(total: 120, paid: 20, quantity: 4),
+          editing: true);
+      await drain();
+      final item = syncQueueBox.values.single;
+      expect(item.status, 'failed');
+      expect(SyncQueueManager.instance.canResolveInvoiceEditConflict(item),
+          isTrue);
+      return item;
+    }
+
+    void expectEverywhere(double balance, double stock, double cash) {
+      expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], balance);
+      expect(cloud.documents['products/product-1']!['quantity'], stock);
+      expect(cloud.documents['box/mainBox']!['value'], cash);
+      expect(SupplierBalanceStore.balance('supplier-1'), balance);
+      expect(productsBox.get('product-1')!.quantity, stock);
+      expect(boxCacheBox.get('mainBox')!.value, cash);
+    }
+
+    test('keeping my purchase edit applies it on top of the latest version',
+        () async {
+      final item = await conflictedEdit();
+      await SyncQueueManager.instance
+          .resolveInvoiceEditConflict(item.operationId, keepMine: true);
+      await drain();
+
+      expect(syncQueueBox.isEmpty, isTrue);
+      expect(cloud.documents['buying invoices/purchase-1']!['totalSum'], 120);
+      // From A's 180/30/3 to mine 120/20/4: payable −50, stock +1, cash +10.
+      expectEverywhere(150, 14, 980);
+      expect(buyingInvoicesBox.get('purchase-1')!.totalSum, 120);
+    });
+
+    test('discarding my purchase edit keeps the other admin version',
+        () async {
+      final item = await conflictedEdit();
+      await SyncQueueManager.instance
+          .resolveInvoiceEditConflict(item.operationId, keepMine: false);
+      await drain();
+
+      expect(syncQueueBox.isEmpty, isTrue);
+      expect(cloud.documents['buying invoices/purchase-1']!['totalSum'], 180);
+      expectEverywhere(200, 13, 970);
+      expect(buyingInvoicesBox.get('purchase-1')!.totalSum, 180);
+    });
+  });
+
   test('purchase deletion rebases safely when another device edited it',
       () async {
     await SupplierOperationService.saveBuyingInvoice(purchase());

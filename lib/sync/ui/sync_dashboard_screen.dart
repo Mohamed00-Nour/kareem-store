@@ -109,6 +109,49 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
     setState(() {});
   }
 
+  /// Asks for confirmation, then keeps or discards this device's edit of an
+  /// invoice that another device changed first.
+  Future<void> _resolveConflict(SyncQueueItem item, bool keepMine) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => AlertDialog(
+        title: Text(keepMine ? 'اعتماد تعديلي' : 'تجاهل تعديلي'),
+        content: Text(keepMine
+            ? 'ستصبح الفاتورة بنسختك أنت بدلاً من نسخة الجهاز الآخر، '
+                'وسيُعاد حساب المخزون ورصيد الطرف والخزنة على أساس آخر نسخة.'
+            : 'سيتم إلغاء تعديلك والإبقاء على نسخة الجهاز الآخر، '
+                'وسيعود المخزون والرصيد والخزنة على هذا الجهاز لتطابق السحابة.'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, false),
+            child: const Text('إلغاء'),
+          ),
+          TextButton(
+            onPressed: () => Navigator.pop(dialogContext, true),
+            child: const Text('تأكيد'),
+          ),
+        ],
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    try {
+      await SyncQueueManager.instance
+          .resolveInvoiceEditConflict(item.operationId, keepMine: keepMine);
+      unawaited(ConnectivityService.instance.forceSync());
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+        content: Text(keepMine
+            ? 'جارٍ اعتماد تعديلك على آخر نسخة من الفاتورة'
+            : 'جارٍ إلغاء تعديلك ومطابقة الفاتورة مع السحابة'),
+      ));
+    } catch (e) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context)
+          .showSnackBar(SnackBar(content: Text('تعذر تنفيذ الاختيار: $e')));
+    }
+    if (mounted) setState(() {});
+  }
+
   String _diagnosticText(SyncQueueItem item) {
     final info = SyncOperationDiagnostics.fromItem(item);
     return [
@@ -498,6 +541,8 @@ class _SyncDashboardScreenState extends State<SyncDashboardScreen> {
                         statusIcon: _statusIcon(item.status),
                         onRetry: () => _retryItem(item),
                         onDetails: () => _showDetails(item),
+                        onResolveConflict: (keepMine) =>
+                            _resolveConflict(item, keepMine),
                       )),
               ],
             ),
@@ -703,6 +748,7 @@ class _QueueItemCard extends StatelessWidget {
   final IconData statusIcon;
   final Future<void> Function() onRetry;
   final Future<void> Function() onDetails;
+  final Future<void> Function(bool keepMine) onResolveConflict;
 
   const _QueueItemCard({
     required this.item,
@@ -712,6 +758,7 @@ class _QueueItemCard extends StatelessWidget {
     required this.statusIcon,
     required this.onRetry,
     required this.onDetails,
+    required this.onResolveConflict,
   });
 
   @override
@@ -721,6 +768,8 @@ class _QueueItemCard extends StatelessWidget {
     final diagnostics = SyncOperationDiagnostics.fromItem(item);
     final canRetry =
         item.status == 'failed' && SyncQueueManager.instance.canRetry(item);
+    final canResolve =
+        SyncQueueManager.instance.canResolveInvoiceEditConflict(item);
     final failure = item.lastError == null
         ? null
         : SyncFailureClassifier.classify(item.lastError!);
@@ -829,6 +878,43 @@ class _QueueItemCard extends StatelessWidget {
                   ],
                 ],
               ),
+            ),
+          ],
+          if (canResolve) ...[
+            SizedBox(height: 8.h),
+            Text(
+              'تم تعديل هذه الفاتورة من جهاز آخر قبل رفع تعديلك. اختر ما تريد:',
+              style: TextStyle(color: Colors.amber.shade200, fontSize: 12.sp),
+            ),
+            SizedBox(height: 6.h),
+            Row(
+              children: [
+                Expanded(
+                  child: OutlinedButton.icon(
+                    key: Key('discard-edit-${item.operationId}'),
+                    onPressed: () => onResolveConflict(false),
+                    icon: const Icon(Icons.undo),
+                    label: const Text('تجاهل تعديلي'),
+                    style: OutlinedButton.styleFrom(
+                      foregroundColor: Colors.white70,
+                      side: const BorderSide(color: Colors.white38),
+                    ),
+                  ),
+                ),
+                SizedBox(width: 8.w),
+                Expanded(
+                  child: ElevatedButton.icon(
+                    key: Key('keep-edit-${item.operationId}'),
+                    onPressed: () => onResolveConflict(true),
+                    icon: const Icon(Icons.check),
+                    label: const Text('اعتماد تعديلي'),
+                    style: ElevatedButton.styleFrom(
+                      backgroundColor: Colors.orange.shade800,
+                      foregroundColor: Colors.white,
+                    ),
+                  ),
+                ),
+              ],
             ),
           ],
           SizedBox(height: 8.h),

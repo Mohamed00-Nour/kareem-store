@@ -14,6 +14,7 @@ import 'package:kareem_store/local_db/models/payment_breakdown_local.dart';
 import 'package:kareem_store/Services/customer_balance_store.dart';
 import 'package:kareem_store/Services/customer_operation_service.dart';
 import 'package:kareem_store/Services/invoice_footer_data.dart';
+import 'package:kareem_store/Services/invoice_number_utils.dart';
 import 'package:kareem_store/Services/invoice_print_service.dart';
 import 'package:kareem_store/Services/customer_balance_review.dart';
 import 'package:kareem_store/Services/customer_local_views.dart';
@@ -293,6 +294,114 @@ void main() {
     expect(item.lastError, contains('found: another-device-edit'));
     expect(SyncQueueManager.instance.canRetryAutomatically(item), isFalse);
     expectCloud(130, 8, 120);
+  });
+
+  group('two admins edit the same invoice', () {
+    // Admin A's edit reaches the cloud first: total 150, paid 50, 3 units.
+    // Cloud before A: customer 130, stock 8, cash 120.
+    void anotherAdminEdits() {
+      final old = cloud.documents['invoices/s']!;
+      cloud.documents['invoices/s'] = {
+        ...old,
+        ...invoice(total: 150, paid: 50, quantity: 3),
+        'invoiceId': 's',
+        'invoiceType': 'sale',
+        '_operationId': 'device-a-edit',
+        '_version': invoiceNum(old['_version']).toInt() + 1,
+      };
+      cloud.documents['clients/c'] = {
+        ...cloud.documents['clients/c']!,
+        'balance': 150.0,
+      };
+      cloud.documents['clients/c/financialOperations/device-a-edit'] = {
+        'clientId': 'c',
+        'operationId': 'device-a-edit',
+        'delta': 20.0,
+      };
+      cloud.documents['products/p'] = {
+        ...cloud.documents['products/p']!,
+        'quantity': 7.0,
+      };
+      cloud.documents['box/mainBox'] = {
+        ...cloud.documents['box/mainBox']!,
+        'value': 150.0,
+      };
+    }
+
+    Future<SyncQueueItem> conflictedEdit() async {
+      await CustomerOperationService.saveInvoice(invoice());
+      await drain();
+      anotherAdminEdits();
+      // Admin B edits the stale copy offline: total 120, paid 20, 4 units.
+      await CustomerOperationService.saveInvoice(
+          invoice(total: 120, quantity: 4),
+          editing: true);
+      await drain();
+      final item = syncQueueBox.values.single;
+      expect(item.status, 'failed');
+      expect(SyncQueueManager.instance.canResolveInvoiceEditConflict(item),
+          isTrue);
+      return item;
+    }
+
+    test('keeping my edit applies it on top of the latest version', () async {
+      final item = await conflictedEdit();
+      await SyncQueueManager.instance
+          .resolveInvoiceEditConflict(item.operationId, keepMine: true);
+      await drain();
+
+      expect(syncQueueBox.isEmpty, isTrue);
+      expect(cloud.documents['invoices/s']!['totalSum'], 120);
+      // From A's version to mine: unpaid 100 → 100, 3 → 4 units,
+      // paid 50 → 20.
+      expectCloud(150, 6, 120);
+      expectLocal(150, 6, 120);
+      expect(invoicesBox.get('s')!.totalSum, 120);
+    });
+
+    test('discarding my edit keeps the other admin version everywhere',
+        () async {
+      final item = await conflictedEdit();
+      await SyncQueueManager.instance
+          .resolveInvoiceEditConflict(item.operationId, keepMine: false);
+      await drain();
+
+      expect(syncQueueBox.isEmpty, isTrue);
+      expect(cloud.documents['invoices/s']!['totalSum'], 150);
+      expect(cloud.documents['invoices/s']!['_operationId'], 'device-a-edit');
+      expectCloud(150, 7, 150);
+      expectLocal(150, 7, 150);
+      expect(invoicesBox.get('s')!.totalSum, 150);
+    });
+
+    test('an edit of an invoice deleted elsewhere can only be discarded',
+        () async {
+      await CustomerOperationService.saveInvoice(invoice());
+      await drain();
+      cloud.documents['invoices/s'] = {
+        ...cloud.documents['invoices/s']!,
+        '_deleted': true,
+        '_operationId': 'device-a-delete',
+      };
+      await CustomerOperationService.saveInvoice(invoice(total: 120),
+          editing: true);
+      await drain();
+      var item = syncQueueBox.values.single;
+      await SyncQueueManager.instance
+          .resolveInvoiceEditConflict(item.operationId, keepMine: true);
+      await drain();
+      item = syncQueueBox.values.single;
+      expect(item.lastError, contains('Invoice deleted on another device'));
+      expect(SyncQueueManager.instance.canResolveInvoiceEditConflict(item),
+          isTrue);
+
+      await SyncQueueManager.instance
+          .resolveInvoiceEditConflict(item.operationId, keepMine: false);
+      await drain();
+      expect(syncQueueBox.isEmpty, isTrue);
+      expect(cloud.documents['invoices/s']!['_deleted'], true);
+      expect(invoicesBox.get('s'), isNull);
+    });
   });
 
   test('a different customer name on the cloud invoice does not block an edit',
