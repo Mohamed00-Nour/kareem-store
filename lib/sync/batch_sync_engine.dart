@@ -1113,22 +1113,6 @@ class BatchSyncEngine {
     if (productId.isEmpty) {
       throw ArgumentError('createProduct payload missing productId');
     }
-    data['updatedAt'] = FieldValue.serverTimestamp();
-    await _fs
-        .collection('products')
-        .doc(productId)
-        .set(data, SetOptions(merge: true));
-    await ProductRepository.instance.upsertLocal(productId, data);
-  }
-
-  Future<void> _syncEditProduct(Map<String, dynamic> payload) async {
-    final String productId = payload['productId'];
-    final Map<String, dynamic> data =
-        Map<String, dynamic>.from(payload['data']);
-    final localAfter = {
-      ...?ProductRepository.instance.getById(productId)?.toMap(),
-      ...data,
-    };
     final cloudData = {
       ...data,
       'updatedAt': FieldValue.serverTimestamp(),
@@ -1137,7 +1121,29 @@ class BatchSyncEngine {
         .collection('products')
         .doc(productId)
         .set(cloudData, SetOptions(merge: true));
-    await ProductRepository.instance.upsertLocal(productId, localAfter);
+    // The local copy is already the source of truth (it may have newer edits
+    // or stock changes); only fill it in if it is missing.
+    if (ProductRepository.instance.getById(productId) == null) {
+      await ProductRepository.instance.upsertLocal(productId, data);
+    }
+  }
+
+  Future<void> _syncEditProduct(Map<String, dynamic> payload) async {
+    final String productId = payload['productId'];
+    final Map<String, dynamic> data =
+        Map<String, dynamic>.from(payload['data'] as Map? ?? {});
+    final quantityDelta = (payload['quantityDelta'] as num?)?.toDouble() ?? 0;
+    final cloudData = <String, dynamic>{
+      ...data,
+      if (quantityDelta != 0) 'quantity': FieldValue.increment(quantityDelta),
+      'updatedAt': FieldValue.serverTimestamp(),
+    };
+    // Local Hive was already updated when the edit was made; rewriting it here
+    // could undo later offline edits that are still waiting in the queue.
+    await _fs
+        .collection('products')
+        .doc(productId)
+        .set(cloudData, SetOptions(merge: true));
   }
 
   Future<void> _syncDeleteProduct(Map<String, dynamic> payload) async {

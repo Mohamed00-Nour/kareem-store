@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
@@ -147,24 +148,34 @@ class _EditProductPageState extends State<EditProductPage> {
         'retail': _retail,
       };
 
-      // 1. Update local Hive cache immediately (0ms)
-      await ProductRepository.instance.upsertLocal(widget.productId, {
-        ...widget.productData,
-        ...updateData,
-        'id': widget.productId,
+      // Compare against the latest local copy (it may have changed since this
+      // page opened, e.g. by a sale) and keep only the edited fields.
+      final current = ProductRepository.instance.getById(widget.productId);
+      final base = current?.toMap() ?? widget.productData;
+      final changes = <String, dynamic>{};
+      updateData.forEach((key, value) {
+        if (key == 'quantity') return;
+        final original = key == 'image' || key == 'randomNumber'
+            ? widget.productData[key]
+            : base[key];
+        final same = (value is num && original is num)
+            ? (value - original).abs() < 0.0000001
+            : (value ?? '') == (original ?? '');
+        if (!same) changes[key] = value;
       });
+      // Stock is saved as the difference the user typed, so sales made
+      // elsewhere in the meantime are not overwritten.
+      final openedQty =
+          (widget.productData['quantity'] as num?)?.toDouble() ?? 0.0;
+      final quantityDelta = (updateData['quantity'] as double) - openedQty;
 
-      // 2. Enqueue background update to Firebase
-      await SyncQueueManager.instance.enqueue(
-        operationType: 'editProduct',
-        payload: {
-          'productId': widget.productId,
-          'data': updateData,
-        },
+      // Saved locally + queued in one step; syncs in the background.
+      await ProductRepository.instance.editLocalFirst(
+        widget.productId,
+        changes,
+        quantityDelta: quantityDelta,
       );
-
-      // Trigger background sync
-      ConnectivityService.instance.forceSync();
+      unawaited(ConnectivityService.instance.forceSync());
 
       if (!mounted) return;
       ScaffoldMessenger.of(context).showSnackBar(

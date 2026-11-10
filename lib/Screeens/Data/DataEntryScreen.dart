@@ -1,4 +1,3 @@
-import 'package:firebase_storage/firebase_storage.dart';
 import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
@@ -205,20 +204,9 @@ class _DataEntryScreenState extends State<DataEntryScreen> {
           continue;
         }
         final productMap = product.toMap();
-        if (ConnectivityService.instance.isOnline) {
-          if (product.image != null) {
-            productMap['image'] = await _uploadImage(File(product.image!));
-          }
-        }
-        await SyncQueueManager.instance.enqueue(
-          operationType: 'createProduct',
-          payload: {
-            'productId': product.id,
-            'data': productMap,
-          },
-        );
-        // Save to local Hive cache immediately
-        await ProductRepository.instance.upsertLocal(product.id, productMap);
+        // Saved locally + queued in one step; syncs in the background.
+        await ProductRepository.instance
+            .createLocalFirst(product.id, productMap);
         savedCount++;
       }
       unawaited(ConnectivityService.instance.forceSync());
@@ -261,21 +249,6 @@ class _DataEntryScreenState extends State<DataEntryScreen> {
       ScaffoldMessenger.of(context).showSnackBar(
         SnackBar(content: Text('Error picking image: $e')),
       );
-    }
-  }
-
-  Future<String> _uploadImage(File imageFile) async {
-    try {
-      final storageRef = FirebaseStorage.instance.ref();
-      final imagesRef =
-          storageRef.child('images/${imageFile.path.split('/').last}');
-      final uploadTask = imagesRef.putFile(imageFile);
-      final snapshot = await uploadTask.whenComplete(() => {});
-      final downloadUrl = await snapshot.ref.getDownloadURL();
-      return downloadUrl;
-    } catch (e) {
-      print(e);
-      return '';
     }
   }
 

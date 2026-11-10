@@ -126,13 +126,10 @@ class _DepartmentProductsPageState extends State<DepartmentProductsPage> {
                         .where((product) => product.department == oldName)
                         .toList();
                     for (final product in affectedProducts) {
-                      final data = product.toMap()..['department'] = newName;
-                      await ProductRepository.instance
-                          .upsertLocal(product.id, data);
-                      await SyncQueueManager.instance.enqueue(
-                        operationType: 'editProduct',
-                        payload: {'productId': product.id, 'data': data},
-                      );
+                      // Send only the department, so stock and prices
+                      // changed elsewhere are not overwritten.
+                      await ProductRepository.instance.editLocalFirst(
+                          product.id, {'department': newName});
                     }
                     unawaited(ConnectivityService.instance.forceSync());
 

@@ -87,6 +87,69 @@ class ProductRepository {
         });
   }
 
+  /// Edits a product offline-first: the local copy and the queued cloud update
+  /// are committed together, then the update syncs in the background.
+  ///
+  /// [changes] holds only the edited fields. A quantity change is sent as a
+  /// delta so it never overwrites stock sold on another device meanwhile.
+  Future<void> editLocalFirst(
+    String productId,
+    Map<String, dynamic> changes, {
+    double quantityDelta = 0,
+  }) async {
+    final existing = getById(productId);
+    if (existing == null) {
+      throw StateError('Product must be cached before editing: $productId');
+    }
+    final cloudChanges = Map<String, dynamic>.from(changes)..remove('quantity');
+    final hasDelta = quantityDelta.abs() > 0.0000001;
+    if (cloudChanges.isEmpty && !hasDelta) return;
+
+    final localAfter = {
+      ...existing.toMap(),
+      ...cloudChanges,
+      'id': productId,
+      'quantity': existing.quantity + quantityDelta,
+      'updatedAt': DateTime.now(),
+    };
+    await LocalOperationJournal.commit((_) async => {
+          'operationType': 'editProduct',
+          'productId': productId,
+          'data': cloudChanges,
+          if (hasDelta) 'quantityDelta': quantityDelta,
+          'localWrites': [
+            {
+              'box': HiveBoxNames.products,
+              'key': productId,
+              'data': localAfter,
+            }
+          ],
+        });
+  }
+
+  /// Creates a product offline-first: saved locally and queued for the cloud
+  /// in a single journal entry.
+  Future<void> createLocalFirst(
+      String productId, Map<String, dynamic> data) async {
+    final localData = {
+      ...data,
+      'id': productId,
+      'updatedAt': DateTime.now(),
+    };
+    await LocalOperationJournal.commit((_) async => {
+          'operationType': 'createProduct',
+          'productId': productId,
+          'data': {...data, 'id': productId},
+          'localWrites': [
+            {
+              'box': HiveBoxNames.products,
+              'key': productId,
+              'data': localData,
+            }
+          ],
+        });
+  }
+
   // ── Sync ──────────────────────────────────────────────────────────────────
 
   /// Performs a **full** initial sync from Firestore → Hive.
