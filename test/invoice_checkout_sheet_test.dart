@@ -433,4 +433,69 @@ void main() {
     expect(result?.paidAmount, 200);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets(
+      'edited sales invoice is not saved until the distribution total is approved',
+      (tester) async {
+    CheckoutSelectionResult? result;
+    await tester.pumpWidget(
+      ScreenUtilInit(
+        designSize: const Size(360, 690),
+        builder: (_, __) => MaterialApp(
+          home: Scaffold(
+            body: Builder(
+              builder: (context) => ElevatedButton(
+                onPressed: () async {
+                  result = await showInvoiceCheckoutSheet(
+                    context: context,
+                    isEditing: true,
+                    paymentMethod: 'آجل',
+                    invoiceDiscount: 0,
+                    clientName: 'عميل اختبار',
+                    clientBalance: 0,
+                    notes: '',
+                    originalPaidAmount: 100,
+                    totalSum: 500,
+                    clients: const ['عميل اختبار'],
+                    isReturnInvoice: false,
+                    isQuote: false,
+                    isSaving: false,
+                    clientExists: (_) async => true,
+                    fetchClientBalance: (_) async => 0,
+                    initialCashAmount: 100,
+                  );
+                },
+                child: const Text('open edit checkout'),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    await tester.tap(find.text('open edit checkout'));
+    await tester.pumpAndSettle();
+    await tester.enterText(
+      find.byKey(const Key('invoice-breakdown-cash-field')),
+      '300',
+    );
+    await tester.pump();
+
+    final continueButton =
+        find.byKey(const Key('invoice-checkout-continue-button'));
+    await tester.ensureVisible(continueButton);
+    await tester.tap(continueButton);
+    await tester.pumpAndSettle();
+    expect(result, isNull);
+
+    final applyButton = find.byKey(const Key('apply-payment-breakdown-total'));
+    await tester.ensureVisible(applyButton);
+    await tester.tap(applyButton);
+    await tester.pump();
+    await tester.ensureVisible(continueButton);
+    await tester.tap(continueButton);
+    await tester.pumpAndSettle();
+    expect(result?.paidAmount, 300);
+    expect(tester.takeException(), isNull);
+  });
 }

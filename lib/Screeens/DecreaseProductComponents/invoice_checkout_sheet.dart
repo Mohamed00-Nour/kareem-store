@@ -1088,14 +1088,13 @@ class _InvoiceCheckoutSheetContentState
                                     return;
                                   }
 
-                                  // New sales invoice: an entered payment
-                                  // distribution must be approved as the
-                                  // paid amount ("اعتماده كمدفوع") first.
+                                  // Sales invoice (new or edited): an entered
+                                  // payment distribution must be approved as
+                                  // the paid amount ("اعتماده كمدفوع") first.
                                   final distributed =
                                       wallet + cash + instapay + bankTransfer;
                                   final mustApproveBreakdown =
-                                      !widget.isEditing &&
-                                          !widget.isReturnInvoice &&
+                                      !widget.isReturnInvoice &&
                                           !widget.isQuote;
                                   if (mustApproveBreakdown &&
                                       distributed > 0.005 &&
