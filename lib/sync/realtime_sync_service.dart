@@ -246,6 +246,7 @@ class RealtimeSyncService {
       'invoices': HiveMetaKeys.lastInvoiceSyncAt,
       'returnInvoices': HiveMetaKeys.lastReturnInvoiceSyncAt,
       'buying invoices': HiveMetaKeys.lastBuyingInvoiceSyncAt,
+      'returnBuyingInvoices': null,
       'price_quotes': HiveMetaKeys.lastQuoteSyncAt,
       'client_vouchers': null,
       'supplier_vouchers': null,
@@ -502,6 +503,7 @@ class RealtimeSyncService {
       invoicesBox.flush(),
       returnInvoicesBox.flush(),
       buyingInvoicesBox.flush(),
+      buyingReturnInvoicesBox.flush(),
       quotesBox.flush(),
       boxCacheBox.flush(),
       balanceHistoryBox.flush(),
@@ -525,6 +527,7 @@ class RealtimeSyncService {
         'payment_breakdowns',
         'suppliers',
         'buying invoices',
+        'returnBuyingInvoices',
         'box',
       }.contains(parts.first);
     }
@@ -578,6 +581,10 @@ class RealtimeSyncService {
         break;
       case 'buying invoices':
         await InvoiceRepository.instance.mergeCloudBuying(parts[1], data);
+        break;
+      case 'returnBuyingInvoices':
+        await InvoiceRepository.instance
+            .mergeCloudBuyingReturnRoot(parts[1], data);
         break;
       case 'box':
         if (data != null) await BoxRepository.instance.mergeCloud(data);

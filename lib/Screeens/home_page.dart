@@ -240,10 +240,19 @@ class HomePage extends StatelessWidget {
                 ),
                 CardWidget(
                   imagePath: 'assets/images/minus.png',
-                  text: 'فواتير المرتجع',
+                  text: 'مرتجع المبيعات',
                   onPressed: () {
                     Navigator.of(context).push(MaterialPageRoute(
                         builder: (context) => const ReturnProductPage()));
+                  },
+                ),
+                CardWidget(
+                  imagePath: 'assets/images/shipping.png',
+                  text: 'مرتجع المشتريات',
+                  onPressed: () {
+                    Navigator.of(context).push(MaterialPageRoute(
+                        builder: (context) =>
+                            const AddProductPage(isPurchaseReturn: true)));
                   },
                 ),
                 CardWidget(

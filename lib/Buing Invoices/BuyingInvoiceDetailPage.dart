@@ -1,14 +1,12 @@
-import 'dart:io';
-import 'dart:ui' as ui;
-
 import 'package:flutter/material.dart';
-import 'package:flutter/rendering.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
-import 'package:path_provider/path_provider.dart';
-import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
 
+import '../Services/invoice_number_utils.dart';
 import '../Services/supplier_invoice_running_balance_service.dart';
+import '../Services/whatsapp_invoice_share_service.dart';
 import '../Screeens/AddProductPage.dart';
+import '../Widgets/invoice_action_buttons.dart';
 import '../Widgets/invoice_display_widgets.dart';
 
 class BuyingInvoiceDetailPage extends StatefulWidget {
@@ -22,28 +20,34 @@ class BuyingInvoiceDetailPage extends StatefulWidget {
 }
 
 class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
-  final GlobalKey _globalKey = GlobalKey();
+  bool get _isReturn => invoiceIsBuyingReturn(widget.invoice);
 
-  Future<void> _captureAndShareScreenshot() async {
-    try {
-      final boundary = _globalKey.currentContext!.findRenderObject()
-          as RenderRepaintBoundary;
-      final image = await boundary.toImage(pixelRatio: 3.0);
-      final byteData = await image.toByteData(format: ui.ImageByteFormat.png);
-      final pngBytes = byteData!.buffer.asUint8List();
-
-      final directory = await getTemporaryDirectory();
-      final imagePath = '${directory.path}/invoice.png';
-      final file = File(imagePath);
-      await file.writeAsBytes(pngBytes);
-
-      await Share.shareFiles(
-        [file.path],
-        text: 'إليك فاتورتك من معرض كريم حماد للحدايد والبويات',
-      );
-    } catch (e) {
-      print(e);
+  Future<void> _openEdit() async {
+    if (_isReturn) {
+      // Editing a purchase return changes stock, payable and cash: admins only.
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      if ((prefs.getString('user_role') ?? 'user') != 'admin') {
+        ScaffoldMessenger.of(context).showSnackBar(
+            const SnackBar(content: Text('ليس لديك الصلاحية لتعديل المرتجع')));
+        return;
+      }
     }
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (_) => AddProductPage(invoiceToEdit: widget.invoice),
+      ),
+    );
+  }
+
+  /// Same WhatsApp share sheet as the sales invoice page (recipient choice,
+  /// text or image), using the balances shown on this page.
+  Future<void> _share(Map<String, dynamic> invoiceData) async {
+    await WhatsappInvoiceShareService.showShareOptions(
+      context,
+      invoice: invoiceData,
+    );
   }
 
   @override
@@ -58,23 +62,15 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
     return Scaffold(
       appBar: AppBar(
         title: Text(
-          'رقم الفاتورة #${invoiceData['invoiceNumber']}',
+          '${_isReturn ? 'رقم المرتجع' : 'رقم الفاتورة'} #${invoiceData['invoiceNumber']}',
           style: TextStyle(fontSize: 20.sp, color: Colors.white),
         ),
-        backgroundColor: Colors.black.withOpacity(0.7),
+        backgroundColor:
+            _isReturn ? Colors.red.shade900 : Colors.black.withOpacity(0.7),
         actions: [
-          // ── Edit button ──
-          IconButton(
-            icon: Icon(Icons.edit_outlined, color: Colors.white, size: 22.sp),
-            tooltip: 'تعديل الفاتورة',
-            onPressed: () {
-              Navigator.push(
-                context,
-                MaterialPageRoute(
-                  builder: (_) => AddProductPage(invoiceToEdit: widget.invoice),
-                ),
-              );
-            },
+          InvoiceActionButtons(
+            onShare: () => _share(invoiceData),
+            onEdit: _openEdit,
           ),
         ],
       ),
@@ -82,7 +78,6 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
         child: Column(
           children: [
             RepaintBoundary(
-              key: _globalKey,
               child: Container(
                 color: Colors.white,
                 padding: EdgeInsets.symmetric(horizontal: 15.w, vertical: 15.h),
@@ -100,7 +95,7 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
                     SizedBox(height: 5.h),
                     Center(
                       child: Text(
-                        'فاتورة مشتريات',
+                        _isReturn ? 'مرتجع مشتريات' : 'فاتورة مشتريات',
                         style: TextStyle(
                           fontSize: 20.sp,
                           fontWeight: FontWeight.bold,
@@ -120,7 +115,9 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
                               TextSpan(
                                 children: [
                                   TextSpan(
-                                    text: 'رقم الفاتورة: ',
+                                    text: _isReturn
+                                        ? 'رقم المرتجع: '
+                                        : 'رقم الفاتورة: ',
                                     style: TextStyle(
                                       fontSize: 15.sp,
                                       fontWeight: FontWeight.bold,
@@ -209,25 +206,6 @@ class _BuyingInvoiceDetailPageState extends State<BuyingInvoiceDetailPage> {
                       remainingLabel: 'المتبقي عليكم',
                     ),
                   ],
-                ),
-              ),
-            ),
-            Padding(
-              padding: EdgeInsets.symmetric(vertical: 16.h),
-              child: ElevatedButton(
-                style: ElevatedButton.styleFrom(
-                  shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(8.0),
-                  ),
-                  backgroundColor: Colors.black.withOpacity(0.7),
-                ),
-                onPressed: _captureAndShareScreenshot,
-                child: Text(
-                  'إرسال الفاتورة',
-                  style: TextStyle(
-                    fontSize: 20.sp,
-                    color: Colors.white.withOpacity(1),
-                  ),
                 ),
               ),
             ),

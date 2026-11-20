@@ -180,6 +180,11 @@ bool invoiceIsReturn(Map<String, dynamic> invoice) {
   return invoice['invoiceType']?.toString() == 'return';
 }
 
+/// Purchase return: goods sent back to a supplier.
+bool invoiceIsBuyingReturn(Map<String, dynamic> invoice) {
+  return invoice['invoiceType']?.toString() == 'buying_return';
+}
+
 /// Purchase invoice tied to a supplier (not a client sale).
 bool invoiceIsSupplierPurchase(Map<String, dynamic> invoice) {
   final supplier = invoice['supplierName']?.toString().trim() ?? '';
@@ -225,7 +230,7 @@ double invoiceClientRemainingOwed(Map<String, dynamic> invoice) {
       invoice['previousBalance'] != null) {
     final prev = invoiceNum(invoice['previousBalance']);
     final unpaid = invoiceUnpaidAmount(invoice);
-    final isReturn = invoiceIsReturn(invoice);
+    final isReturn = invoiceIsReturn(invoice) || invoiceIsBuyingReturn(invoice);
     return isReturn ? (prev - unpaid) : (prev + unpaid);
   }
   return invoiceNum(invoice['balance']);
@@ -245,7 +250,7 @@ double invoiceSupplierRemainingOwed(Map<String, dynamic> invoice) {
       invoice['previousBalance'] != null) {
     final prev = invoiceNum(invoice['previousBalance']);
     final unpaid = invoiceUnpaidAmount(invoice);
-    final isReturn = invoiceIsReturn(invoice);
+    final isReturn = invoiceIsReturn(invoice) || invoiceIsBuyingReturn(invoice);
     return isReturn ? (prev - unpaid) : (prev + unpaid);
   }
   return invoiceNum(invoice['balance']);
@@ -266,7 +271,7 @@ double invoiceDynamicPreviousBalance(Map<String, dynamic> invoice) {
       ? invoiceSupplierRemainingOwed(invoice)
       : invoiceClientRemainingOwed(invoice);
   final unpaid = invoiceUnpaidAmount(invoice);
-  final isReturn = invoiceIsReturn(invoice);
+  final isReturn = invoiceIsReturn(invoice) || invoiceIsBuyingReturn(invoice);
 
   if (isReturn) {
     return liveBalance + unpaid;
@@ -354,6 +359,8 @@ class LocalInvoiceCounter {
         return HiveMetaKeys.nextReturnInvoiceNumber;
       case 'buying':
         return HiveMetaKeys.nextBuyingInvoiceNumber;
+      case 'buying_return':
+        return HiveMetaKeys.nextBuyingReturnInvoiceNumber;
       case 'sale':
       case 'sales':
       default:
@@ -398,6 +405,12 @@ class LocalInvoiceCounter {
         case 'buying':
           if (!buyingInvoicesBox.isOpen) return 0;
           return buyingInvoicesBox.values.fold<int>(0,
+              (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
+        case 'buying_return':
+          // Purchase returns arrive on every device through the financial
+          // receipt feed, so the local box is the counter's source.
+          if (!buyingReturnInvoicesBox.isOpen) return 0;
+          return buyingReturnInvoicesBox.values.fold<int>(0,
               (max, inv) => inv.invoiceNumber > max ? inv.invoiceNumber : max);
         case 'sale':
         case 'sales':

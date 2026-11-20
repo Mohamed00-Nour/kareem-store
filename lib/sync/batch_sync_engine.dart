@@ -180,6 +180,10 @@ class BatchSyncEngine {
         case 'buying invoices':
           await InvoiceRepository.instance.mergeCloudBuying(parts[1], data);
           break;
+        case 'returnBuyingInvoices':
+          await InvoiceRepository.instance
+              .mergeCloudBuyingReturnRoot(parts[1], data);
+          break;
         case 'box':
           if (data != null) await BoxRepository.instance.mergeCloud(data);
           break;

@@ -25,6 +25,8 @@ class InvoiceEditGuard {
         return InvoiceRepository.instance.getReturnById(parts[1])?.toMap();
       case 'buying invoices':
         return buyingInvoicesBox.get(parts[1])?.toMap();
+      case 'returnBuyingInvoices':
+        return buyingReturnInvoicesBox.get(parts[1])?.toMap();
     }
     return null;
   }
@@ -34,6 +36,9 @@ class InvoiceEditGuard {
     final parts = path.split('/');
     if (parts[0] == 'buying invoices') {
       await InvoiceRepository.instance.mergeCloudBuying(parts[1], data);
+    } else if (parts[0] == 'returnBuyingInvoices') {
+      await InvoiceRepository.instance
+          .mergeCloudBuyingReturnRoot(parts[1], data);
     } else {
       await InvoiceRepository.instance
           .mergeCloudInvoice(parts[0], parts[1], data);

@@ -1,9 +1,12 @@
 import 'dart:io';
 
+import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:hive/hive.dart';
+import 'package:kareem_store/Services/buying_invoice_update_service.dart';
 import 'package:kareem_store/Services/supplier_balance_store.dart';
+import 'package:kareem_store/Services/whatsapp_invoice_share_service.dart';
 import 'package:kareem_store/Services/supplier_operation_service.dart';
 import 'package:kareem_store/Services/supplier_invoice_running_balance_service.dart';
 import 'package:kareem_store/Services/invoice_footer_data.dart';
@@ -450,8 +453,8 @@ void main() {
     await SupplierOperationService.renameSupplier(
         'supplier-1', 'Renamed supplier');
     expect(suppliersBox.get('supplier-1')!.name, 'Renamed supplier');
-    expect(buyingInvoicesBox.get('purchase-1')!.supplierName,
-        'Renamed supplier');
+    expect(
+        buyingInvoicesBox.get('purchase-1')!.supplierName, 'Renamed supplier');
     expect(SupplierBalanceStore.balance('supplier-1'), balanceBefore);
     expect(syncQueueBox.length, 1);
 
@@ -515,6 +518,167 @@ void main() {
     expect(cloud.documents['suppliers/supplier-1']!['totalBalance'], 130);
     expect(cloud.documents['products/product-1']!['quantity'], 12);
     expect(cloud.documents['box/mainBox']!['value'], 980);
+  });
+
+  test('WhatsApp sharing opens the supplier chat when a phone is saved',
+      () async {
+    expect(
+        WhatsappInvoiceShareService.supplierPhone(
+            {'supplierId': 'supplier-1', 'supplierName': 'Fixture supplier'}),
+        isNull);
+
+    await suppliersBox.put(
+        'supplier-1',
+        SupplierLocal(
+            id: 'supplier-1',
+            name: 'Fixture supplier',
+            phone: '01012345678',
+            balance: 50,
+            updatedAt: DateTime(2026, 9, 1)));
+    expect(
+        WhatsappInvoiceShareService.supplierPhone({'supplierId': 'supplier-1'}),
+        '201012345678');
+    // Older invoices without a supplier ID are matched by name.
+    expect(
+        WhatsappInvoiceShareService.supplierPhone(
+            {'supplierName': 'Fixture supplier'}),
+        '201012345678');
+  });
+
+  test('WhatsApp recipient: saved number, another number or a contact', () {
+    expect(
+        WhatsappInvoiceShareService.recipientPhone(ShareRecipientChoice.saved,
+            savedPhone: '201012345678'),
+        '201012345678');
+    expect(
+        WhatsappInvoiceShareService.recipientPhone(ShareRecipientChoice.other,
+            savedPhone: '201012345678', typedNumber: '01122334455'),
+        '201122334455');
+    expect(
+        WhatsappInvoiceShareService.recipientPhone(ShareRecipientChoice.other,
+            typedNumber: '1122334455'),
+        '201122334455');
+    // Too short or empty: the sheet asks for a valid number.
+    expect(
+        WhatsappInvoiceShareService.recipientPhone(ShareRecipientChoice.other,
+            typedNumber: '0112'),
+        isNull);
+    expect(
+        WhatsappInvoiceShareService.recipientPhone(ShareRecipientChoice.other),
+        isNull);
+    // '' lets WhatsApp show its contact picker.
+    expect(
+        WhatsappInvoiceShareService.recipientPhone(
+            ShareRecipientChoice.contactPicker,
+            savedPhone: '201012345678'),
+        '');
+  });
+
+  testWidgets('share sheet defaults to the saved number and checks another',
+      (tester) async {
+    await tester.runAsync(() => suppliersBox.put(
+        'supplier-1',
+        SupplierLocal(
+            id: 'supplier-1',
+            name: 'Fixture supplier',
+            phone: '01012345678',
+            balance: 50,
+            updatedAt: DateTime(2026, 9, 1))));
+    await tester.pumpWidget(MaterialApp(
+      home: Scaffold(
+        body: Builder(
+          builder: (context) => TextButton(
+            onPressed: () => WhatsappInvoiceShareService.showShareOptions(
+              context,
+              invoice: {
+                'supplierId': 'supplier-1',
+                'supplierName': 'Fixture supplier',
+                'invoiceNumber': 7,
+              },
+            ),
+            child: const Text('share'),
+          ),
+        ),
+      ),
+    ));
+    await tester.tap(find.text('share'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('رقم المورد'), findsOneWidget);
+    expect(find.text('01012345678'), findsOneWidget);
+    RadioListTile<ShareRecipientChoice> tile(String title) =>
+        tester.widget<RadioListTile<ShareRecipientChoice>>(find.ancestor(
+            of: find.text(title),
+            matching: find.byType(RadioListTile<ShareRecipientChoice>)));
+    expect(tile('رقم المورد').groupValue, ShareRecipientChoice.saved);
+
+    await tester.tap(find.text('رقم آخر'));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '0112');
+    await tester.tap(find.text('رسالة نصية'));
+    await tester.pumpAndSettle();
+    // An invalid number keeps the sheet open with a message.
+    expect(find.text('يرجى إدخال رقم هاتف صحيح'), findsOneWidget);
+    expect(find.text('رسالة نصية'), findsOneWidget);
+  });
+
+  test('WhatsApp text names purchases and purchase returns', () {
+    final purchaseText = WhatsappInvoiceShareService.buildInvoiceMessage({
+      'supplierName': 'Fixture supplier',
+      'invoiceNumber': 7,
+      'invoiceType': 'buying',
+      'totalSum': 100.0,
+      'paidAmount': 20.0,
+      'previousBalance': 50.0,
+    });
+    expect(purchaseText, contains('فاتورة مشتريات رقم 7'));
+    expect(purchaseText, contains('المدفوع: 20'));
+
+    final returnText = WhatsappInvoiceShareService.buildInvoiceMessage({
+      'supplierName': 'Fixture supplier',
+      'invoiceNumber': 4,
+      'invoiceType': 'buying_return',
+      'totalSum': 30.0,
+      'paidAmount': 10.0,
+      'previousBalance': 50.0,
+    });
+    expect(returnText, contains('مرتجع مشتريات رقم 4'));
+    expect(returnText, contains('المسترد من المورد: 10'));
+    expect(returnText, contains('الرصيد الحالي للمورد: 30'));
+  });
+
+  test('purchase edit keeps the paid amount, method, discount and notes',
+      () async {
+    await SupplierOperationService.saveBuyingInvoice({
+      ...purchase(),
+      'paymentMethod': 'آجل',
+      'invoiceDiscount': 5.0,
+      'notes': 'original notes',
+    });
+    final original = buyingInvoicesBox.get('purchase-1')!.toMap();
+
+    await BuyingInvoiceUpdateService.updateBuyingInvoice(
+      rootInvoiceId: 'purchase-1',
+      originalInvoice: original,
+      newProducts: List<Map<String, dynamic>>.from(purchase()['products']),
+      supplierName: 'Fixture supplier',
+      supplierId: 'supplier-1',
+      selectedDate: DateTime(2026, 9, 28),
+      paidAmount: 95,
+      notes: 'original notes',
+      invoiceDiscount: 5,
+      paymentMethod: 'نقداً',
+    );
+
+    final edited = buyingInvoicesBox.get('purchase-1')!;
+    expect(edited.paidAmount, 95);
+    expect(edited.paymentMethod, 'نقداً');
+    expect(edited.invoiceDiscount, 5);
+    expect(edited.notes, 'original notes');
+    // Total 100 − 5 discount = 95, now paid in full: only the extra 75 paid
+    // leaves the cash box and nothing more is owed for this invoice.
+    expect(boxCacheBox.get('mainBox')!.value, 905);
+    expect(SupplierBalanceStore.balance('supplier-1'), 50);
   });
 
   test('purchase edit and deletion apply only their differences', () async {
@@ -795,8 +959,7 @@ void main() {
       expect(buyingInvoicesBox.get('purchase-1')!.totalSum, 120);
     });
 
-    test('discarding my purchase edit keeps the other admin version',
-        () async {
+    test('discarding my purchase edit keeps the other admin version', () async {
       final item = await conflictedEdit();
       await SyncQueueManager.instance
           .resolveInvoiceEditConflict(item.operationId, keepMine: false);
@@ -892,6 +1055,48 @@ void main() {
     expect(productsBox.get('product-1')!.quantity, 10);
     expect(boxCacheBox.get('mainBox')!.value, 1000);
     expect(buyingInvoicesBox.containsKey('purchase-1'), isFalse);
+  });
+
+  test('printed and shared purchases show line price and total, not 0', () {
+    final purchaseLines = InvoicePrintService.normalizeInvoice({
+      'supplierName': 'Fixture supplier',
+      'invoiceType': 'buying',
+      'products': [
+        {
+          'product': 'Fixture product',
+          'amount': 15,
+          'cost': 485,
+          'totalCost': 7275
+        },
+      ],
+    })['products'] as List;
+    expect(purchaseLines.single['selectedPrice'], 485);
+    expect(purchaseLines.single['total'], 7275);
+
+    final returnLines = InvoicePrintService.normalizeInvoice({
+      'supplierName': 'Fixture supplier',
+      'invoiceType': 'buying_return',
+      'products': [
+        {
+          'product': 'Fixture product',
+          'amount': 3,
+          'cost': 10,
+          'totalCost': 30
+        },
+      ],
+    })['products'] as List;
+    expect(returnLines.single['selectedPrice'], 10);
+    expect(returnLines.single['total'], 30);
+
+    // A sale never falls back to the store's cost price.
+    final saleLines = InvoicePrintService.normalizeInvoice({
+      'clientName': 'Customer',
+      'products': [
+        {'product': 'Fixture product', 'amount': 2, 'cost': 5, 'totalCost': 10},
+      ],
+    })['products'] as List;
+    expect(saleLines.single['selectedPrice'], 0);
+    expect(saleLines.single['total'], 0);
   });
 
   test('purchase printing uses the unsynced Hive edit', () async {

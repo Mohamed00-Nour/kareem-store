@@ -5,14 +5,19 @@ import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../Screeens/AddProductPage.dart';
 import '../Services/supplier_operation_service.dart';
 import '../local_db/hive_init.dart';
+import '../Services/invoice_number_utils.dart';
 import '../repositories/invoice_repository.dart';
 import '../sync/connectivity_service.dart';
 import 'BuyingInvoiceDetailPage.dart';
 
 class BuyingInvoiceListPage extends StatefulWidget {
-  const BuyingInvoiceListPage({super.key});
+  /// Opens on purchase returns (مرتجع المشتريات) instead of purchases.
+  final bool showReturns;
+
+  const BuyingInvoiceListPage({super.key, this.showReturns = false});
 
   @override
   _BuyingInvoiceListPageState createState() => _BuyingInvoiceListPageState();
@@ -26,22 +31,36 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
   bool _isFetching = true;
   DateTime? _selectedMonth;
   String _userRole = 'user'; // Default to user role
+  late bool _showReturns = widget.showReturns;
 
   @override
   void initState() {
     super.initState();
     // Initialize with current month
     _selectedMonth = DateTime.now();
-    _invoicesSubscription =
-        buyingInvoicesBox.watch().listen((_) => _loadFromLocalCache());
+    _watchCurrentBox();
     _loadUserRole();
     _loadFromLocalCache();
     _backgroundSyncInvoices();
     _searchController.addListener(_filterInvoices);
   }
 
+  void _watchCurrentBox() {
+    _invoicesSubscription?.cancel();
+    final box = _showReturns ? buyingReturnInvoicesBox : buyingInvoicesBox;
+    _invoicesSubscription = box.watch().listen((_) => _loadFromLocalCache());
+  }
+
+  void _toggleReturns() {
+    setState(() => _showReturns = !_showReturns);
+    _watchCurrentBox();
+    _loadFromLocalCache();
+  }
+
   void _loadFromLocalCache() {
-    final locals = InvoiceRepository.instance.getAllBuying();
+    final locals = _showReturns
+        ? InvoiceRepository.instance.getAllBuyingReturns()
+        : InvoiceRepository.instance.getAllBuying();
     if (mounted) {
       setState(() {
         _invoices.clear();
@@ -75,7 +94,8 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
     if (!ConnectivityService.instance.isOnline) return;
     try {
       await ConnectivityService.instance.forceSync();
-      await InvoiceRepository.instance.deltaSyncBuying();
+      // Purchase returns arrive through the financial receipt feed.
+      if (!_showReturns) await InvoiceRepository.instance.deltaSyncBuying();
       _loadFromLocalCache();
     } catch (e) {
       debugPrint('Error syncing buying invoices: $e');
@@ -288,7 +308,11 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
 
     try {
       if (invoiceId.isEmpty) throw StateError('معرف الفاتورة غير موجود');
-      await SupplierOperationService.deleteBuyingInvoice(invoiceId);
+      if (invoiceIsBuyingReturn(invoice)) {
+        await SupplierOperationService.deleteBuyingReturn(invoiceId);
+      } else {
+        await SupplierOperationService.deleteBuyingInvoice(invoiceId);
+      }
       ConnectivityService.instance.forceSync();
 
       if (!mounted) return;
@@ -325,8 +349,29 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
           ),
           style: TextStyle(color: Colors.white, fontSize: 20.sp),
         ),
-        backgroundColor: Colors.black.withOpacity(0.7),
+        backgroundColor:
+            _showReturns ? Colors.red.shade900 : Colors.black.withOpacity(0.7),
         actions: [
+          if (_showReturns)
+            IconButton(
+              icon: const Icon(Icons.add_circle_outline, color: Colors.white),
+              tooltip: 'مرتجع مشتريات جديد',
+              onPressed: () => Navigator.push(
+                context,
+                MaterialPageRoute(
+                  builder: (_) => const AddProductPage(isPurchaseReturn: true),
+                ),
+              ),
+            ),
+          IconButton(
+            icon: Icon(
+              _showReturns ? Icons.receipt_long : Icons.assignment_return,
+              color: Colors.white,
+            ),
+            tooltip:
+                _showReturns ? 'عرض فواتير المشتريات' : 'عرض مرتجع المشتريات',
+            onPressed: _toggleReturns,
+          ),
           IconButton(
             icon: Icon(Icons.calendar_month, color: Colors.white),
             onPressed: () => _selectMonth(context),
@@ -343,12 +388,17 @@ class _BuyingInvoiceListPageState extends State<BuyingInvoiceListPage> {
               itemCount: _filteredInvoices.length,
               itemBuilder: (context, index) {
                 final invoice = _filteredInvoices[index];
+                final isReturn = invoiceIsBuyingReturn(invoice);
                 return Card(
-                  color: Colors.orange.withOpacity(0.8),
+                  color: isReturn
+                      ? Colors.red.shade100
+                      : Colors.orange.withOpacity(0.8),
                   elevation: 2,
                   child: ListTile(
                     title: Center(
-                        child: Text('فاتورة #${invoice['invoiceNumber']}')),
+                        child: Text(isReturn
+                            ? 'مرتجع #${invoice['invoiceNumber']}'
+                            : 'فاتورة #${invoice['invoiceNumber']}')),
                     subtitle: Center(
                         child: Text('المورد: ${invoice['supplierName']}')),
                     trailing: IconButton(

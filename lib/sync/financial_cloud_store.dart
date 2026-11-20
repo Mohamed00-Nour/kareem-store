@@ -199,7 +199,7 @@ class FinancialCloudUploader {
       }
       final resolution = payload['conflictResolution']?.toString();
       if (resolution != null &&
-          const {'editInvoice', 'editBuyingInvoice'}.contains(operationType) &&
+          editOperationTypes.contains(operationType) &&
           payload['financialFormat'] == 2) {
         // The user resolved a conflict with an edit made on another device.
         // Rebuild every effect from the latest cloud invoice in this same
@@ -217,13 +217,16 @@ class FinancialCloudUploader {
           latestInvoice: latestInvoice,
           keepMine: resolution == keepMineResolution,
         );
-      } else if (operationType == 'deleteBuyingInvoice' &&
+      } else if (const {'deleteBuyingInvoice', 'deleteBuyingReturn'}
+              .contains(operationType) &&
           payload['financialFormat'] == 2) {
         final invoiceId = payload['invoiceId']?.toString().trim() ?? '';
         if (invoiceId.isEmpty) {
           throw StateError('Invalid purchase invoice id');
         }
-        final rootPath = 'buying invoices/$invoiceId';
+        final isReturn = operationType == 'deleteBuyingReturn';
+        final rootPath =
+            '${isReturn ? 'returnBuyingInvoices' : 'buying invoices'}/$invoiceId';
         final latestInvoice = await tx.read(rootPath);
         preloaded[rootPath] = latestInvoice;
         _rebaseBuyingInvoiceDelete(
@@ -232,6 +235,7 @@ class FinancialCloudUploader {
           writes: writes,
           supplierDeltas: supplierDeltas,
           latestInvoice: latestInvoice,
+          isReturn: isReturn,
         );
       } else if (const {
             'deleteInvoice',
@@ -441,14 +445,24 @@ class FinancialCloudUploader {
   /// Conflict choice: drop this device's edit and keep the latest invoice.
   static const discardMineResolution = 'discardMine';
 
+  /// Invoice edit operations whose conflicts the user can resolve.
+  static const editOperationTypes = {
+    'editInvoice',
+    'editBuyingInvoice',
+    'editBuyingReturn',
+  };
+
   /// The main invoice document written by an invoice edit operation.
   static String editedInvoiceRootPath(
       Map<String, dynamic> payload, List<Map<String, dynamic>> writes) {
     final invoiceId = payload['invoiceId']?.toString().trim() ?? '';
     if (invoiceId.isEmpty) throw StateError('Invalid invoice id');
-    final candidates = payload['operationType'] == 'editBuyingInvoice'
+    final operationType = payload['operationType'];
+    final candidates = operationType == 'editBuyingInvoice'
         ? ['buying invoices/$invoiceId']
-        : ['invoices/$invoiceId', 'returnInvoices/$invoiceId'];
+        : operationType == 'editBuyingReturn'
+            ? ['returnBuyingInvoices/$invoiceId']
+            : ['invoices/$invoiceId', 'returnInvoices/$invoiceId'];
     for (final path in candidates) {
       if (writes.any((write) => write['path'] == path)) return path;
     }
@@ -475,10 +489,12 @@ class FinancialCloudUploader {
     final collection = rootPath.split('/').first;
     final invoiceId = rootPath.substring(collection.length + 1);
     final isPurchase = collection == 'buying invoices';
+    final isPurchaseReturn = collection == 'returnBuyingInvoices';
+    final isSupplierInvoice = isPurchase || isPurchaseReturn;
     final isReturn = collection == 'returnInvoices';
     final sign = isReturn ? -1.0 : 1.0;
-    final partyKey = isPurchase ? 'supplierId' : 'clientId';
-    final partyDeltas = isPurchase ? supplierDeltas : customerDeltas;
+    final partyKey = isSupplierInvoice ? 'supplierId' : 'clientId';
+    final partyDeltas = isSupplierInvoice ? supplierDeltas : customerDeltas;
     final latestActive =
         latestInvoice != null && latestInvoice['_deleted'] != true;
 
@@ -488,13 +504,20 @@ class FinancialCloudUploader {
             'suppliers/$partyId/balanceHistory/${invoiceId}_buying',
             'suppliers/$partyId/balanceHistory/${invoiceId}_pay',
           ]
-        : [
-            'clients/$partyId/$collection/$invoiceId',
-            'clients/$partyId/balanceHistory/'
-                '${invoiceId}_${isReturn ? 'return' : 'sale'}',
-            'clients/$partyId/balanceHistory/'
-                '${invoiceId}_${isReturn ? 'return_pay' : 'pay'}',
-          ];
+        : isPurchaseReturn
+            ? [
+                'suppliers/$partyId/returnBuyingInvoices/$invoiceId',
+                'suppliers/$partyId/balanceHistory/${invoiceId}_buying_return',
+                'suppliers/$partyId/balanceHistory/'
+                    '${invoiceId}_buying_return_pay',
+              ]
+            : [
+                'clients/$partyId/$collection/$invoiceId',
+                'clients/$partyId/balanceHistory/'
+                    '${invoiceId}_${isReturn ? 'return' : 'sale'}',
+                'clients/$partyId/balanceHistory/'
+                    '${invoiceId}_${isReturn ? 'return_pay' : 'pay'}',
+              ];
 
     // Everything this edit touched is re-downloaded after the upload, so the
     // local copy matches the cloud whichever choice the user made.
@@ -596,14 +619,19 @@ class FinancialCloudUploader {
       return result;
     }
 
-    // A sale takes stock out (a return or purchase puts it back), so moving
-    // from the latest version to mine changes stock by the line difference.
-    final stockSign = isPurchase ? 1.0 : -sign;
+    // A sale or purchase return takes stock out (a return or purchase puts it
+    // back), so moving from the latest version to mine changes stock by the
+    // line difference.
+    final stockSign = isPurchase
+        ? 1.0
+        : isPurchaseReturn
+            ? -1.0
+            : -sign;
     final mineQty = quantities(mine);
     final latestQty = quantities(latestInvoice);
     for (final productId in {...mineQty.keys, ...latestQty.keys}) {
-      final delta = stockSign *
-          ((mineQty[productId] ?? 0) - (latestQty[productId] ?? 0));
+      final delta =
+          stockSign * ((mineQty[productId] ?? 0) - (latestQty[productId] ?? 0));
       if (delta == 0) continue;
       final productPath = 'products/$productId';
       final index = writes.indexWhere((item) => item['path'] == productPath);
@@ -642,7 +670,12 @@ class FinancialCloudUploader {
 
     final paidChange = invoiceNum(mine['paidAmount']) -
         invoiceNum(latestInvoice['paidAmount']);
-    final cashDelta = isPurchase ? -paidChange : sign * paidChange;
+    // A purchase pays cash out; a purchase return's refund brings cash in.
+    final cashDelta = isPurchase
+        ? -paidChange
+        : isPurchaseReturn
+            ? paidChange
+            : sign * paidChange;
     if (cashDelta != 0) {
       putWrite({
         'path': 'box/mainBox',
@@ -666,9 +699,13 @@ class FinancialCloudUploader {
     }
 
     double effect(Map<String, dynamic> invoice) {
-      final unpaid = invoiceNum(invoice['totalSum']) -
-          invoiceNum(invoice['paidAmount']);
-      return isPurchase ? unpaid : sign * unpaid;
+      final unpaid =
+          invoiceNum(invoice['totalSum']) - invoiceNum(invoice['paidAmount']);
+      return isPurchase
+          ? unpaid
+          : isPurchaseReturn
+              ? -unpaid
+              : sign * unpaid;
     }
 
     partyDeltas[latestParty] =
@@ -697,14 +734,20 @@ class FinancialCloudUploader {
   /// action. Rebuild all financial reversals from that latest invoice while
   /// still inside the atomic transaction. This avoids both a needless conflict
   /// and the much worse alternative of applying stale stock/cash/balance data.
+  ///
+  /// [isReturn] selects a purchase return, whose reversal has the opposite
+  /// signs: payable +(total − refund), stock +quantity, cash −refund.
   static void _rebaseBuyingInvoiceDelete({
     required String operationId,
     required Map<String, dynamic> payload,
     required List<Map<String, dynamic>> writes,
     required Map<String, dynamic> supplierDeltas,
     required Map<String, dynamic>? latestInvoice,
+    bool isReturn = false,
   }) {
     final invoiceId = payload['invoiceId'].toString();
+    final collection = isReturn ? 'returnBuyingInvoices' : 'buying invoices';
+    final sign = isReturn ? -1.0 : 1.0;
 
     bool isProductEffect(String path) {
       final parts = path.split('/');
@@ -720,7 +763,7 @@ class FinancialCloudUploader {
       final parts = path.split('/');
       return parts.length == 4 &&
           parts[0] == 'suppliers' &&
-          parts[2] == 'buying invoices' &&
+          parts[2] == collection &&
           parts[3] == invoiceId;
     }
 
@@ -750,7 +793,7 @@ class FinancialCloudUploader {
 
     for (final write in writes) {
       final path = write['path']?.toString() ?? '';
-      if (path == 'buying invoices/$invoiceId' || isInvoiceCopy(path)) {
+      if (path == '$collection/$invoiceId' || isInvoiceCopy(path)) {
         removeConflictExpectation(write);
       }
     }
@@ -774,23 +817,25 @@ class FinancialCloudUploader {
     final total = invoiceNum(latestInvoice['totalSum']);
     final paid = invoiceNum(latestInvoice['paidAmount']);
     supplierDeltas[supplierId] =
-        invoiceNum(supplierDeltas[supplierId]) - (total - paid);
+        invoiceNum(supplierDeltas[supplierId]) - sign * (total - paid);
 
     putWrite({
-      'path': 'buying invoices/$invoiceId',
+      'path': '$collection/$invoiceId',
       'data': <String, dynamic>{},
       'increments': <String, dynamic>{},
       'deleted': true,
       'mustBeAbsent': false,
     });
     putWrite({
-      'path': 'suppliers/$supplierId/buying invoices/$invoiceId',
+      'path': 'suppliers/$supplierId/$collection/$invoiceId',
       'data': <String, dynamic>{},
       'increments': <String, dynamic>{},
       'deleted': true,
       'mustBeAbsent': false,
     });
-    for (final suffix in const ['buying', 'pay']) {
+    for (final suffix in isReturn
+        ? const ['buying_return', 'buying_return_pay']
+        : const ['buying', 'pay']) {
       putWrite({
         'path': 'suppliers/$supplierId/balanceHistory/${invoiceId}_$suffix',
         'data': <String, dynamic>{},
@@ -817,10 +862,11 @@ class FinancialCloudUploader {
       quantities[productId] = (quantities[productId] ?? 0) + quantity;
     }
     for (final entry in quantities.entries) {
+      final stockDelta = -sign * entry.value;
       putWrite({
         'path': 'products/${entry.key}',
         'data': <String, dynamic>{},
-        'increments': {'quantity': -entry.value},
+        'increments': {'quantity': stockDelta},
         'deleted': false,
         'mustBeAbsent': false,
       });
@@ -829,7 +875,7 @@ class FinancialCloudUploader {
         'data': {
           'date': payload['timestamp'],
           'amount': entry.value,
-          'type': 'decrease',
+          'type': stockDelta >= 0 ? 'increase' : 'decrease',
           'invoiceNumber': latestInvoice['invoiceNumber'],
         },
         'increments': <String, dynamic>{},
@@ -838,11 +884,12 @@ class FinancialCloudUploader {
       });
     }
 
-    if (paid != 0) {
+    final cashDelta = sign * paid;
+    if (cashDelta != 0) {
       putWrite({
         'path': 'box/mainBox',
         'data': <String, dynamic>{},
-        'increments': {'value': paid},
+        'increments': {'value': cashDelta},
         'deleted': false,
         'mustBeAbsent': false,
       });
@@ -850,9 +897,9 @@ class FinancialCloudUploader {
         'path': 'box/mainBox/changes/$operationId',
         'data': {
           'date': payload['timestamp'],
-          'value': paid.abs(),
-          'type': 'addition',
-          'name': 'حذف فاتورة مشتريات',
+          'value': cashDelta.abs(),
+          'type': cashDelta >= 0 ? 'addition' : 'subtraction',
+          'name': isReturn ? 'حذف مرتجع مشتريات' : 'حذف فاتورة مشتريات',
         },
         'increments': <String, dynamic>{},
         'deleted': false,

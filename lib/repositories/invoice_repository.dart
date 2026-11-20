@@ -48,8 +48,10 @@ class InvoiceRepository {
   InvoiceLocal? getSaleById(String id) => invoicesBox.get(id);
 
   Future<void> upsertSaleLocal(String id, Map<String, dynamic> data) async {
-    await invoicesBox.put(id,
-        _withCurrentPartyName(InvoiceLocal.fromFirestore(id, data, defaultType: 'sale')));
+    await invoicesBox.put(
+        id,
+        _withCurrentPartyName(
+            InvoiceLocal.fromFirestore(id, data, defaultType: 'sale')));
   }
 
   /// Cloud invoices keep the party name they were saved with. Show the name
@@ -149,6 +151,20 @@ class InvoiceRepository {
 
   // ── Supplier Purchase Returns ───────────────────────────────────────
 
+  List<InvoiceLocal> getAllBuyingReturns() {
+    if (!Hive.isBoxOpen(HiveBoxNames.buyingReturnInvoices)) {
+      return <InvoiceLocal>[];
+    }
+    final list = buyingReturnInvoicesBox.values.toList();
+    list.sort((a, b) => b.date.compareTo(a.date));
+    return list;
+  }
+
+  InvoiceLocal? getBuyingReturnById(String id) =>
+      Hive.isBoxOpen(HiveBoxNames.buyingReturnInvoices)
+          ? buyingReturnInvoicesBox.get(id)
+          : null;
+
   List<InvoiceLocal> getBuyingReturnsBySupplier(
     String supplierId, {
     String? supplierName,
@@ -237,8 +253,7 @@ class InvoiceRepository {
     if (cursor == null) return fullSyncSales();
     final snap = await _fs
         .collection('invoices')
-        .where('updatedAt',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
+        .where('updatedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
         .get();
     FirestoreReadDiagnostics.queryResult(
       'invoices where updatedAt >= cursor',
@@ -300,8 +315,7 @@ class InvoiceRepository {
     if (cursor == null) return fullSyncReturns();
     final snap = await _fs
         .collection('returnInvoices')
-        .where('updatedAt',
-            isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
+        .where('updatedAt', isGreaterThanOrEqualTo: Timestamp.fromDate(cursor))
         .get();
     FirestoreReadDiagnostics.queryResult(
       'returnInvoices where updatedAt >= cursor',
@@ -480,6 +494,23 @@ class InvoiceRepository {
       await mergeCloudBuyingReturn(supplierId, canonicalId, data);
     }
   }
+
+  /// Merges the canonical root document `returnBuyingInvoices/{id}`, which
+  /// is what the financial receipt feed and post-upload refresh deliver.
+  Future<void> mergeCloudBuyingReturnRoot(
+    String id,
+    Map<String, dynamic>? data,
+  ) =>
+      LocalOperationJournal.exclusive(() async {
+        final path = 'returnBuyingInvoices/$id';
+        if (!CloudSnapshotGuard.accepts(path, data)) return;
+        if (data == null || data['_deleted'] == true) {
+          await deleteBuyingReturnLocal(id);
+        } else {
+          await upsertBuyingReturnLocal(id, data);
+          await CloudSnapshotGuard.record(path, data);
+        }
+      });
 
   Future<void> mergeCloudBuyingReturn(
     String supplierId,

@@ -7,7 +7,9 @@ import 'package:hive/hive.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:kareem_store/Buing Invoices/BuyingInvoiceListPage.dart';
 import 'package:kareem_store/local_db/hive_init.dart';
+import 'package:kareem_store/local_db/models/product_local.dart';
 import 'package:kareem_store/local_db/models/supplier_local.dart';
+import 'package:kareem_store/Services/supplier_operation_service.dart';
 import 'package:kareem_store/repositories/invoice_repository.dart';
 import 'package:kareem_store/sync/local_operation_journal.dart';
 
@@ -140,5 +142,59 @@ void main() {
     expect(find.text('فاتورة #1'), findsNothing);
     expect(find.text('فاتورة #2'), findsOneWidget);
     expect(find.text('فاتورة #3'), findsOneWidget);
+  });
+  testWidgets('returns view lists purchase returns and deletes them',
+      (tester) async {
+    await tester.runAsync(() async {
+      await productsBox.put(
+          'product',
+          ProductLocal(
+            id: 'product',
+            name: 'Returned product',
+            quantity: 10,
+            costPrice: 5,
+            updatedAt: DateTime.now(),
+          ));
+      await InvoiceRepository.instance
+          .upsertBuyingLocal('purchase', invoice(1));
+      await SupplierOperationService.saveBuyingReturn({
+        'id': 'return',
+        'invoiceNumber': 4,
+        'supplierId': 'supplier',
+        'date': DateTime.now(),
+        'totalSum': 15.0,
+        'paidAmount': 0.0,
+        'products': [
+          {
+            'id': 'product',
+            'product': 'Returned product',
+            'amount': 3.0,
+            'cost': 5.0,
+            'totalCost': 15.0,
+          }
+        ],
+      });
+    });
+    expect(productsBox.get('product')!.quantity, 7);
+
+    await openPage(tester);
+    expect(find.text('فاتورة #1'), findsOneWidget);
+    expect(find.text('مرتجع #4'), findsNothing);
+
+    await tester.tap(find.byIcon(Icons.assignment_return));
+    await tester.pumpAndSettle();
+    expect(find.text('مرتجع #4'), findsOneWidget);
+    expect(find.text('فاتورة #1'), findsNothing);
+
+    await tester.tap(find.widgetWithIcon(IconButton, Icons.delete));
+    await tester.pumpAndSettle();
+    await tester.runAsync(() async {
+      await tester.tap(find.widgetWithText(TextButton, 'حذف'));
+      await LocalOperationJournal.exclusive(() async {});
+    });
+    await tester.pumpAndSettle();
+    expect(buyingReturnInvoicesBox.containsKey('return'), isFalse);
+    expect(productsBox.get('product')!.quantity, 10);
+    expect(find.text('مرتجع #4'), findsNothing);
   });
 }

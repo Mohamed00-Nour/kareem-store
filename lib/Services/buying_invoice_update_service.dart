@@ -13,6 +13,7 @@ class BuyingInvoiceUpdateService {
     required double paidAmount,
     required String notes,
     required double invoiceDiscount,
+    String? paymentMethod,
   }) async {
     final totalBeforeDiscount = newProducts.fold<double>(
         0, (sum, line) => sum + invoiceNum(line['totalCost']));
@@ -27,6 +28,7 @@ class BuyingInvoiceUpdateService {
       'paidAmount': paidAmount,
       'invoiceDiscount': invoiceDiscount,
       'notes': notes,
+      if (paymentMethod != null) 'paymentMethod': paymentMethod,
       'products': newProducts,
     }, editing: true);
   }

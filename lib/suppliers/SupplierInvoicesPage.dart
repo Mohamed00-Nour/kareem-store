@@ -3,6 +3,7 @@ import 'dart:ui' as ui;
 import 'package:flutter/material.dart';
 import 'package:cloud_firestore/cloud_firestore.dart';
 import 'package:flutter_screenutil/flutter_screenutil.dart';
+import 'package:font_awesome_flutter/font_awesome_flutter.dart';
 import 'package:intl/intl.dart' as intl;
 import 'package:open_filex/open_filex.dart';
 import 'package:share_plus/share_plus.dart';
@@ -16,6 +17,7 @@ import '../Services/supplier_ledger_presentation.dart';
 import '../Services/supplier_invoice_balance_sync_service.dart';
 import '../Services/supplier_invoice_running_balance_service.dart';
 import '../Services/supplier_statement_pdf_service.dart';
+import '../Services/whatsapp_invoice_share_service.dart';
 import '../Widgets/invoice_display_widgets.dart';
 import '../repositories/balance_history_repository.dart';
 import '../repositories/invoice_repository.dart';
@@ -259,6 +261,18 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     );
   }
 
+  /// Shares a purchase or purchase return with the same balances as its card.
+  Future<void> _shareInvoiceOnWhatsApp(_SupplierItemDoc invoice) async {
+    final data = Map<String, dynamic>.from(invoice.data);
+    data['id'] = data['invoiceId'] ?? invoice.id;
+    data['supplierId'] ??= widget.supplierId;
+    data['supplierName'] ??= _supplierName;
+    await WhatsappInvoiceShareService.showShareOptions(
+      context,
+      invoice: SupplierInvoiceRunningBalanceService.buildPayload(data),
+    );
+  }
+
   void _handleEditInvoice(_SupplierItemDoc invoice) {
     if (_userRole == 'admin') {
       final invoiceData = Map<String, dynamic>.from(invoice.data);
@@ -278,13 +292,16 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     }
   }
 
-  Future<void> _deleteInvoice(String invoiceId, double totalCost) async {
+  Future<void> _deleteInvoice(String invoiceId, double totalCost,
+      {bool isReturn = false}) async {
     final confirmDelete = await showDialog<bool>(
       context: context,
       builder: (context) {
         return AlertDialog(
           title: const Text('تأكيد الحذف'),
-          content: const Text('هل أنت متأكد أنك تريد حذف هذه الفاتورة؟'),
+          content: Text(isReturn
+              ? 'هل أنت متأكد أنك تريد حذف هذا المرتجع؟ سيتم إرجاع الكميات للمخزون'
+              : 'هل أنت متأكد أنك تريد حذف هذه الفاتورة؟'),
           actions: [
             TextButton(
               onPressed: () => Navigator.of(context).pop(false),
@@ -303,11 +320,17 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     if (confirmDelete != true) return;
 
     try {
-      final localInv = InvoiceRepository.instance.getBuyingById(invoiceId);
+      final localInv = isReturn
+          ? InvoiceRepository.instance.getBuyingReturnById(invoiceId)
+          : InvoiceRepository.instance.getBuyingById(invoiceId);
       if (localInv == null) {
         throw StateError('يجب تحميل الفاتورة محلياً قبل حذفها');
       }
-      await SupplierOperationService.deleteBuyingInvoice(localInv.id);
+      if (isReturn) {
+        await SupplierOperationService.deleteBuyingReturn(localInv.id);
+      } else {
+        await SupplierOperationService.deleteBuyingInvoice(localInv.id);
+      }
       ConnectivityService.instance.forceSync();
 
       if (!mounted) return;
@@ -324,9 +347,10 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
     }
   }
 
-  void _handleDeleteInvoice(String invoiceId, double totalCost) {
+  void _handleDeleteInvoice(String invoiceId, double totalCost,
+      {bool isReturn = false}) {
     if (_userRole == 'admin') {
-      _deleteInvoice(invoiceId, totalCost);
+      _deleteInvoice(invoiceId, totalCost, isReturn: isReturn);
     } else {
       _showPermissionDeniedDialog();
     }
@@ -1109,6 +1133,15 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
                   mainAxisSize: MainAxisSize.min,
                   children: [
                     IconButton(
+                      icon: FaIcon(
+                        FontAwesomeIcons.whatsapp,
+                        color: Colors.green.shade700,
+                        size: 22,
+                      ),
+                      tooltip: 'مشاركة في واتساب',
+                      onPressed: () => _shareInvoiceOnWhatsApp(invoice),
+                    ),
+                    IconButton(
                       icon: const Icon(Icons.edit, color: Colors.blue),
                       onPressed: () => _handleEditInvoice(invoice),
                     ),
@@ -1117,6 +1150,7 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
                       onPressed: () => _handleDeleteInvoice(
                         invoice.id,
                         totalSum,
+                        isReturn: isReturn,
                       ),
                     ),
                   ],
@@ -1176,6 +1210,21 @@ class _SupplierInvoicesPageState extends State<SupplierInvoicesPage> {
                 onPressed: _isSaving
                     ? null
                     : () => setState(() => _showPayments = !_showPayments),
+              ),
+              IconButton(
+                icon: const Icon(Icons.assignment_return, color: Colors.white),
+                tooltip: 'مرتجع مشتريات جديد',
+                onPressed: _isSaving
+                    ? null
+                    : () => Navigator.push(
+                          context,
+                          MaterialPageRoute(
+                            builder: (_) => AddProductPage(
+                              isPurchaseReturn: true,
+                              initialSupplierId: widget.supplierId,
+                            ),
+                          ),
+                        ).then((_) => _loadFromHive()),
               ),
               IconButton(
                 icon: const Icon(Icons.history, color: Colors.white),

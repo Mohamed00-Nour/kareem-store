@@ -56,6 +56,8 @@ class HiveMetaKeys {
   static const String nextSalesInvoiceNumber = 'nextSalesInvoiceNumber';
   static const String nextReturnInvoiceNumber = 'nextReturnInvoiceNumber';
   static const String nextBuyingInvoiceNumber = 'nextBuyingInvoiceNumber';
+  static const String nextBuyingReturnInvoiceNumber =
+      'nextBuyingReturnInvoiceNumber';
   static const String nextSupplierVoucherNumber = 'nextSupplierVoucherNumber';
 }
 

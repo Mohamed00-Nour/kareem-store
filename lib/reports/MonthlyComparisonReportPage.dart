@@ -26,7 +26,11 @@ class _MonthlyComparisonReportPageState
     setState(() => _loading = true);
     try {
       final invoices = InvoiceRepository.instance.getAllSales();
-      final buyingInvoices = InvoiceRepository.instance.getAllBuying();
+      // Purchase returns are subtracted from their month's purchases.
+      final buyingInvoices = [
+        ...InvoiceRepository.instance.getAllBuying(),
+        ...InvoiceRepository.instance.getAllBuyingReturns(),
+      ];
 
       final Map<String, _MonthStat> statsMap = {};
 
@@ -61,7 +65,9 @@ class _MonthlyComparisonReportPageState
       for (final invoice in buyingInvoices) {
         final date = invoice.date;
         final key = '${date.year}-${date.month.toString().padLeft(2, '0')}';
-        final totalSum = invoice.totalSum;
+        final totalSum = invoice.invoiceType == 'buying_return'
+            ? -invoice.totalSum
+            : invoice.totalSum;
 
         if (statsMap.containsKey(key)) {
           statsMap[key] = _MonthStat(
@@ -203,7 +209,7 @@ class _MonthlyComparisonReportPageState
                                 color: Colors.blue,
                               ),
                               _MonthRow(
-                                label: 'إجمالي المشتريات',
+                                label: 'صافي المشتريات',
                                 value:
                                     '${m.totalBuying.toStringAsFixed(2)} ج.م',
                                 color: Colors.purple,

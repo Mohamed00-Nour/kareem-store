@@ -22,6 +22,8 @@ class _SalesReportPageState extends State<SalesReportPage> {
 
   Map<String, double>? _result;
   double? _buyingTotal;
+  double _buyingGross = 0;
+  double _buyingReturns = 0;
   double _periodExpenses = 0;
 
   @override
@@ -96,11 +98,18 @@ class _SalesReportPageState extends State<SalesReportPage> {
         totalBalance += invoice.balance;
       }
 
-      final buyingTotal = InvoiceRepository.instance
+      bool inPeriod(DateTime date) =>
+          !date.isBefore(start) && !date.isAfter(end);
+      final buyingGross = InvoiceRepository.instance
           .getAllBuying()
-          .where((invoice) =>
-              !invoice.date.isBefore(start) && !invoice.date.isAfter(end))
+          .where((invoice) => inPeriod(invoice.date))
           .fold<double>(0, (sum, invoice) => sum + invoice.totalSum);
+      // Goods returned to suppliers reduce the period's purchases.
+      final buyingReturns = InvoiceRepository.instance
+          .getAllBuyingReturns()
+          .where((invoice) => inPeriod(invoice.date))
+          .fold<double>(0, (sum, invoice) => sum + invoice.totalSum);
+      final buyingTotal = buyingGross - buyingReturns;
 
       final periodExpenses = ExpenseRepository.instance
           .getAll()
@@ -120,6 +129,8 @@ class _SalesReportPageState extends State<SalesReportPage> {
           'netProfit': totalProfit - periodExpenses,
         };
         _buyingTotal = buyingTotal;
+        _buyingGross = buyingGross;
+        _buyingReturns = buyingReturns;
         _periodExpenses = periodExpenses;
         _loading = false;
       });
@@ -272,6 +283,14 @@ class _SalesReportPageState extends State<SalesReportPage> {
                           children: [
                             _SummaryRow(
                                 label: 'إجمالي المشتريات',
+                                value: _buyingGross.toStringAsFixed(2),
+                                unit: 'ج.م'),
+                            _SummaryRow(
+                                label: 'مرتجع المشتريات',
+                                value: _buyingReturns.toStringAsFixed(2),
+                                unit: 'ج.م'),
+                            _SummaryRow(
+                                label: 'صافي المشتريات',
                                 value: _buyingTotal!.toStringAsFixed(2),
                                 unit: 'ج.م'),
                           ],

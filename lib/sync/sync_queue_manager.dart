@@ -339,12 +339,12 @@ class SyncQueueManager {
     }
   }
 
-  /// True for a sales, return or purchase invoice edit that was rejected
+  /// True for a sales, return, purchase or purchase-return edit that was rejected
   /// because another device changed the same invoice first. The user can
   /// then keep or discard this device's edit.
   bool canResolveInvoiceEditConflict(SyncQueueItem item) {
     if (item.status != 'failed' ||
-        !const {'editInvoice', 'editBuyingInvoice'}
+        !FinancialCloudUploader.editOperationTypes
             .contains(item.operationType)) {
       return false;
     }
@@ -385,7 +385,7 @@ class SyncQueueManager {
   /// lack the details added by this build, so each item is re-checked once.
   bool canRecheckInvoiceEditConflict(SyncQueueItem item) {
     if (item.status != 'failed' ||
-        !const {'editInvoice', 'editBuyingInvoice'}
+        !FinancialCloudUploader.editOperationTypes
             .contains(item.operationType)) {
       return false;
     }
@@ -411,6 +411,7 @@ class SyncQueueManager {
       'deleteReturn',
       'deleteReturnInvoice',
       'deleteBuyingInvoice',
+      'deleteBuyingReturn',
     }.contains(item.operationType)) return false;
     try {
       if (decodePayload(item)['financialFormat'] != 2) return false;

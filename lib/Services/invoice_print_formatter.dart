@@ -88,10 +88,16 @@ class InvoicePrintFormatter {
     for (final part in _headerLines(settings)) {
       line(_center(part, cols.width));
     }
-    final isBuying = invoiceIsSupplierPurchase(invoice) || invoice['invoiceType']?.toString() == 'buying';
-    final title = isBuying
-        ? 'فاتورة مشتريات'
-        : (invoice['invoiceType']?.toString() == 'return' ? 'فاتورة مرتجع' : labels.invoiceTitle);
+    final isBuying = invoiceIsSupplierPurchase(invoice) ||
+        invoice['invoiceType']?.toString() == 'buying';
+    final isBuyingReturn = invoiceIsBuyingReturn(invoice);
+    final title = isBuyingReturn
+        ? 'مرتجع مشتريات'
+        : isBuying
+            ? 'فاتورة مشتريات'
+            : (invoice['invoiceType']?.toString() == 'return'
+                ? 'فاتورة مرتجع'
+                : labels.invoiceTitle);
     line(_center(title, cols.width));
     line(sep);
 
@@ -162,7 +168,8 @@ class InvoicePrintFormatter {
       final qtyStr = _formatQty(_num(map['amount']));
       qtySum += _num(map['amount']);
       textRowIndex++;
-      final price = _formatMoneyCompact(_num(map['selectedPrice'] ?? map['cost']));
+      final price =
+          _formatMoneyCompact(_num(map['selectedPrice'] ?? map['cost']));
       final total = _formatMoneyCompact(_num(map['total'] ?? map['totalCost']));
 
       _writeProductRow(
@@ -217,14 +224,16 @@ class InvoicePrintFormatter {
     final balance = isBuying
         ? invoiceSupplierRemainingOwed(invoice)
         : invoiceClientRemainingOwed(invoice);
-    final balanceLabel = isBuying ? 'الرصيد الحالي (للمورد)' : 'الرصيد الحالي (عليكم)';
+    final balanceLabel =
+        isBuying ? 'الرصيد الحالي (للمورد)' : 'الرصيد الحالي (عليكم)';
 
     line(_summaryRow(cols.width, labels.previousBalance, previous));
     line(_summaryRow(cols.width, 'إجمالي الفاتورة', totalSum));
     if (invoiceDiscount > 0) {
       line(_summaryRow(cols.width, 'الخصم', invoiceDiscount));
     }
-    line(_summaryRow(cols.width, labels.paid, paid));
+    line(_summaryRow(
+        cols.width, isBuyingReturn ? 'المسترد من المورد' : labels.paid, paid));
     line(_summaryRow(cols.width, 'المتبقي من الفاتورة', totalSum - paid));
     line(_summaryRow(
       cols.width,
@@ -244,7 +253,8 @@ class InvoicePrintFormatter {
     }
 
     line(sep);
-    for (final footerLine in InvoiceAppFooter.resolveLines(settings.salesInvoiceFooter)) {
+    for (final footerLine
+        in InvoiceAppFooter.resolveLines(settings.salesInvoiceFooter)) {
       line(_center(footerLine, cols.width));
     }
 
@@ -262,10 +272,16 @@ class InvoicePrintFormatter {
     final when = _parseDateTime(invoice['date']);
     final typeLabel = _paymentTypeLabel(invoice['paymentMethod']);
     final invoiceNo = invoice['invoiceNumber']?.toString() ?? '';
-    final isBuying = invoiceIsSupplierPurchase(invoice) || invoice['invoiceType']?.toString() == 'buying';
-    final title = isBuying
-        ? 'فاتورة مشتريات'
-        : (invoice['invoiceType']?.toString() == 'return' ? 'فاتورة مرتجع' : labels.invoiceTitle);
+    final isBuying = invoiceIsSupplierPurchase(invoice) ||
+        invoice['invoiceType']?.toString() == 'buying';
+    final isBuyingReturn = invoiceIsBuyingReturn(invoice);
+    final title = isBuyingReturn
+        ? 'مرتجع مشتريات'
+        : isBuying
+            ? 'فاتورة مشتريات'
+            : (invoice['invoiceType']?.toString() == 'return'
+                ? 'فاتورة مرتجع'
+                : labels.invoiceTitle);
 
     final centered = <String>[
       'أبو مجدي للحدايد والعدد والديكور والخشب والحلايا',
@@ -375,7 +391,7 @@ class InvoicePrintFormatter {
       [_formatMoney(previous), labels.previousBalance],
       [_formatMoney(totalSum), 'إجمالي الفاتورة'],
       if (invoiceDiscount > 0) [_formatMoney(invoiceDiscount), 'الخصم'],
-      [_formatMoney(paid), labels.paid],
+      [_formatMoney(paid), isBuyingReturn ? 'المسترد من المورد' : labels.paid],
       [_formatMoney(totalSum - paid), 'المتبقي من الفاتورة'],
       [_formatMoney(balance), balanceLabel],
     ];
@@ -392,7 +408,8 @@ class InvoicePrintFormatter {
     return InvoiceReceiptPrintData(
       paperMm: settings.paperSize.widthMm,
       escFontSize: _escSizeFromFont(settings.fontSize),
-      logoAssetPath: (settings.receiptLogoPath.isNotEmpty && File(settings.receiptLogoPath).existsSync())
+      logoAssetPath: (settings.receiptLogoPath.isNotEmpty &&
+              File(settings.receiptLogoPath).existsSync())
           ? settings.receiptLogoPath
           : null,
       centeredLines: centered,
@@ -458,9 +475,8 @@ class InvoicePrintFormatter {
     }
 
     if (settings.showProductImageOnInvoice) {
-      final image = map['image']?.toString() ??
-          details['image']?.toString() ??
-          '';
+      final image =
+          map['image']?.toString() ?? details['image']?.toString() ?? '';
       if (image.isNotEmpty) extra('[${labels.product} صورة]');
     }
   }
@@ -494,8 +510,7 @@ class InvoicePrintFormatter {
     required String total,
     required bool separateNameLine,
   }) {
-    final needsWrap =
-        separateNameLine || name.length > cols.product;
+    final needsWrap = separateNameLine || name.length > cols.product;
     if (needsWrap) {
       for (final wrapLine in _wrapProductName(name, cols.width)) {
         line(_fitLine(wrapLine, cols.width));
@@ -571,7 +586,8 @@ class InvoicePrintFormatter {
         '${'-' * cols.rowNum}';
   }
 
-  static String _col(String text, int width, {bool right = false, bool center = false}) {
+  static String _col(String text, int width,
+      {bool right = false, bool center = false}) {
     var t = text;
     if (t.length > width) t = t.substring(0, width);
     if (center) return _center(t, width);
@@ -591,8 +607,7 @@ class InvoicePrintFormatter {
     final products = invoice['products'] as List<dynamic>? ?? [];
     final productsSum = products.fold<double>(0.0, (sum, item) {
       if (item is! Map) return sum;
-      return sum +
-          _num((item as Map)['total'] ?? (item)['totalCost']);
+      return sum + _num((item as Map)['total'] ?? (item)['totalCost']);
     });
     final diff = productsSum - totalSum;
     return diff > 0.01 ? diff : 0.0;

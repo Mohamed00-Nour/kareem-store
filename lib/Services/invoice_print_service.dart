@@ -136,7 +136,13 @@ class InvoicePrintService {
           ? InvoiceRepository.instance.getBuyingById(mainId)
           : null;
 
-      final localInvoice = localSale ?? localReturn ?? localBuying;
+      final localBuyingReturn =
+          (localSale == null && localReturn == null && localBuying == null)
+              ? InvoiceRepository.instance.getBuyingReturnById(mainId)
+              : null;
+
+      final localInvoice =
+          localSale ?? localReturn ?? localBuying ?? localBuyingReturn;
       if (localInvoice != null) {
         final localMap = localInvoice.toMap();
         localMap['id'] = mainId;
@@ -200,7 +206,11 @@ class InvoicePrintService {
     }
     invoice['clientName'] ??= '';
 
-    invoice['products'] = _normalizeProducts(invoice['products']);
+    final supplierName = invoice['supplierName']?.toString().trim() ?? '';
+    final isSupplier =
+        supplierName.isNotEmpty && invoice['clientName'].toString().isEmpty;
+    invoice['products'] =
+        _normalizeProducts(invoice['products'], isSupplier: isSupplier);
 
     for (final key in [
       'totalSum',
@@ -223,7 +233,11 @@ class InvoicePrintService {
     return invoice;
   }
 
-  static List<Map<String, dynamic>> _normalizeProducts(dynamic products) {
+  /// Purchase and purchase-return lines store their price and total as
+  /// `cost`/`totalCost`; [isSupplier] uses those when the sale fields are
+  /// missing. Sales lines never fall back to `cost` (the store's cost price).
+  static List<Map<String, dynamic>> _normalizeProducts(dynamic products,
+      {bool isSupplier = false}) {
     if (products is! List) return [];
     final out = <Map<String, dynamic>>[];
     for (final item in products) {
@@ -231,8 +245,11 @@ class InvoicePrintService {
       final map = Map<String, dynamic>.from(item);
       map['product'] = map['product']?.toString() ?? '';
       map['amount'] = map['amount']?.toString() ?? '0';
-      map['selectedPrice'] = _toDouble(map['selectedPrice']);
-      map['total'] = _toDouble(map['total']);
+      map['selectedPrice'] = _toDouble(isSupplier
+          ? map['selectedPrice'] ?? map['cost']
+          : map['selectedPrice']);
+      map['total'] = _toDouble(
+          isSupplier ? map['total'] ?? map['totalCost'] : map['total']);
       if (map['product'].toString().isEmpty) continue;
       out.add(map);
     }

@@ -193,7 +193,8 @@ class InvoiceTotalsFooter extends StatelessWidget {
         remainingLabel: remainingLabel ??
             (data.supplier ? 'المتبقي للمورد' : 'المتبقي عليكم'),
         remaining: data.remaining,
-        discount: data.discount);
+        discount: data.discount,
+        isPurchaseReturn: invoiceIsBuyingReturn(invoice));
   }
 
   Widget _buildTotalsLayout({
@@ -203,6 +204,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
     required String remainingLabel,
     required double remaining,
     required double discount,
+    bool isPurchaseReturn = false,
   }) {
     return Padding(
       padding: EdgeInsets.symmetric(vertical: 10.h),
@@ -223,7 +225,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
                   ),
                   SizedBox(width: 20.w),
                   Text(
-                    'إجمالي الفاتورة: ${invoiceAmount(total)}',
+                    '${isPurchaseReturn ? 'إجمالي المرتجع' : 'إجمالي الفاتورة'}: ${invoiceAmount(total)}',
                     style: TextStyle(
                       fontSize: 14.sp,
                       fontWeight: FontWeight.bold,
@@ -241,7 +243,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
                   ),
                 ),
               Text(
-                'المدفوع: ${invoiceAmount(paid)}',
+                '${isPurchaseReturn ? 'المسترد من المورد' : 'المدفوع'}: ${invoiceAmount(paid)}',
                 style: TextStyle(
                   fontSize: 16.sp,
                   fontWeight: FontWeight.bold,
@@ -249,7 +251,7 @@ class InvoiceTotalsFooter extends StatelessWidget {
                 ),
               ),
               Text(
-                'المتبقي من الفاتورة: ${invoiceAmount(total - paid)}',
+                '${isPurchaseReturn ? 'مخصوم من الرصيد' : 'المتبقي من الفاتورة'}: ${invoiceAmount(total - paid)}',
                 style: TextStyle(
                   fontSize: 14.sp,
                   fontWeight: FontWeight.bold,

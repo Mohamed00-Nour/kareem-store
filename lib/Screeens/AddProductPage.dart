@@ -37,9 +37,22 @@ void _selectAllField(TextEditingController controller) {
 
 class AddProductPage extends StatefulWidget {
   /// When non-null, opens the page in edit mode pre-filled with this invoice.
+  /// A purchase return (`invoiceType: 'buying_return'`) opens in return mode.
   final Map<String, dynamic>? invoiceToEdit;
 
-  const AddProductPage({super.key, this.invoiceToEdit});
+  /// Purchase return mode: goods sent back to a supplier. Stock goes down,
+  /// prices never change, and the refund goes into the cash box.
+  final bool isPurchaseReturn;
+
+  /// Supplier preselected for a new invoice (for example from a supplier page).
+  final String? initialSupplierId;
+
+  const AddProductPage({
+    super.key,
+    this.invoiceToEdit,
+    this.isPurchaseReturn = false,
+    this.initialSupplierId,
+  });
 
   @override
   _AddProductPageState createState() => _AddProductPageState();
@@ -69,17 +82,28 @@ class _AddProductPageState extends State<AddProductPage> {
   Map<String, dynamic>? _originalInvoice;
   dynamic _editingInvoiceNumber;
 
+  bool get _isReturn =>
+      widget.isPurchaseReturn ||
+      (widget.invoiceToEdit != null &&
+          invoiceIsBuyingReturn(widget.invoiceToEdit!));
+
   String get _pageTitle {
     if (_isEditing && _editingInvoiceNumber != null) {
-      return 'تعديل فاتورة #$_editingInvoiceNumber';
+      return _isReturn
+          ? 'تعديل مرتجع #$_editingInvoiceNumber'
+          : 'تعديل فاتورة #$_editingInvoiceNumber';
     }
-    return 'المشتريات';
+    return _isReturn ? 'مرتجع مشتريات' : 'المشتريات';
   }
 
   void _applyInvoiceToEdit(Map<String, dynamic> inv) {
     _editingRootInvoiceId = inv['id']?.toString() ?? '';
     _originalInvoice = Map<String, dynamic>.from(inv);
     _editingInvoiceNumber = inv['invoiceNumber'];
+    if (_isReturn) {
+      final supplierId = inv['supplierId']?.toString().trim() ?? '';
+      if (supplierId.isNotEmpty) _editingSupplierId = supplierId;
+    }
 
     final supplierName = inv['supplierName']?.toString() ?? '';
     _selectedSupplier = Supplier(id: '', name: supplierName);
@@ -122,12 +146,25 @@ class _AddProductPageState extends State<AddProductPage> {
     } else {
       _selectedDate = DateTime.now();
       _dateController.text = "${_selectedDate!.toLocal()}".split(' ')[0];
+      final initial = widget.initialSupplierId == null
+          ? null
+          : SupplierRepository.instance.getById(widget.initialSupplierId!);
+      if (initial != null) {
+        _selectedSupplier = Supplier(id: initial.id, name: initial.name);
+        _supplierBalance =
+            BalanceHistoryRepository.instance.calculateSupplierBalance(
+          initial.id,
+          fallback: initial.balance,
+        );
+      }
     }
   }
 
   InvoiceEditLock? _editLock;
 
-  String get _editingCloudPath => 'buying invoices/$_editingRootInvoiceId';
+  String get _editingCloudPath => _isReturn
+      ? 'returnBuyingInvoices/$_editingRootInvoiceId'
+      : 'buying invoices/$_editingRootInvoiceId';
 
   /// Blocks this edit when another device is editing the same invoice.
   Future<void> _lockForEditing() async {
@@ -338,6 +375,18 @@ class _AddProductPageState extends State<AddProductPage> {
       return;
     }
 
+    if (_isReturn) {
+      await _saveReturn(
+        supplier: effectiveSupplier,
+        refund: effectivePaid,
+        notes: notes,
+        invoiceDiscount: invoiceDiscount,
+        discountIsPercent: discountIsPercent,
+        paymentMethod: paymentMethod,
+      );
+      return;
+    }
+
     void logProgress(String msg) {
       try {
         final file = File('crash_log.txt');
@@ -392,6 +441,7 @@ class _AddProductPageState extends State<AddProductPage> {
           paidAmount: effectivePaid,
           notes: notes,
           invoiceDiscount: effectiveDiscountAmt,
+          paymentMethod: paymentMethod,
         );
 
         final totalAfterDiscount = _calculateTotalSum() - effectiveDiscountAmt;
@@ -405,6 +455,7 @@ class _AddProductPageState extends State<AddProductPage> {
           'balance': totalAfterDiscount - effectivePaid,
           'invoiceDiscount': effectiveDiscountAmt,
           'notes': notes,
+          'paymentMethod': paymentMethod,
           'products': lines,
         };
 
@@ -531,6 +582,522 @@ class _AddProductPageState extends State<AddProductPage> {
     return LocalInvoiceCounter.nextNumber('buying');
   }
 
+  // ─────────────────────────────────────────────
+  // Purchase return (مرتجع مشتريات)
+  // ─────────────────────────────────────────────
+
+  String _lineProductId(Map<String, dynamic> line) =>
+      (line['productId'] ?? line['id'])?.toString().trim() ?? '';
+
+  /// Stock this return can take out of [productId] without going negative:
+  /// the current stock plus, when editing, what the saved return already
+  /// took out.
+  double _stockAvailableForReturn(String productId, String name) {
+    final local = productId.isNotEmpty
+        ? ProductRepository.instance.getById(productId)
+        : ProductRepository.instance.findByName(name);
+    var available = local?.quantity ?? 0.0;
+    if (_isEditing && _originalInvoice != null) {
+      for (final raw in _originalInvoice!['products'] as List? ?? const []) {
+        if (raw is! Map) continue;
+        final line = Map<String, dynamic>.from(raw);
+        final lineId = _lineProductId(line);
+        final same = lineId.isNotEmpty && productId.isNotEmpty
+            ? lineId == productId
+            : line['product'] == name;
+        if (same) available += invoiceNum(line['amount']);
+      }
+    }
+    return available;
+  }
+
+  /// Quantity of the product already in this return, except line [skipIndex].
+  double _returnQuantityInOtherLines(String productId, String name,
+      {int? skipIndex}) {
+    var total = 0.0;
+    for (var i = 0; i < _addedProducts.length; i++) {
+      if (i == skipIndex) continue;
+      final line = _addedProducts[i];
+      final lineId = _lineProductId(line);
+      final same = lineId.isNotEmpty && productId.isNotEmpty
+          ? lineId == productId
+          : line['product'] == name;
+      if (same) total += invoiceNum(line['amount']);
+    }
+    return total;
+  }
+
+  /// One description per product whose returned quantity exceeds its stock.
+  List<String> _overStockReturnLines() {
+    final quantities = <String, double>{};
+    final names = <String, String>{};
+    final ids = <String, String>{};
+    for (final line in _addedProducts) {
+      final id = _lineProductId(line);
+      final name = line['product']?.toString() ?? '';
+      final key = id.isNotEmpty ? id : 'name:$name';
+      quantities[key] = (quantities[key] ?? 0) + invoiceNum(line['amount']);
+      names[key] = name;
+      ids[key] = id;
+    }
+    final result = <String>[];
+    for (final entry in quantities.entries) {
+      final available =
+          _stockAvailableForReturn(ids[entry.key]!, names[entry.key]!);
+      if (entry.value > available + 0.0001) {
+        result.add('${names[entry.key]}: المرتجع ${invoiceQty(entry.value)}'
+            ' — المتاح ${invoiceQty(available)}');
+      }
+    }
+    return result;
+  }
+
+  /// Returning more than the stock on hand is allowed after a warning.
+  Future<bool> _confirmOverStockReturn(List<String> lines) async {
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: Row(children: [
+            Icon(Icons.warning_amber_rounded, color: Colors.orange.shade800),
+            SizedBox(width: 8.w),
+            const Expanded(child: Text('الكمية أكبر من المخزون')),
+          ]),
+          content: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                const Text(
+                    'الكميات التالية أكبر من المخزون الحالي، وسيصبح المخزون بالسالب بعد الحفظ:'),
+                SizedBox(height: 8.h),
+                for (final line in lines)
+                  Padding(
+                    padding: EdgeInsets.symmetric(vertical: 2.h),
+                    child: Text('• $line',
+                        style: const TextStyle(fontWeight: FontWeight.w600)),
+                  ),
+              ],
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, false),
+              child: const Text('مراجعة'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.pop(ctx, true),
+              child: Text('حفظ على أي حال',
+                  style: TextStyle(color: Colors.orange.shade800)),
+            ),
+          ],
+        ),
+      ),
+    );
+    return ok == true;
+  }
+
+  Future<void> _saveReturn({
+    required Supplier supplier,
+    required double refund,
+    required String notes,
+    required double invoiceDiscount,
+    required bool discountIsPercent,
+    required String paymentMethod,
+  }) async {
+    final overStock = _overStockReturnLines();
+    if (overStock.isNotEmpty && !await _confirmOverStockReturn(overStock)) {
+      return;
+    }
+    if (!mounted) return;
+    if (_isEditing &&
+        !await InvoiceEditGuard.confirmLatestBeforeSave(
+            context, _editingCloudPath)) {
+      if (!mounted) return;
+      Navigator.of(context).pop();
+      return;
+    }
+    if (!mounted) return;
+    setState(() => _isSaving = true);
+    try {
+      var working = supplier;
+      if (working.id.isEmpty) {
+        final knownId = _isEditing &&
+                _editingSupplierId != null &&
+                _originalInvoice?['supplierName'] == working.name
+            ? _editingSupplierId!
+            : '';
+        final local = knownId.isNotEmpty
+            ? SupplierRepository.instance.getById(knownId)
+            : SupplierRepository.instance.findByName(working.name);
+        if (local != null) {
+          working = Supplier(id: local.id, name: local.name);
+        } else {
+          try {
+            final created = await QuickEntityCreationService.instance
+                .createSupplier(name: working.name);
+            working = Supplier(id: created.id, name: created.name);
+            unawaited(ConnectivityService.instance.forceSync());
+          } on QuickCreateDuplicateException catch (e) {
+            working = Supplier(id: e.existingId, name: e.existingName);
+          }
+        }
+      }
+
+      final totalBeforeDiscount = _calculateTotalSum();
+      final discount = discountIsPercent
+          ? totalBeforeDiscount * invoiceDiscount / 100
+          : invoiceDiscount;
+      final sameSupplier = _isEditing &&
+          _originalInvoice?['supplierId']?.toString() == working.id;
+      final data = <String, dynamic>{
+        'id': _isEditing
+            ? _editingRootInvoiceId
+            : FirebaseFirestore.instance
+                .collection('returnBuyingInvoices')
+                .doc()
+                .id,
+        'invoiceNumber': _isEditing
+            ? _editingInvoiceNumber
+            : LocalInvoiceCounter.nextNumber('buying_return'),
+        'supplierId': working.id,
+        'supplierName': working.name,
+        'date': _selectedDate ?? DateTime.now(),
+        'totalSum': totalBeforeDiscount - discount,
+        'paidAmount': refund,
+        'invoiceDiscount': discount,
+        'notes': notes,
+        'paymentMethod': paymentMethod,
+        'previousBalance': sameSupplier
+            ? invoiceNum(_originalInvoice!['previousBalance'])
+            : BalanceHistoryRepository.instance.calculateSupplierBalance(
+                working.id,
+                fallback: _supplierBalance,
+              ),
+        'products': _addedProducts.map((line) {
+          final id = _lineProductId(line);
+          return {
+            if (id.isNotEmpty) 'id': id,
+            if (id.isNotEmpty) 'productId': id,
+            'product': line['product'],
+            'amount': invoiceNum(line['amount']),
+            'cost': invoiceNum(line['cost']),
+            'totalCost': invoiceNum(line['totalCost']),
+          };
+        }).toList(),
+      };
+      _lastInvoice = await SupplierOperationService.saveBuyingReturn(data,
+          editing: _isEditing);
+      unawaited(ConnectivityService.instance.forceSync());
+      if (!mounted) return;
+      setState(() {
+        _dataModified = false;
+        _isSaving = false;
+        _selectedSupplier = working;
+      });
+      _showSaveSuccessDialog(_lastInvoice!);
+    } catch (e) {
+      if (!mounted) return;
+      setState(() => _isSaving = false);
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(
+          content: Text(
+              e is ArgumentError && e.message.toString().contains('Refund')
+                  ? 'المبلغ المسترد لا يمكن أن يزيد عن إجمالي المرتجع'
+                  : 'خطأ في حفظ المرتجع: $e')));
+    }
+  }
+
+  /// Line sheet for a purchase return: quantity and return price only.
+  Future<void> _showReturnProductSheet(
+      {int? editIndex, Product? newProduct}) async {
+    if (editIndex == null &&
+        newProduct != null &&
+        _existingLineIndex(newProduct) != -1) {
+      if (!await _confirmAddDuplicate() || !mounted) return;
+    }
+    final existing = editIndex != null ? _addedProducts[editIndex] : null;
+    final productId =
+        existing != null ? _lineProductId(existing) : newProduct!.id;
+    final productName = existing != null
+        ? existing['product']?.toString() ?? ''
+        : newProduct!.name;
+    final local = productId.isNotEmpty
+        ? ProductRepository.instance.getById(productId)
+        : ProductRepository.instance.findByName(productName);
+    final currentCost = local?.costPrice ?? newProduct?.costPrice ?? 0.0;
+    final available = _stockAvailableForReturn(productId, productName);
+    final otherLines = _returnQuantityInOtherLines(productId, productName,
+        skipIndex: editIndex);
+
+    double qty = existing != null ? invoiceNum(existing['amount']) : 1.0;
+    double price =
+        existing != null ? invoiceNum(existing['cost']) : currentCost;
+    bool removeProduct = false;
+    final qtyCtrl = TextEditingController(text: invoiceQty(qty));
+    final priceCtrl = TextEditingController(text: price.toStringAsFixed(2));
+
+    await showModalBottomSheet(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.vertical(top: Radius.circular(20.r))),
+      builder: (ctx) {
+        WidgetsBinding.instance
+            .addPostFrameCallback((_) => _selectAllField(qtyCtrl));
+        return StatefulBuilder(builder: (ctx, setSheet) {
+          final exceeds = qty + otherLines > available + 0.0001;
+          Widget numberField(TextEditingController controller,
+                  void Function(double) onValue) =>
+              TextField(
+                controller: controller,
+                textAlign: TextAlign.center,
+                keyboardType:
+                    const TextInputType.numberWithOptions(decimal: true),
+                style: TextStyle(
+                    fontSize: 15.sp,
+                    fontWeight: FontWeight.bold,
+                    color: Colors.red),
+                decoration: InputDecoration(
+                  border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(6.r)),
+                  contentPadding: EdgeInsets.symmetric(vertical: 8.h),
+                ),
+                onTap: () => _selectAllField(controller),
+                onChanged: (v) {
+                  final parsed = double.tryParse(v);
+                  if (parsed != null) setSheet(() => onValue(parsed));
+                },
+              );
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: Padding(
+              padding: EdgeInsets.only(
+                bottom: MediaQuery.of(ctx).viewInsets.bottom,
+                left: 16.w,
+                right: 16.w,
+                top: 20.h,
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Align(
+                      alignment: Alignment.centerRight,
+                      child: Text(productName,
+                          style: TextStyle(
+                              fontSize: 17.sp, fontWeight: FontWeight.bold)),
+                    ),
+                    SizedBox(height: 14.h),
+                    Row(children: [
+                      Expanded(
+                          child: _BuySheetCol(
+                              label: 'إجمالي المرتجع',
+                              value: (qty * price).toStringAsFixed(2))),
+                      SizedBox(width: 8.w),
+                      Expanded(
+                        child: Column(children: [
+                          Text('الكمية المرتجعة',
+                              style: TextStyle(
+                                  fontSize: 11.sp, color: Colors.black54)),
+                          SizedBox(height: 4.h),
+                          numberField(qtyCtrl, (v) => qty = v),
+                          Row(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                IconButton(
+                                  icon: Icon(Icons.remove, size: 16.sp),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  onPressed: () => setSheet(() {
+                                    if (qty > 1) {
+                                      qty -= 1;
+                                      qtyCtrl.text = invoiceQty(qty);
+                                    }
+                                  }),
+                                ),
+                                IconButton(
+                                  icon: Icon(Icons.add, size: 16.sp),
+                                  padding: EdgeInsets.zero,
+                                  constraints: const BoxConstraints(),
+                                  onPressed: () => setSheet(() {
+                                    qty += 1;
+                                    qtyCtrl.text = invoiceQty(qty);
+                                  }),
+                                ),
+                              ]),
+                        ]),
+                      ),
+                      SizedBox(width: 8.w),
+                      Expanded(
+                          child: _BuySheetCol(
+                              label: 'المخزون المتاح',
+                              value: invoiceQty(available - otherLines),
+                              valueColor: Colors.black54)),
+                    ]),
+                    SizedBox(height: 12.h),
+                    Row(children: [
+                      Expanded(
+                        child: Column(children: [
+                          Text('سعر المرتجع',
+                              style: TextStyle(
+                                  fontSize: 11.sp, color: Colors.black54)),
+                          SizedBox(height: 4.h),
+                          numberField(priceCtrl, (v) => price = v),
+                        ]),
+                      ),
+                      SizedBox(width: 8.w),
+                      Expanded(
+                          child: _BuySheetCol(
+                              label: 'سعر الشراء الحالي',
+                              value: currentCost.toStringAsFixed(2),
+                              valueColor: Colors.black54)),
+                    ]),
+                    if (exceeds) ...[
+                      SizedBox(height: 10.h),
+                      Container(
+                        width: double.infinity,
+                        padding: EdgeInsets.symmetric(
+                            horizontal: 12.w, vertical: 8.h),
+                        decoration: BoxDecoration(
+                          color: Colors.orange.shade50,
+                          borderRadius: BorderRadius.circular(8.r),
+                          border: Border.all(color: Colors.orange.shade300),
+                        ),
+                        child: Row(children: [
+                          Icon(Icons.warning_amber_rounded,
+                              color: Colors.orange.shade800, size: 18.sp),
+                          SizedBox(width: 8.w),
+                          Expanded(
+                            child: Text(
+                              'الكمية المرتجعة أكبر من المخزون المتاح، وسيصبح المخزون بالسالب',
+                              style: TextStyle(
+                                  fontSize: 12.sp,
+                                  color: Colors.orange.shade900,
+                                  fontWeight: FontWeight.w600),
+                            ),
+                          ),
+                        ]),
+                      ),
+                    ],
+                    if (editIndex != null) ...[
+                      SizedBox(height: 8.h),
+                      Row(
+                          mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                          children: [
+                            Checkbox(
+                              value: removeProduct,
+                              activeColor: Colors.red,
+                              onChanged: (v) =>
+                                  setSheet(() => removeProduct = v ?? false),
+                            ),
+                            Row(children: [
+                              Icon(Icons.close, color: Colors.red, size: 16.sp),
+                              SizedBox(width: 4.w),
+                              Text('إلغاء المنتج من القائمه',
+                                  style: TextStyle(
+                                      fontSize: 13.sp, color: Colors.red)),
+                            ]),
+                          ]),
+                    ],
+                    SizedBox(height: 14.h),
+                    Row(children: [
+                      Expanded(
+                        child: TextButton(
+                          onPressed: () => Navigator.pop(ctx),
+                          child: Text('تراجع',
+                              style: TextStyle(
+                                  color: Colors.orange,
+                                  fontSize: 15.sp,
+                                  fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                      SizedBox(width: 8.w),
+                      Expanded(
+                        child: ElevatedButton(
+                          style: ElevatedButton.styleFrom(
+                            backgroundColor: Colors.red.shade700,
+                            shape: RoundedRectangleBorder(
+                                borderRadius: BorderRadius.circular(8.r)),
+                            padding: EdgeInsets.symmetric(vertical: 12.h),
+                          ),
+                          onPressed: () {
+                            if (removeProduct) {
+                              Navigator.pop(ctx);
+                              setState(() {
+                                _addedProducts.removeAt(editIndex!);
+                                _dataModified = true;
+                              });
+                              return;
+                            }
+                            if (qty <= 0 || price < 0) {
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                    content:
+                                        Text('يرجى إدخال كمية وسعر صحيحين')),
+                              );
+                              return;
+                            }
+                            Navigator.pop(ctx);
+                            final entry = <String, dynamic>{
+                              if (productId.isNotEmpty) 'id': productId,
+                              if (productId.isNotEmpty) 'productId': productId,
+                              'product': productName,
+                              'amount': qty,
+                              'cost': price,
+                              'totalCost': qty * price,
+                            };
+                            setState(() {
+                              if (editIndex != null) {
+                                final lineId =
+                                    _addedProducts[editIndex]['lineId'];
+                                if (lineId != null) entry['lineId'] = lineId;
+                                _addedProducts[editIndex] = entry;
+                              } else {
+                                final idx = _existingLineIndex(newProduct!);
+                                if (idx != -1) {
+                                  // Same product again: one line with the
+                                  // combined quantity and total.
+                                  final old = _addedProducts[idx];
+                                  final totalQty =
+                                      invoiceNum(old['amount']) + qty;
+                                  final total = invoiceNum(old['totalCost']) +
+                                      qty * price;
+                                  entry['amount'] = totalQty;
+                                  entry['totalCost'] = total;
+                                  entry['cost'] =
+                                      totalQty > 0 ? total / totalQty : price;
+                                  final lineId = old['lineId'];
+                                  if (lineId != null) entry['lineId'] = lineId;
+                                  _addedProducts[idx] = entry;
+                                } else {
+                                  _assignLineId(entry);
+                                  _addedProducts.add(entry);
+                                }
+                              }
+                              _dataModified = true;
+                            });
+                          },
+                          child: Text('متابعة',
+                              style: TextStyle(
+                                  color: Colors.white,
+                                  fontSize: 15.sp,
+                                  fontWeight: FontWeight.bold)),
+                        ),
+                      ),
+                    ]),
+                    SizedBox(height: 20.h),
+                  ],
+                ),
+              ),
+            ),
+          );
+        });
+      },
+    );
+  }
+
   void _navigateHome() {
     Navigator.of(context).pushAndRemoveUntil(
       MaterialPageRoute(builder: (_) => const GNavPage()),
@@ -572,7 +1139,7 @@ class _AddProductPageState extends State<AddProductPage> {
                       );
                     },
                     icon: const Icon(Icons.print, color: Colors.white),
-                    label: const Text('طباعة الفاتورة'),
+                    label: Text(_isReturn ? 'طباعة المرتجع' : 'طباعة الفاتورة'),
                     style: ElevatedButton.styleFrom(
                       backgroundColor: Colors.blue.shade700,
                       foregroundColor: Colors.white,
@@ -684,10 +1251,17 @@ class _AddProductPageState extends State<AddProductPage> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        line('رقم الفاتورة', '#${invoice['invoiceNumber']}'),
+        line(_isReturn ? 'رقم المرتجع' : 'رقم الفاتورة',
+            '#${invoice['invoiceNumber']}'),
         line('المورد', invoice['supplierName']?.toString() ?? ''),
         if (dateStr.isNotEmpty) line('التاريخ', dateStr),
-        line('طريقة الدفع', method),
+        if (_isReturn) ...[
+          line(
+              'إجمالي المرتجع', invoiceAmount(invoiceNum(invoice['totalSum']))),
+          line('المسترد من المورد',
+              invoiceAmount(invoiceNum(invoice['paidAmount']))),
+        ] else
+          line('طريقة الدفع', method),
       ],
     );
   }
@@ -1023,7 +1597,8 @@ class _AddProductPageState extends State<AddProductPage> {
         textDirection: TextDirection.rtl,
         child: AlertDialog(
           title: const Text('تنبيه'),
-          content: const Text('هذا المنتج تم إضافته بالفعل! هل تريد إضافته مرة أخرى؟'),
+          content: const Text(
+              'هذا المنتج تم إضافته بالفعل! هل تريد إضافته مرة أخرى؟'),
           actions: [
             TextButton(
               onPressed: () => Navigator.pop(ctx, false),
@@ -1041,6 +1616,11 @@ class _AddProductPageState extends State<AddProductPage> {
   }
 
   Future<void> _showProductSheet({int? editIndex, Product? newProduct}) async {
+    if (_isReturn) {
+      await _showReturnProductSheet(
+          editIndex: editIndex, newProduct: newProduct);
+      return;
+    }
     if (editIndex == null &&
         newProduct != null &&
         _existingLineIndex(newProduct) != -1) {
@@ -1651,6 +2231,27 @@ class _AddProductPageState extends State<AddProductPage> {
     final newSupplierCtrl = TextEditingController();
     final newSupplierBalanceCtrl = TextEditingController();
     final supplierSearchCtrl = TextEditingController();
+    if (_isEditing && _originalInvoice != null) {
+      // Editing starts from the saved paid amount (refund for a return),
+      // payment method, discount and notes, so saving without retyping them
+      // keeps them instead of resetting them to zero/empty.
+      final original = _originalInvoice!;
+      final paidBefore = invoiceNum(original['paidAmount']);
+      paidCtrl.text = paidBefore.toStringAsFixed(2);
+      final savedMethod = original['paymentMethod']?.toString();
+      final paidInFull = paidBefore > 0 &&
+          paidBefore >= invoiceNum(original['totalSum']) - 0.005;
+      paymentMethod = savedMethod == 'نقداً' || savedMethod == 'آجل'
+          ? savedMethod!
+          : (paidInFull ? 'نقداً' : 'آجل');
+      invoiceDiscount = invoiceNum(original['invoiceDiscount']);
+      discountIsPercent = false;
+      if (invoiceDiscount > 0) {
+        discountCtrl.text = invoiceDiscount.toStringAsFixed(2);
+      }
+      notes = original['notes']?.toString() ?? '';
+      notesCtrl.text = notes;
+    }
     // Guard flag — set to false when the sheet is dismissed so async
     // callbacks don't call setSheet() on a disposed StatefulBuilder.
     bool sheetMounted = true;
@@ -1701,7 +2302,12 @@ class _AddProductPageState extends State<AddProductPage> {
               : invoiceDiscount;
           double totalAfterDiscount = totalSum - effectiveDiscountAmt;
           double paid = double.tryParse(paidCtrl.text) ?? 0.0;
-          double remaining = paid - totalAfterDiscount;
+          // A return shows the part deducted from the supplier balance
+          // instead of change; a refund above the total is invalid.
+          final double remaining =
+              _isReturn ? totalAfterDiscount - paid : paid - totalAfterDiscount;
+          final bool remainingOk =
+              _isReturn ? paid <= totalAfterDiscount + 0.005 : remaining >= 0;
 
           void syncPaidToTotal() {
             final sum = _calculateTotalSum();
@@ -1730,7 +2336,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('الإجمالي',
+                        Text(_isReturn ? 'إجمالي المرتجع' : 'الإجمالي',
                             style: TextStyle(
                                 fontSize: 13.sp, fontWeight: FontWeight.bold)),
                         Expanded(
@@ -1807,7 +2413,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     // ── طريقة الدفع ──
                     Row(
                       children: [
-                        Text('طريقة الدفع',
+                        Text(_isReturn ? 'طريقة الاسترداد' : 'طريقة الدفع',
                             style: TextStyle(
                                 fontSize: 13.sp, fontWeight: FontWeight.bold)),
                         SizedBox(width: 12.w),
@@ -1817,7 +2423,10 @@ class _AddProductPageState extends State<AddProductPage> {
                               child: GestureDetector(
                                 onTap: () => setSheet(() {
                                   paymentMethod = 'نقداً';
-                                  paidCtrl.text = '0';
+                                  // A cash return refunds the whole total.
+                                  paidCtrl.text = _isReturn
+                                      ? totalAfterDiscount.toStringAsFixed(2)
+                                      : '0';
                                 }),
                                 child: Container(
                                   padding: EdgeInsets.symmetric(vertical: 10.h),
@@ -1862,7 +2471,8 @@ class _AddProductPageState extends State<AddProductPage> {
                                             ? Colors.orange.shade700
                                             : Colors.grey.shade400),
                                   ),
-                                  child: Text('آجل',
+                                  child: Text(
+                                      _isReturn ? 'خصم من الرصيد' : 'آجل',
                                       textAlign: TextAlign.center,
                                       style: TextStyle(
                                           fontSize: 14.sp,
@@ -1881,7 +2491,7 @@ class _AddProductPageState extends State<AddProductPage> {
                     Row(
                       mainAxisAlignment: MainAxisAlignment.spaceBetween,
                       children: [
-                        Text('المدفوع',
+                        Text(_isReturn ? 'المسترد من المورد' : 'المدفوع',
                             style: TextStyle(
                                 fontSize: 13.sp, fontWeight: FontWeight.bold)),
                         Expanded(
@@ -1914,11 +2524,11 @@ class _AddProductPageState extends State<AddProductPage> {
                       padding: EdgeInsets.symmetric(
                           vertical: 10.h, horizontal: 10.w),
                       decoration: BoxDecoration(
-                        color: remaining >= 0
+                        color: remainingOk
                             ? Colors.green.shade50
                             : Colors.red.shade50,
                         border: Border.all(
-                            color: remaining >= 0
+                            color: remainingOk
                                 ? Colors.green.shade300
                                 : Colors.red.shade300),
                         borderRadius: BorderRadius.circular(8.r),
@@ -1926,7 +2536,7 @@ class _AddProductPageState extends State<AddProductPage> {
                       child: Row(
                           mainAxisAlignment: MainAxisAlignment.spaceBetween,
                           children: [
-                            Text('الباقي',
+                            Text(_isReturn ? 'يخصم من رصيد المورد' : 'الباقي',
                                 style: TextStyle(
                                     fontSize: 13.sp,
                                     fontWeight: FontWeight.bold)),
@@ -1934,7 +2544,7 @@ class _AddProductPageState extends State<AddProductPage> {
                                 style: TextStyle(
                                     fontSize: 16.sp,
                                     fontWeight: FontWeight.bold,
-                                    color: remaining >= 0
+                                    color: remainingOk
                                         ? Colors.green.shade700
                                         : Colors.red.shade700)),
                           ]),
@@ -2313,7 +2923,10 @@ class _AddProductPageState extends State<AddProductPage> {
                         builder: (_) {
                           final balanceBefore = checkoutSupplierBalance ?? 0.0;
                           final invoiceUnpaid = totalAfterDiscount - paid;
-                          final balanceAfter = balanceBefore + invoiceUnpaid;
+                          // A return lowers what we owe the supplier.
+                          final balanceAfter = _isReturn
+                              ? balanceBefore - invoiceUnpaid
+                              : balanceBefore + invoiceUnpaid;
                           TextStyle balanceStyle(double amount) => TextStyle(
                                 fontSize: 13.sp,
                                 fontWeight: FontWeight.bold,
@@ -2354,13 +2967,13 @@ class _AddProductPageState extends State<AddProductPage> {
                                         CrossAxisAlignment.stretch,
                                     children: [
                                       Text(
-                                        'الرصيد قبل الفاتورة: ${invoiceAmount(balanceBefore)} ج.م',
+                                        '${_isReturn ? 'الرصيد قبل المرتجع' : 'الرصيد قبل الفاتورة'}: ${invoiceAmount(balanceBefore)} ج.م',
                                         textAlign: TextAlign.center,
                                         style: balanceStyle(balanceBefore),
                                       ),
                                       SizedBox(height: 6.h),
                                       Text(
-                                        'الرصيد بعد الفاتورة (المتبقي للمورد): ${invoiceAmount(balanceAfter)} ج.م',
+                                        '${_isReturn ? 'الرصيد بعد المرتجع' : 'الرصيد بعد الفاتورة'} (المتبقي للمورد): ${invoiceAmount(balanceAfter)} ج.م',
                                         textAlign: TextAlign.center,
                                         style: balanceStyle(balanceAfter)
                                             .copyWith(fontSize: 14.sp),
@@ -2494,6 +3107,17 @@ class _AddProductPageState extends State<AddProductPage> {
                                   final double savedDiscount = invoiceDiscount;
                                   final bool savedDiscountIsPercent =
                                       discountIsPercent;
+                                  if (_isReturn &&
+                                      paidAmount > totalAfterDiscount + 0.005) {
+                                    ScaffoldMessenger.of(context).showSnackBar(
+                                      SnackBar(
+                                        content: const Text(
+                                            'المبلغ المسترد لا يمكن أن يزيد عن إجمالي المرتجع'),
+                                        backgroundColor: Colors.red.shade700,
+                                      ),
+                                    );
+                                    return;
+                                  }
                                   // Validate: نقداً requires paid >= total
                                   if (paymentMethod == 'نقداً' &&
                                       paidAmount < totalAfterDiscount - 0.005) {
@@ -2563,7 +3187,7 @@ class _AddProductPageState extends State<AddProductPage> {
                 top: MediaQuery.of(context).padding.top + 16.h,
                 bottom: 16.h,
                 right: 16.w),
-            child: Text('المشتريات',
+            child: Text(_isReturn ? 'مرتجع المشتريات' : 'المشتريات',
                 style: TextStyle(
                     color: Colors.white,
                     fontSize: 20.sp,
@@ -2573,15 +3197,16 @@ class _AddProductPageState extends State<AddProductPage> {
             child: ListView(
               padding: EdgeInsets.symmetric(vertical: 8.h),
               children: [
-                ListTile(
-                  leading: Icon(Icons.add_box_outlined, size: 22.sp),
-                  title: Text('اضافة منتج جديد',
-                      style: TextStyle(fontSize: 15.sp)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    _addNewProductInline();
-                  },
-                ),
+                if (!_isReturn)
+                  ListTile(
+                    leading: Icon(Icons.add_box_outlined, size: 22.sp),
+                    title: Text('اضافة منتج جديد',
+                        style: TextStyle(fontSize: 15.sp)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      _addNewProductInline();
+                    },
+                  ),
                 ListTile(
                   leading: Icon(Icons.print_outlined, size: 22.sp),
                   title: Text('اعادة طباعة الفاتورة',
@@ -2598,51 +3223,57 @@ class _AddProductPageState extends State<AddProductPage> {
                       Navigator.push(
                           context,
                           MaterialPageRoute(
-                              builder: (_) => const BuyingInvoiceListPage()));
+                              builder: (_) => BuyingInvoiceListPage(
+                                  showReturns: _isReturn)));
                     }
                   },
                 ),
                 ListTile(
                   leading: Icon(Icons.edit_document, size: 22.sp),
-                  title: Text('تعديل فاتورة مشتريات',
+                  title: Text(
+                      _isReturn
+                          ? 'تعديل مرتجع مشتريات'
+                          : 'تعديل فاتورة مشتريات',
                       style: TextStyle(fontSize: 15.sp)),
                   onTap: () {
                     Navigator.pop(context);
                     Navigator.push(
                         context,
                         MaterialPageRoute(
-                            builder: (_) => const BuyingInvoiceListPage()));
+                            builder: (_) =>
+                                BuyingInvoiceListPage(showReturns: _isReturn)));
                   },
                 ),
-                ListTile(
-                  leading: Icon(Icons.file_download_outlined, size: 22.sp),
-                  title: Text('استيراد البيانات من طلب شراء',
-                      style: TextStyle(fontSize: 15.sp)),
-                  onTap: () {
-                    Navigator.pop(context);
-                    showDialog(
-                      context: context,
-                      builder: (_) => Directionality(
-                        textDirection: TextDirection.rtl,
-                        child: AlertDialog(
-                          title: Text('قريبًا',
-                              style: TextStyle(
-                                  fontSize: 16.sp,
-                                  fontWeight: FontWeight.bold)),
-                          content: Text(
-                              'ميزة استيراد طلبات الشراء ستكون متاحة قريبًا.',
-                              style: TextStyle(fontSize: 14.sp)),
-                          actions: [
-                            TextButton(
-                                onPressed: () => Navigator.pop(context),
-                                child: Text('حسنًا',
-                                    style: TextStyle(color: Colors.orange))),
-                          ],
+                if (!_isReturn)
+                  ListTile(
+                    leading: Icon(Icons.file_download_outlined, size: 22.sp),
+                    title: Text('استيراد البيانات من طلب شراء',
+                        style: TextStyle(fontSize: 15.sp)),
+                    onTap: () {
+                      Navigator.pop(context);
+                      showDialog(
+                        context: context,
+                        builder: (_) => Directionality(
+                          textDirection: TextDirection.rtl,
+                          child: AlertDialog(
+                            title: Text('قريبًا',
+                                style: TextStyle(
+                                    fontSize: 16.sp,
+                                    fontWeight: FontWeight.bold)),
+                            content: Text(
+                                'ميزة استيراد طلبات الشراء ستكون متاحة قريبًا.',
+                                style: TextStyle(fontSize: 14.sp)),
+                            actions: [
+                              TextButton(
+                                  onPressed: () => Navigator.pop(context),
+                                  child: Text('حسنًا',
+                                      style: TextStyle(color: Colors.orange))),
+                            ],
+                          ),
                         ),
-                      ),
-                    );
-                  },
-                ),
+                      );
+                    },
+                  ),
               ],
             ),
           ),
@@ -2675,7 +3306,9 @@ class _AddProductPageState extends State<AddProductPage> {
             backgroundColor: const Color(0xffeeeced),
             endDrawer: _buildDrawer(),
             appBar: AppBar(
-              backgroundColor: Colors.black.withOpacity(0.7),
+              backgroundColor: _isReturn
+                  ? Colors.red.shade900
+                  : Colors.black.withOpacity(0.7),
               leading: AppBarNavLeading(
                 openDrawer: () => _scaffoldKey.currentState?.openEndDrawer(),
                 confirmBeforePop: () => HomePage.confirmNavigateBack(context),
@@ -2728,7 +3361,7 @@ class _AddProductPageState extends State<AddProductPage> {
                           ),
                         ),
                         SizedBox(width: 12.w),
-                        Text('تاريخ الفاتورة',
+                        Text(_isReturn ? 'تاريخ المرتجع' : 'تاريخ الفاتورة',
                             style: TextStyle(
                                 fontSize: 14.sp, fontWeight: FontWeight.bold)),
                       ]),
@@ -2744,18 +3377,21 @@ class _AddProductPageState extends State<AddProductPage> {
                           icon: Icon(Icons.save_outlined,
                               color: Colors.blue.shade700, size: 30.sp),
                           onPressed: _showCheckoutSheet,
-                          tooltip: 'حفظ الفاتورة',
+                          tooltip: _isReturn ? 'حفظ المرتجع' : 'حفظ الفاتورة',
                         ),
-                        IconButton(
-                          icon: Icon(Icons.add_circle_outline,
-                              color: Colors.orange.shade800, size: 26.sp),
-                          onPressed: () => _addNewProductInline(
-                            initialName: _productController.text.trim().isEmpty
-                                ? null
-                                : _productController.text.trim(),
+                        // A return only sends back products already in stock.
+                        if (!_isReturn)
+                          IconButton(
+                            icon: Icon(Icons.add_circle_outline,
+                                color: Colors.orange.shade800, size: 26.sp),
+                            onPressed: () => _addNewProductInline(
+                              initialName:
+                                  _productController.text.trim().isEmpty
+                                      ? null
+                                      : _productController.text.trim(),
+                            ),
+                            tooltip: 'إضافة منتج جديد',
                           ),
-                          tooltip: 'إضافة منتج جديد',
-                        ),
                         Expanded(
                           child: Container(
                             height: 42.h,
@@ -2888,7 +3524,7 @@ class _AddProductPageState extends State<AddProductPage> {
                                     fontWeight: FontWeight.bold))),
                         Expanded(
                             flex: 2,
-                            child: Text('التكلفه',
+                            child: Text(_isReturn ? 'السعر' : 'التكلفه',
                                 textAlign: TextAlign.center,
                                 style: TextStyle(
                                     fontSize: 12.sp,
@@ -2913,7 +3549,10 @@ class _AddProductPageState extends State<AddProductPage> {
                                   Icon(Icons.shopping_cart_outlined,
                                       size: 60.sp, color: Colors.grey.shade400),
                                   SizedBox(height: 8.h),
-                                  Text('ابحث عن منتج وأضفه للفاتورة',
+                                  Text(
+                                      _isReturn
+                                          ? 'ابحث عن منتج لإرجاعه للمورد'
+                                          : 'ابحث عن منتج وأضفه للفاتورة',
                                       style: TextStyle(
                                           fontSize: 14.sp,
                                           color: Colors.grey.shade500)),

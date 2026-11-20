@@ -281,6 +281,139 @@ class SupplierOperationService {
     });
   }
 
+  /// Saves a purchase return (goods sent back to a supplier).
+  ///
+  /// `totalSum` is the value of the returned goods and `paidAmount` is the
+  /// cash the supplier refunds now (0..totalSum). Effects:
+  /// payable −(total − refund), stock −quantity, cash +refund. Product prices
+  /// never change. Returning more than the stock on hand is allowed; the
+  /// screen warns before saving.
+  static Future<Map<String, dynamic>> saveBuyingReturn(
+    Map<String, dynamic> input, {
+    bool editing = false,
+  }) async {
+    late Map<String, dynamic> saved;
+    await LocalOperationJournal.commit((operationId) async {
+      final invoiceId = input['id']?.toString().isNotEmpty == true
+          ? input['id'].toString()
+          : _uuid.v4();
+      final old = buyingReturnInvoicesBox.get(invoiceId);
+      if (editing && old == null) {
+        throw StateError('Purchase return must be cached before editing');
+      }
+      if (!editing && old != null) {
+        throw StateError('Purchase return already exists');
+      }
+      final supplierId = input['supplierId']?.toString() ?? '';
+      if (supplierId.isEmpty || suppliersBox.get(supplierId) == null) {
+        throw StateError('Supplier must be cached before saving');
+      }
+      final total = _amount(input['totalSum'], 'totalSum');
+      final refund = _amount(input['paidAmount'], 'paidAmount');
+      if (refund > total + 0.0001) {
+        throw ArgumentError('Refund cannot exceed the return total');
+      }
+      final lines = _lines(input['products']);
+      if (lines.isEmpty) {
+        throw ArgumentError('A purchase return needs at least one product');
+      }
+      final oldData = old?.toMap();
+      final oldSupplierId = old?.supplierId ?? supplierId;
+      final oldEffect = old == null ? 0.0 : -(old.totalSum - old.paidAmount);
+      final newEffect = -(total - refund);
+      final date = _date(input['date']);
+      final previousBalance = input['previousBalance'] ??
+          old?.previousBalance ??
+          SupplierBalanceStore.balance(supplierId,
+              fallback: suppliersBox.get(supplierId)!.balance);
+      final data = <String, dynamic>{
+        ...input,
+        'id': invoiceId,
+        'invoiceId': invoiceId,
+        'supplierId': supplierId,
+        'supplierName': suppliersBox.get(supplierId)!.name,
+        'date': date,
+        'totalSum': total,
+        'paidAmount': refund,
+        'balance': total - refund,
+        'previousBalance': invoiceNum(previousBalance),
+        'invoiceType': 'buying_return',
+        'products': lines,
+      };
+      final plan = _SupplierPlan(
+          operationId,
+          editing ? 'editBuyingReturn' : 'createBuyingReturn',
+          editing ? 'تعديل مرتجع مشتريات' : 'مرتجع مشتريات');
+      plan.local(HiveBoxNames.buyingReturnInvoices, invoiceId, data);
+      plan.cloud('returnBuyingInvoices/$invoiceId',
+          data: data, absent: !editing, expected: oldData);
+      if (editing && oldSupplierId != supplierId) {
+        plan.cloud('suppliers/$oldSupplierId/returnBuyingInvoices/$invoiceId',
+            deleted: true);
+        plan.removeInvoiceHistory(oldSupplierId, invoiceId, isReturn: true);
+        plan.supplier(oldSupplierId, -oldEffect);
+        plan.supplier(supplierId, newEffect);
+      } else {
+        plan.supplier(supplierId, newEffect - oldEffect);
+        if (editing) {
+          plan.removeInvoiceHistory(supplierId, invoiceId, isReturn: true);
+        }
+      }
+      // The supplier copy has no financial effect of its own; the main
+      // invoice above carries the conflict checks.
+      plan.cloud('suppliers/$supplierId/returnBuyingInvoices/$invoiceId',
+          data: data, absent: !editing || oldSupplierId != supplierId);
+      plan.invoiceHistory(supplierId, data, isReturn: true);
+      plan.stockDifference(
+          old?.products ?? const [], lines, date, data['invoiceNumber'],
+          isReturn: true);
+      plan.cash(refund - (old?.paidAmount ?? 0),
+          editing ? 'تعديل مرتجع مشتريات' : 'مرتجع مشتريات',
+          date: date);
+      saved = data;
+      return plan.finish({
+        'supplierId': supplierId,
+        'invoiceId': invoiceId,
+        'invoiceData': data,
+      });
+    });
+    return saved;
+  }
+
+  static Future<void> deleteBuyingReturn(String invoiceId) async {
+    await LocalOperationJournal.commit((operationId) async {
+      final old = buyingReturnInvoicesBox.get(invoiceId);
+      if (old == null) {
+        throw StateError('Purchase return must be cached before deleting');
+      }
+      final supplierId = old.supplierId;
+      if (supplierId.isEmpty || suppliersBox.get(supplierId) == null) {
+        throw StateError('Supplier must be cached before deleting return');
+      }
+      final oldData = old.toMap();
+      final plan =
+          _SupplierPlan(operationId, 'deleteBuyingReturn', 'حذف مرتجع مشتريات');
+      plan.local(HiveBoxNames.buyingReturnInvoices, invoiceId, null);
+      plan.cloud('returnBuyingInvoices/$invoiceId',
+          deleted: true, expected: oldData);
+      plan.cloud('suppliers/$supplierId/returnBuyingInvoices/$invoiceId',
+          deleted: true);
+      plan.removeInvoiceHistory(supplierId, invoiceId, isReturn: true);
+      plan.supplier(supplierId, old.totalSum - old.paidAmount);
+      plan.stockDifference(
+          old.products, const [], DateTime.now(), old.invoiceNumber,
+          isReturn: true);
+      plan.cash(-old.paidAmount, 'حذف مرتجع مشتريات');
+      return plan.finish({
+        'supplierId': supplierId,
+        'supplierName': old.supplierName,
+        'invoiceId': invoiceId,
+        'invoiceNumber': old.invoiceNumber,
+        'totalSum': old.totalSum,
+      });
+    });
+  }
+
   static Future<SupplierPaymentResultData> savePayment({
     required String supplierId,
     required String direction,
@@ -468,28 +601,36 @@ class _SupplierPlan {
         data: entry.toMap());
   }
 
-  void invoiceHistory(String supplierId, Map<String, dynamic> data) {
+  /// History row IDs: purchases use `_buying`/`_pay`, purchase returns use
+  /// `_buying_return`/`_buying_return_pay`.
+  static List<String> historySuffixes(bool isReturn) => isReturn
+      ? const ['buying_return', 'buying_return_pay']
+      : const ['buying', 'pay'];
+
+  void invoiceHistory(String supplierId, Map<String, dynamic> data,
+      {bool isReturn = false}) {
     final invoiceId = data['id'].toString();
     final total = invoiceNum(data['totalSum']);
     final paid = invoiceNum(data['paidAmount']);
     final date = SupplierOperationService._date(data['date']);
+    final suffixes = historySuffixes(isReturn);
     history(BalanceHistoryLocal(
-      id: '${invoiceId}_buying',
+      id: '${invoiceId}_${suffixes[0]}',
       parentId: supplierId,
       parentType: 'supplier',
       enteredBalance: total,
-      type: 'buying',
+      type: isReturn ? 'buying_return' : 'buying',
       invoiceId: invoiceId,
       invoiceNumber: data['invoiceNumber'].toString(),
       timestamp: date,
     ));
     if (paid > 0) {
       history(BalanceHistoryLocal(
-        id: '${invoiceId}_pay',
+        id: '${invoiceId}_${suffixes[1]}',
         parentId: supplierId,
         parentType: 'supplier',
         enteredBalance: paid,
-        type: 'buying_payment',
+        type: isReturn ? 'buying_return_payment' : 'buying_payment',
         invoiceId: invoiceId,
         invoiceNumber: data['invoiceNumber'].toString(),
         timestamp: date,
@@ -497,27 +638,33 @@ class _SupplierPlan {
     }
   }
 
-  void removeInvoiceHistory(String supplierId, String invoiceId) {
+  void removeInvoiceHistory(String supplierId, String invoiceId,
+      {bool isReturn = false}) {
+    final suffixes = historySuffixes(isReturn);
     for (final entry in balanceHistoryBox.values
         .where((entry) =>
             entry.parentType == 'supplier' &&
             entry.parentId == supplierId &&
             (entry.invoiceId == invoiceId ||
-                entry.id == '${invoiceId}_buying' ||
-                entry.id == '${invoiceId}_pay'))
+                suffixes.any((suffix) => entry.id == '${invoiceId}_$suffix')))
         .toList()) {
       local(HiveBoxNames.balanceHistory, 'supplier_${supplierId}_${entry.id}',
           null);
       cloud('suppliers/$supplierId/balanceHistory/${entry.id}', deleted: true);
     }
-    for (final suffix in ['buying', 'pay']) {
+    for (final suffix in suffixes) {
       cloud('suppliers/$supplierId/balanceHistory/${invoiceId}_$suffix',
           deleted: true);
     }
   }
 
+  /// Applies the stock change from [oldLines] to [newLines]. A purchase adds
+  /// stock and may update prices; a purchase return ([isReturn]) removes
+  /// stock and never changes prices.
   void stockDifference(List<Map<String, dynamic>> oldLines,
-      List<Map<String, dynamic>> newLines, DateTime date, dynamic number) {
+      List<Map<String, dynamic>> newLines, DateTime date, dynamic number,
+      {bool isReturn = false}) {
+    final direction = isReturn ? -1.0 : 1.0;
     final deltas = <String, double>{};
     final newest = <String, Map<String, dynamic>>{};
     void add(List<Map<String, dynamic>> lines, double sign) {
@@ -536,8 +683,9 @@ class _SupplierPlan {
         final quantity = SupplierOperationService._amount(
             line['amount'] ?? line['quantity'] ?? line['count'] ?? line['qty'],
             'quantity');
-        deltas[product.id] = (deltas[product.id] ?? 0) + sign * quantity;
-        if (sign > 0) newest[product.id] = line;
+        deltas[product.id] =
+            (deltas[product.id] ?? 0) + direction * sign * quantity;
+        if (sign > 0 && !isReturn) newest[product.id] = line;
       }
     }
 

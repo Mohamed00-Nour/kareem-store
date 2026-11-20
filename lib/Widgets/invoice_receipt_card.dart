@@ -22,10 +22,13 @@ class InvoiceReceiptCard extends StatelessWidget {
   final bool showNotes;
   final double? qtySumOverride;
   final String? pageIndicator;
+
   /// Shown at the top of continuation pages (avoids bottom clipping in PNG capture).
   final String? leadingContinuationBanner;
+
   /// Extra space at the bottom so capture does not clip the last pixels.
   final double captureBottomPadding;
+
   /// Serial column starts at [productIndexOffset] + 1 (for multi-page images).
   final int productIndexOffset;
 
@@ -57,7 +60,8 @@ class InvoiceReceiptCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isBuying = invoiceIsSupplierPurchase(invoice) || invoice['invoiceType']?.toString() == 'buying';
+    final isBuying = invoiceIsSupplierPurchase(invoice) ||
+        invoice['invoiceType']?.toString() == 'buying';
     final lineProducts = _products;
     final previousBalance = invoiceDynamicPreviousBalance(invoice);
     final totalSum = invoiceNum(invoice['totalSum']);
@@ -73,7 +77,9 @@ class InvoiceReceiptCard extends StatelessWidget {
           (s, p) => s + invoiceNum(p['amount']),
         );
 
-    final hasCustomLogo = logoPath != null && logoPath!.isNotEmpty && File(logoPath!).existsSync();
+    final hasCustomLogo = logoPath != null &&
+        logoPath!.isNotEmpty &&
+        File(logoPath!).existsSync();
 
     return Container(
       width: width,
@@ -101,7 +107,8 @@ class InvoiceReceiptCard extends StatelessWidget {
                 child: Text(
                   storeName,
                   textAlign: TextAlign.center,
-                  style: const TextStyle(fontSize: 12, fontWeight: FontWeight.bold),
+                  style: const TextStyle(
+                      fontSize: 12, fontWeight: FontWeight.bold),
                 ),
               ),
               const SizedBox(height: 2),
@@ -117,7 +124,8 @@ class InvoiceReceiptCard extends StatelessWidget {
               const SizedBox(height: 2),
             ],
             if (storePhone.isNotEmpty) ...[
-              for (final phoneLine in storePhone.split('\n').where((l) => l.trim().isNotEmpty))
+              for (final phoneLine
+                  in storePhone.split('\n').where((l) => l.trim().isNotEmpty))
                 Center(
                   child: Text(
                     phoneLine.trim(),
@@ -129,8 +137,13 @@ class InvoiceReceiptCard extends StatelessWidget {
             ],
             Center(
               child: Text(
-                isBuying ? 'فاتورة مشتريات' : 'فاتورة مبيعات',
-                style: const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
+                invoiceIsBuyingReturn(invoice)
+                    ? 'مرتجع مشتريات'
+                    : isBuying
+                        ? 'فاتورة مشتريات'
+                        : 'فاتورة مبيعات',
+                style:
+                    const TextStyle(fontSize: 18, fontWeight: FontWeight.bold),
               ),
             ),
             const SizedBox(height: 8),
@@ -138,9 +151,11 @@ class InvoiceReceiptCard extends StatelessWidget {
           if (showCompactHeader) ...[
             Center(
               child: Text(
-                isBuying
-                    ? 'فاتورة مشتريات رقم ${invoice['invoiceNumber']?.toString() ?? ''}'
-                    : 'فاتورة مبيعات رقم ${invoice['invoiceNumber']?.toString() ?? ''}',
+                invoiceIsBuyingReturn(invoice)
+                    ? 'مرتجع مشتريات رقم ${invoice['invoiceNumber']?.toString() ?? ''}'
+                    : isBuying
+                        ? 'فاتورة مشتريات رقم ${invoice['invoiceNumber']?.toString() ?? ''}'
+                        : 'فاتورة مبيعات رقم ${invoice['invoiceNumber']?.toString() ?? ''}',
                 style:
                     const TextStyle(fontSize: 14, fontWeight: FontWeight.bold),
               ),
@@ -375,7 +390,8 @@ class InvoiceReceiptCard extends StatelessWidget {
 
   Widget _summaryTable(
       double previousBalance, double totalSum, double paid, double balance) {
-    final isBuying = invoiceIsSupplierPurchase(invoice) || invoice['invoiceType']?.toString() == 'buying';
+    final isBuying = invoiceIsSupplierPurchase(invoice) ||
+        invoice['invoiceType']?.toString() == 'buying';
     final discount = invoiceResolveDiscount(invoice);
     return Table(
       border: TableBorder.all(color: Colors.grey.shade400),
@@ -386,13 +402,14 @@ class InvoiceReceiptCard extends StatelessWidget {
       },
       children: [
         _summaryTableRow('الرصيد السابق', invoiceAmount(previousBalance)),
-        _summaryTableRow('إجمالي الفاتورة', invoiceAmount(totalSum), bold: true),
-        if (discount > 0)
-          _summaryTableRow('الخصم', invoiceAmount(discount)),
-        _summaryTableRow('المدفوع', invoiceAmount(paid)),
-        _summaryTableRow('المتبقي من الفاتورة', invoiceAmount(totalSum - paid)),
+        _summaryTableRow('إجمالي الفاتورة', invoiceAmount(totalSum),
+            bold: true),
+        if (discount > 0) _summaryTableRow('الخصم', invoiceAmount(discount)),
         _summaryTableRow(
-            isBuying ? 'الرصيد الحالي للمورد' : 'المتبقي عليكم',
+            invoiceIsBuyingReturn(invoice) ? 'المسترد من المورد' : 'المدفوع',
+            invoiceAmount(paid)),
+        _summaryTableRow('المتبقي من الفاتورة', invoiceAmount(totalSum - paid)),
+        _summaryTableRow(isBuying ? 'الرصيد الحالي للمورد' : 'المتبقي عليكم',
             invoiceAmount(balance),
             bold: true),
       ],
