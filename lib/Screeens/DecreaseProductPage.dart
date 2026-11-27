@@ -1272,25 +1272,35 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
 
       // Payment distribution is informational only. It is stored separately
       // after the invoice succeeds and never participates in balance/box math.
+      // The invoice is already saved at this point, so a failure here must
+      // not look like a failed save — otherwise a retry would create a second
+      // invoice.
+      var breakdownSaveFailed = false;
       if (!widget.isQuote && _lastInvoice != null) {
         final invoiceId = (_lastInvoice!['id'] ??
                 _lastInvoice!['invoiceId'] ??
                 _editingRootInvoiceId)
             ?.toString();
         if (invoiceId != null && invoiceId.isNotEmpty) {
-          await PaymentBreakdownRepository.instance.saveForInvoice(
-            invoiceId: invoiceId,
-            invoiceNumber:
-                (_lastInvoice!['invoiceNumber'] ?? _editingInvoiceNumber ?? '')
-                    .toString(),
-            clientName: effectiveClient,
-            wallet: walletAmount,
-            cash: cashAmount,
-            instapay: instapayAmount,
-            bankTransfer: bankTransferAmount,
-            notes: notes,
-            date: _selectedDate,
-          );
+          try {
+            await PaymentBreakdownRepository.instance.saveForInvoice(
+              invoiceId: invoiceId,
+              invoiceNumber: (_lastInvoice!['invoiceNumber'] ??
+                      _editingInvoiceNumber ??
+                      '')
+                  .toString(),
+              clientName: effectiveClient,
+              wallet: walletAmount,
+              cash: cashAmount,
+              instapay: instapayAmount,
+              bankTransfer: bankTransferAmount,
+              notes: notes,
+              date: _selectedDate,
+            );
+          } catch (e) {
+            debugPrint('Payment breakdown save failed for $invoiceId: $e');
+            breakdownSaveFailed = true;
+          }
         }
       }
 
@@ -1301,6 +1311,15 @@ class _DecreaseProductPageState extends State<DecreaseProductPage> {
       });
 
       _showSaveSuccessDialog(_lastInvoice!);
+      if (breakdownSaveFailed) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            duration: Duration(seconds: 6),
+            content: Text(
+                'تم حفظ الفاتورة لكن لم يتم حفظ توزيع المدفوعات، عدّل الفاتورة لإعادة إدخاله'),
+          ),
+        );
+      }
     } catch (e) {
       if (!mounted) return;
       setState(() {
