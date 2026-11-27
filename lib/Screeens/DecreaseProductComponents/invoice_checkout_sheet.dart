@@ -298,6 +298,10 @@ class _InvoiceCheckoutSheetContentState
           double paid = invoiceTryParseAmount(paidCtrl.text) ?? 0.0;
           double remaining = paid - totalAfterDiscount;
           final bool isCash = paymentMethod == 'نقداً';
+          // Sales invoice: the paid amount is display-only and is set solely
+          // by approving the payment distribution ("اعتماده كمدفوع").
+          final bool paidIsReadOnly =
+              !widget.isReturnInvoice && !widget.isQuote;
           final paymentValidationMessage = validateInvoiceCheckoutPayment(
             paidAmount: paid,
             invoiceTotal: totalAfterDiscount,
@@ -318,6 +322,8 @@ class _InvoiceCheckoutSheetContentState
               );
 
           void syncPaidForPaymentMethod() {
+            // Keep the approved distribution total when switching methods.
+            if (paidIsReadOnly) return;
             if (paymentMethod == 'نقداً') {
               paidCtrl.text = '';
             } else {
@@ -470,12 +476,19 @@ class _InvoiceCheckoutSheetContentState
                               child: TextField(
                                 key: const Key('invoice-paid-amount-field'),
                                 controller: paidCtrl,
+                                readOnly: paidIsReadOnly,
+                                enableInteractiveSelection: !paidIsReadOnly,
                                 textAlign: TextAlign.center,
                                 keyboardType:
                                     const TextInputType.numberWithOptions(
                                         decimal: true),
                                 style: TextStyle(fontSize: 16.sp),
                                 decoration: InputDecoration(
+                                  hintText: paidIsReadOnly ? '0.00' : null,
+                                  filled: paidIsReadOnly,
+                                  fillColor: paidIsReadOnly
+                                      ? Colors.grey.shade100
+                                      : null,
                                   border: OutlineInputBorder(
                                       borderRadius: BorderRadius.circular(8.r)),
                                   contentPadding: EdgeInsets.symmetric(
@@ -485,7 +498,9 @@ class _InvoiceCheckoutSheetContentState
                                           color: Colors.red, size: 20.sp)
                                       : null,
                                 ),
-                                onTap: () => _selectAllField(paidCtrl),
+                                onTap: paidIsReadOnly
+                                    ? null
+                                    : () => _selectAllField(paidCtrl),
                                 onChanged: (v) {
                                   lastManualPaid = v;
                                   setSheet(() {});

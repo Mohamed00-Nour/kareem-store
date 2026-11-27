@@ -74,7 +74,7 @@ void main() {
     });
   });
 
-  testWidgets('cash overpayment continues and returns the entered amount',
+  testWidgets('cash overpayment continues and returns the approved amount',
       (tester) async {
     final result = ValueNotifier<CheckoutSelectionResult?>(null);
     await tester.pumpWidget(
@@ -123,19 +123,29 @@ void main() {
     expect(tester.widget<ElevatedButton>(continueButton).onPressed, isNull);
     expect(find.text('يرجى اختيار طريقة الدفع'), findsOneWidget);
     await tester.enterText(
-      find.byKey(const Key('invoice-paid-amount-field')),
+      find.byKey(const Key('invoice-breakdown-cash-field')),
       '120',
     );
+    await tester.pump();
+    final applyButton = find.byKey(const Key('apply-payment-breakdown-total'));
+    await tester.ensureVisible(applyButton);
+    await tester.tap(applyButton);
     await tester.pump();
     expect(tester.widget<ElevatedButton>(continueButton).onPressed, isNull);
     expect(result.value, isNull);
 
-    await tester.tap(find.widgetWithText(ChoiceChip, 'نقداً'));
+    // Choosing نقداً keeps the approved paid amount.
+    final cashChip = find.widgetWithText(ChoiceChip, 'نقداً');
+    await tester.ensureVisible(cashChip);
+    await tester.tap(cashChip);
     await tester.pump();
     expect(tester.widget<ElevatedButton>(continueButton).onPressed, isNotNull);
-    await tester.enterText(
-      find.byKey(const Key('invoice-paid-amount-field')),
-      '120',
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('invoice-paid-amount-field')))
+          .controller
+          ?.text,
+      '120.00',
     );
     await tester.ensureVisible(continueButton);
     await tester.tap(continueButton);
@@ -353,11 +363,22 @@ void main() {
       find.byKey(const Key('invoice-paid-amount-field')),
     );
     expect(paidField.controller?.text, '100.00');
+    expect(paidField.readOnly, isTrue);
     expect(
         find.textContaining('المدفوع لا يطابق إجمالي التوزيع'), findsNothing);
+
+    // Typing into the paid field is ignored on a sales invoice.
     await tester.enterText(
       find.byKey(const Key('invoice-paid-amount-field')),
       '80',
+    );
+    await tester.pump();
+    expect(paidField.controller?.text, '100.00');
+
+    // Changing the distribution after approval shows the mismatch again.
+    await tester.enterText(
+      find.byKey(const Key('invoice-breakdown-bank-field')),
+      '20',
     );
     await tester.pump();
     expect(
